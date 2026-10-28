@@ -1,0 +1,5 @@
+test/z80_picoamp
+test/fatput
+test/mkimg_picoamp
+__pycache__/
+*.bin

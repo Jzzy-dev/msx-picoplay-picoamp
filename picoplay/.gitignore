@@ -1,0 +1,7 @@
+PICOPLAY.EXE
+PVTEST.COM
+*.o
+*.rel
+*.map
+test/host_app
+test/z80_pvtest

@@ -1,0 +1,18 @@
+# everything the setup builds or unpacks stays out of git (ROMs and images are private)
+/prefix/
+/src/
+/openMSX/
+/scc/
+/z80/
+/pva/
+/omsx-user/
+/assets/
+/images/
+/inputs/
+/work*/
+*.png
+*.tcl
+drv.err
+pcs.txt
+ram.bin
+out.wav

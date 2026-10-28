@@ -1,0 +1,21 @@
+diff --git a/src/DeviceFactory.cc b/src/DeviceFactory.cc
+index 509d392..8dd1bd6 100644
+--- a/src/DeviceFactory.cc
++++ b/src/DeviceFactory.cc
+@@ -33,6 +33,7 @@
+ #include "MusicModuleMIDI.hh"
+ #include "JVCMSXMIDI.hh"
+ #include "MSXKanji.hh"
++#include "picoverse/PicoVerseAudio.hh"
+ #include "MSXBunsetsu.hh"
+ #include "MSXMemoryMapper.hh"
+ #include "MSXToshibaTcx200x.hh"
+@@ -199,6 +200,8 @@ std::unique_ptr<MSXDevice> DeviceFactory::create(const DeviceConfig& conf)
+ 		result = make_unique<MSXMoonSound>(conf);
+ 	} else if (type == "OPL3Cartridge") {
+ 		result = make_unique<MSXOPL3Cartridge>(conf);
++	} else if (type == "PicoVerseAudio") {
++		result = make_unique<PicoVerseAudio>(conf);
+ 	} else if (type == "Kanji") {
+ 		result = make_unique<MSXKanji>(conf);
+ 	} else if (type == "Bunsetsu") {

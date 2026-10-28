@@ -1,0 +1,43 @@
+<?xml version="1.0" ?>
+<!DOCTYPE msxconfig SYSTEM 'msxconfig2.dtd'>
+<msxconfig>
+  <info>
+    <name>PicoVerse 2350 (LoadROM -p1)</name>
+    <manufacturer>The Retro Hacker</manufacturer>
+    <code/>
+    <release_year>2026</release_year>
+    <description>Test model of the PicoVerse 2350 player image: Nextor Sunrise IDE, 1 MB mapper and the PicoVerse Audio Engine, in the same sub-slots as the cartridge.</description>
+    <type>test</type>
+  </info>
+  <devices>
+    <primary slot="any">
+      <secondary slot="1">
+        <SunriseIDE id="PicoVerse Sunrise IDE">
+          <mem base="0x0000" size="0x10000"/>
+          <rom>
+            <filename>Nextor-2.1.4.SunriseIDE.MasterOnly.ROM</filename>
+          </rom>
+          <master>
+            <type>IDEHD</type>
+            <filename>/home/claude/rig/work/hd.dsk</filename>
+            <size>128</size>
+          </master>
+        </SunriseIDE>
+      </secondary>
+      <secondary slot="2">
+        <MemoryMapper id="PicoVerse 1MB mapper">
+          <mem base="0x0000" size="0x10000"/>
+          <size>1024</size>
+        </MemoryMapper>
+      </secondary>
+      <secondary slot="3">
+        <PicoVerseAudio id="PicoVerse Audio Engine">
+          <mem base="0x4000" size="0x4000"/>
+          <image>/home/claude/rig/work/hd.dsk</image>
+          <wav>/home/claude/rig/work/out.wav</wav>
+          <stream>/home/claude/rig/assets/cbr128_v23.mp3</stream>
+        </PicoVerseAudio>
+      </secondary>
+    </primary>
+  </devices>
+</msxconfig>

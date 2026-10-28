@@ -1,0 +1,4 @@
+/upstream/
+obj/
+*.o
+*.a

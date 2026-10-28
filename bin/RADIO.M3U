@@ -1,0 +1,9 @@
+#EXTM3U
+#EXTINF:-1,Radio Paradise (MP3 128k)
+http://stream.radioparadise.com/mp3-128
+#EXTINF:-1,SomaFM Groove Salad (MP3 128k)
+http://ice1.somafm.com/groovesalad-128-mp3
+#EXTINF:-1,SomaFM Groove Salad (MP3 128k, HTTPS)
+https://ice1.somafm.com/groovesalad-128-mp3
+#EXTINF:-1,SomaFM Secret Agent (MP3 128k)
+http://ice1.somafm.com/secretagent-128-mp3

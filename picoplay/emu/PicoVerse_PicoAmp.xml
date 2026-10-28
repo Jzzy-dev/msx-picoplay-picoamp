@@ -1,0 +1,33 @@
+<?xml version="1.0" ?>
+<!DOCTYPE msxconfig SYSTEM 'msxconfig2.dtd'>
+<msxconfig>
+  <info>
+    <name>PicoVerse 2350 (LoadROM -pa)</name>
+    <manufacturer>The Retro Hacker</manufacturer>
+    <code/>
+    <release_year>2026</release_year>
+    <description>Test model of the PicoAmp ROM mode: PICOAMP.ROM in sub-slot 0, the PicoVerse Audio Engine in sub-slot 3 (card.img is the microSD card; put full paths in the filenames).</description>
+    <type>test</type>
+  </info>
+  <devices>
+    <primary slot="any">
+      <secondary slot="0">
+        <ROM id="PicoAmp ROM">
+          <mem base="0x4000" size="0x4000"/>
+          <rom>
+            <filename>PICOAMP.ROM</filename>
+          </rom>
+          <mappertype>Normal</mappertype>
+        </ROM>
+      </secondary>
+      <secondary slot="3">
+        <PicoVerseAudio id="PicoVerse Audio Engine">
+          <mem base="0x4000" size="0x4000"/>
+          <image>card.img</image>
+          <wav>out.wav</wav>
+          <stream>stream.mp3</stream>
+        </PicoVerseAudio>
+      </secondary>
+    </primary>
+  </devices>
+</msxconfig>
