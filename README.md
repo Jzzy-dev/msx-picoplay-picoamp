@@ -6,6 +6,11 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 ![PICOAMP playing](picoamp/images/picoamp_playing.png)
 
+[![WhatsApp Image 2026 10 27 at 17.31.34 (1)](https://msx.pics/images/2026/10/27/WhatsApp-Image-2026-10-27-at-17.31.34-1.md.jpeg)](https://msx.pics/image/x5IYH) [![WhatsApp Image 2026 10 27 at 17.31.34 (2)](https://msx.pics/images/2026/10/27/WhatsApp-Image-2026-10-27-at-17.31.34-2.md.jpeg)](https://msx.pics/image/x5qvI)
+
+<img width="1892" height="1286" alt="keys" src="https://github.com/user-attachments/assets/f7f9e4c0-214f-4276-9ebf-6b83d31da987" />
+
+
 | What | For | What it is |
 |------|-----|------------|
 | **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data. The MSX talks to it through a 4 KB memory window |
@@ -47,7 +52,7 @@ the ESP-01 must already know your access point (as for the Nextor WiFi tools).
 
 | Spectrum | PicoPlay in SymbOS |
 |---|---|
-| ![Full screen](picoamp/images/picoamp_fullscreen.png) | ![PicoPlay](docs/images/picoplay_symbos.png) |
+| ![Full screen](picoamp/images/picoamp_fullscreen.png) | [![7](https://msx.pics/images/2026/10/27/7.md.jpeg)](https://msx.pics/image/x56Ke) |
 
 ## What is in this repository
 
