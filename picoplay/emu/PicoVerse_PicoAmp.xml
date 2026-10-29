@@ -6,7 +6,7 @@
     <manufacturer>The Retro Hacker</manufacturer>
     <code/>
     <release_year>2026</release_year>
-    <description>Test model of the PicoAmp ROM mode: PICOAMP.ROM in sub-slot 0, the PicoVerse Audio Engine in sub-slot 3 (card.img is the microSD card; put full paths in the filenames).</description>
+    <description>Test model of the PicoAmp ROM mode: PICOAMP.ROM (32 KB, ASCII16 banks in page 1) in sub-slot 0, the PicoVerse Audio Engine in sub-slot 3 (card.img is the microSD card; put full paths in the filenames).</description>
     <type>test</type>
   </info>
   <devices>
@@ -17,7 +17,7 @@
           <rom>
             <filename>PICOAMP.ROM</filename>
           </rom>
-          <mappertype>Normal</mappertype>
+          <mappertype>ASCII16</mappertype>
         </ROM>
       </secondary>
       <secondary slot="3">

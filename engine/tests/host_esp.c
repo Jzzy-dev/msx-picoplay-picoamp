@@ -22,6 +22,10 @@
 //                               HLS, broken and over-long ones mixed in;
 //                               tag=many gives 150 stations
 //     /json/url/<uuid>          counts a click
+//   ip-api.com (10.0.0.6)                     /json/?fields=...  Amsterdam by IP
+//   geocoding-api.open-meteo.com (10.0.0.7)   /v1/search?name=   places by name
+//   api.open-meteo.com (10.0.0.8)             /v1/forecast?...   offset and weather now
+//   (these three and the Radio Browser send a Date header: host_esp_date_base + time)
 //   anything else: DNS error
 
 #include <stdio.h>
@@ -55,6 +59,10 @@ uint32_t host_esp_api_bps = 20000;          // API reply speed
 uint32_t host_esp_clicks;
 char     host_esp_last_click[48];
 char     host_esp_last_api[300];
+long long host_esp_date_base = 1793303100LL;    // Date headers: 2026-10-29 19:45:00 UTC + the time
+bool     host_esp_web_down = false;         // 10.0.0.6..8 refuse connections
+uint32_t host_esp_web_requests;
+char     host_esp_last_web[300];
 
 // statistics for the checks
 uint32_t host_esp_opens, host_esp_closes, host_esp_tls_opens, host_esp_requests, host_esp_rcvs;
@@ -177,6 +185,7 @@ static void station_json(bq_t *b, const st_t *t, int i)
     bq_put(b, j, (size_t)n);
 }
 
+static void date_hdr(char *out, size_t size);
 static void api(conn_t *c, const char *path)
 {
     bq_t b = { 0 };
@@ -274,10 +283,10 @@ static void api(conn_t *c, const char *path)
         return;
     }
     if (b.len < 2048) clen = true;          // nginx: small replies have a length, big ones end with the close
-    char hd[200];
-    snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nServer: nginx\r\nContent-Type: application/json; charset=utf-8\r\n%s%s\r\n",
-             clen ? "Content-Length: " : "", "");
-    if (clen) { char l[40]; snprintf(l, sizeof l, "Content-Length: %u\r\n", (unsigned)b.len); snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n%s\r\n", l); }
+    char hd[260], dt[64];
+    date_hdr(dt, sizeof dt);
+    snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nServer: nginx\r\nContent-Type: application/json; charset=utf-8\r\n%s\r\n", dt);
+    if (clen) { char l[40]; snprintf(l, sizeof l, "Content-Length: %u\r\n", (unsigned)b.len); snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n%s%s\r\n", dt, l); }
     bq_put(&c->out, hd, strlen(hd));
     bq_put(&c->pend, b.b, b.len);
     free(b.b);
@@ -285,18 +294,86 @@ static void api(conn_t *c, const char *path)
     c->credit = 0;
 }
 
+static void date_hdr(char *out, size_t size)
+{
+    static const char *wd[] = { "Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed" };
+    static const char *mo[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    long long t = host_esp_date_base + now_ms / 1000u;
+    long long days = t / 86400; int rem = (int)(t % 86400);
+    // civil from days
+    long long z = days + 719468, era = z / 146097;
+    unsigned doe = (unsigned)(z - era * 146097), yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    unsigned d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+    long long y = (long long)yoe + era * 400 + (m <= 2);
+    snprintf(out, size, "Date: %s, %02u %s %lld %02d:%02d:%02d GMT\r\n", wd[days % 7], d, mo[m - 1], y, rem / 3600, rem / 60 % 60, rem % 60);
+}
+
+static void web_json(conn_t *c, const char *j)
+{
+    char hd[300], dt[64];
+    date_hdr(dt, sizeof dt);
+    snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n%sContent-Length: %u\r\n\r\n",
+             dt, (unsigned)strlen(j));
+    bq_put(&c->out, hd, strlen(hd));
+    bq_put(&c->pend, j, strlen(j));
+    c->kind = 4;
+    c->credit = 0;
+}
+
+static void web(conn_t *c, const char *path)
+{
+    host_esp_web_requests++;
+    snprintf(host_esp_last_web, sizeof host_esp_last_web, "%s", path);
+    if (c->ip[3] == 6 && !strncmp(path, "/json/", 6))
+    {
+        web_json(c, "{\"status\":\"success\",\"countryCode\":\"NL\",\"regionName\":\"North Holland\",\"city\":\"Amsterdam\","
+                    "\"lat\":52.3759,\"lon\":4.8975,\"timezone\":\"Europe/Amsterdam\",\"offset\":3600}");
+        return;
+    }
+    if (c->ip[3] == 7 && !strncmp(path, "/v1/search?", 11))
+    {
+        if (strstr(path, "name=zur"))
+            web_json(c, "{\"results\":[{\"id\":2657896,\"name\":\"Z\\u00fcrich\",\"latitude\":47.36667,\"longitude\":8.55,"
+                        "\"elevation\":429.0,\"feature_code\":\"PPLA\",\"country_code\":\"CH\",\"timezone\":\"Europe/Zurich\","
+                        "\"population\":341730,\"postcodes\":[\"8000\",\"8001\"],\"country_id\":2658434,\"country\":\"Switzerland\","
+                        "\"admin1\":\"Zurich\"},{\"id\":1,\"name\":\"Zurich\",\"latitude\":43.0367,\"longitude\":-77.5,"
+                        "\"country_code\":\"US\",\"admin1\":\"New York\",\"timezone\":\"America/New_York\"}],\"generationtime_ms\":1.2}");
+        else if (strstr(path, "name=sydney"))
+            web_json(c, "{\"results\":[{\"name\":\"Sydney\",\"latitude\":-33.86785,\"longitude\":151.20732,\"country_code\":\"AU\","
+                        "\"admin1\":\"New South Wales\",\"timezone\":\"Australia/Sydney\"}],\"generationtime_ms\":0.9}");
+        else web_json(c, "{\"generationtime_ms\":0.4}");
+        return;
+    }
+    if (c->ip[3] == 8 && !strncmp(path, "/v1/forecast?", 13))
+    {
+        char j[700];
+        bool syd = strstr(path, "latitude=-33") != NULL;
+        snprintf(j, sizeof j, "{\"latitude\":%s,\"longitude\":4.9,\"generationtime_ms\":0.03,\"utc_offset_seconds\":%d,"
+                 "\"timezone\":\"%s\",\"timezone_abbreviation\":\"%s\",\"elevation\":13.0,"
+                 "\"current_units\":{\"time\":\"iso8601\",\"interval\":\"seconds\",\"temperature_2m\":\"\\u00b0C\",\"weather_code\":\"wmo code\"},"
+                 "\"current\":{\"time\":\"2026-10-29T20:45\",\"interval\":900,\"temperature_2m\":%s,\"weather_code\":%d}}",
+                 syd ? "-33.87" : "52.37", syd ? 39600 : 3600, syd ? "Australia/Sydney" : "Europe/Amsterdam", syd ? "AEDT" : "CET",
+                 syd ? "21.6" : "-0.4", syd ? 1 : 61);
+        web_json(c, j);
+        return;
+    }
+    http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n", "<html>no</html>");
+}
+
 static void serve(conn_t *c)
 {
     char *r = (char *)c->reqbuf.b;
     char path[256] = "", hosth[128] = "";
     sscanf(r, "GET %255s", path);
-    if (strncmp(path, "/json/", 6)) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }   // a stream's ?query does not matter
+    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4)) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }   // a stream's ?query does not matter
     char *h = strstr(r, "\r\nHost: ");
     if (h) sscanf(h + 8, "%127[^\r]", hosth);
     snprintf(host_esp_last_get, sizeof host_esp_last_get, "%s", r);
     host_esp_requests++;
     bool icy_meta = strstr(r, "Icy-MetaData: 1") != NULL;
     bool r1 = c->ip[3] == 1, r2 = c->ip[3] == 2, sec = c->ip[3] == 3;
+    if (c->ip[3] >= 6 && c->ip[3] <= 8) { web(c, path); return; }
     if (c->ip[3] == 4 || c->ip[3] == 5)
     {
         if (!strstr(r, "User-Agent: ")) { http_reply(c, "HTTP/1.1 403 Forbidden\r\n\r\n", NULL); return; }
@@ -401,7 +478,8 @@ static int dns(const char *name, uint8_t *ip)
     static const struct { const char *n; uint8_t ip[4]; } t[] = {
         { "radio.test", { 10, 0, 0, 1 } }, { "radio2.test", { 10, 0, 0, 2 } }, { "secure.test", { 10, 0, 0, 3 } },
         { "all.api.radio-browser.info", { 10, 0, 0, 4 } }, { "de1.api.radio-browser.info", { 10, 0, 0, 4 } },
-        { "nl1.api.radio-browser.info", { 10, 0, 0, 5 } } };
+        { "nl1.api.radio-browser.info", { 10, 0, 0, 5 } }, { "ip-api.com", { 10, 0, 0, 6 } },
+        { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
     return -1;
 }
@@ -435,8 +513,8 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 5);
-            if ((a[3] == 4 && host_esp_api_down) || (a[3] >= 4 && host_esp_api_all_down)) known = false;
+            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 8);
+            if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];
             memset(c, 0, sizeof *c);

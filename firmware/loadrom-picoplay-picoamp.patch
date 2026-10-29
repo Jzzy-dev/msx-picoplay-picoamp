@@ -1,5 +1,5 @@
 diff --git a/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt b/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
-index fb7b3ce..bd71261 100644
+index fb7b3ce..fa59a51 100644
 --- a/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
 +++ b/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
 @@ -45,6 +45,11 @@ pico_sdk_init()
@@ -14,7 +14,7 @@ index fb7b3ce..bd71261 100644
  # add_compile_options(-O3)
  
  # Add executable. Default name is the project name, version 0.1
-@@ -59,6 +64,20 @@ add_executable(loadrom
+@@ -59,6 +64,24 @@ add_executable(loadrom
      storage/sunrise_sd.c
      storage/flash_sd.c
      storage/hw_config.c
@@ -31,11 +31,15 @@ index fb7b3ce..bd71261 100644
 +    pvaudio/pva_dir.c
 +    pvaudio/pva_eq.c
 +    pvaudio/pva_viz.c
++    pvaudio/pva_json.c
++    pvaudio/pva_web.c
++    pvaudio/pva_cfg.c
++    pvaudio/pva_clock.c
 +    pvaudio/pva_hal_pico.c
      )
  
  pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
-@@ -82,10 +101,16 @@ target_link_libraries(loadrom
+@@ -82,10 +105,16 @@ target_link_libraries(loadrom
      hardware_uart
      tinyusb_board
      tinyusb_host
@@ -126,7 +130,7 @@ index 0000000..9c5c4dd
 +
 +#endif
 diff --git a/2350/software/loadrom.pio/pico/loadrom/loadrom.c b/2350/software/loadrom.pio/pico/loadrom/loadrom.c
-index bb5438d..4fa9706 100644
+index bb5438d..e969b5a 100644
 --- a/2350/software/loadrom.pio/pico/loadrom/loadrom.c
 +++ b/2350/software/loadrom.pio/pico/loadrom/loadrom.c
 @@ -39,6 +39,8 @@
@@ -309,7 +313,7 @@ index bb5438d..4fa9706 100644
  static inline uint8_t __not_in_flash_func(wifi_read_rom_byte)(const uint8_t *wifi_rom_base, uint16_t addr)
  {
      uint32_t rel = (uint32_t)(addr - 0x4000u);
-@@ -2380,6 +2478,568 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, b
+@@ -2380,6 +2478,571 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, b
      }
  }
  
@@ -807,7 +811,7 @@ index bb5438d..4fa9706 100644
 +    uint32_t available_length;
 +    prepare_sunrise_mapper_rom_source(offset, true, &rom_base, &available_length);
 +
-+    // the engine's arena: the SRAM cache after the (16 KB) ROM
++    // the engine's arena: the SRAM cache after the ROM (16 KB banks: PICOAMP and its pages)
 +    uint32_t arena_start = (rom_cached_size + 7u) & ~7u;
 +    if (arena_start + PVA_CORE1_STACK_SIZE + PVA_ARENA_MIN_SIZE > CACHE_SIZE)
 +    {
@@ -830,6 +834,7 @@ index bb5438d..4fa9706 100644
 +    multicore_launch_core1_with_stack(core1_pva_task, pva_core1_stack, PVA_CORE1_STACK_SIZE);
 +
 +    uint8_t subslot_reg = 0x00u;
++    uint8_t rom_bank = 0u;                  // the 16 KB bank of the ROM in page 1 (6000h-67FFh, as ASCII16)
 +    msx_pio_bus_init();
 +
 +    // writes are applied before every read (see loadrom_sunrise_mapper_pva_sd)
@@ -843,6 +848,8 @@ index bb5438d..4fa9706 100644
 +                subslot_reg = wdata;                                            \
 +            else if (((waddr >> 14) & 3u) == 1u && ((subslot_reg >> 2) & 3u) == 3u) \
 +                pva_mem_write(waddr, wdata);                                    \
++            else if ((waddr & 0xF800u) == 0x6000u && ((subslot_reg >> 2) & 3u) == 0u) \
++                rom_bank = wdata & 3u;                                          \
 +        }                                                                       \
 +    } while (0)
 +
@@ -861,7 +868,7 @@ index bb5438d..4fa9706 100644
 +                uint8_t sub = (subslot_reg >> 2) & 3u;
 +                if (sub == 0u)
 +                {
-+                    uint32_t rel = addr & 0x3FFFu;
++                    uint32_t rel = ((uint32_t)rom_bank << 14) | (addr & 0x3FFFu);
 +                    if (rel < available_length)
 +                        data = read_rom_byte(rom_base, rel);
 +                }
@@ -878,7 +885,7 @@ index bb5438d..4fa9706 100644
  void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
  {
      uint16_t bank_registers[6] = {0};
-@@ -4729,7 +5389,8 @@ int __no_inline_not_in_flash_func(main)()
+@@ -4729,7 +5392,8 @@ int __no_inline_not_in_flash_func(main)()
  
          if ((base_rom_type == 11u || base_rom_type == 16u
              || base_rom_type == 17u || base_rom_type == 18u
@@ -888,7 +895,7 @@ index bb5438d..4fa9706 100644
      {
          while (true)
          {
-@@ -4865,6 +5526,15 @@ int __no_inline_not_in_flash_func(main)()
+@@ -4865,6 +5529,15 @@ int __no_inline_not_in_flash_func(main)()
          case 20:
              loadrom_sunrise_megaram_usb(ROM_RECORD_SIZE, true);
              break;
@@ -5203,7 +5210,7 @@ index db96c12..2ae7fac 100644
 +
  #endif // SUNRISE_SD_H
 diff --git a/2350/software/loadrom.pio/tool/src/loadrom.c b/2350/software/loadrom.pio/tool/src/loadrom.c
-index d920cf3..c55dce5 100644
+index d920cf3..00c5f30 100644
 --- a/2350/software/loadrom.pio/tool/src/loadrom.c
 +++ b/2350/software/loadrom.pio/tool/src/loadrom.c
 @@ -28,6 +28,7 @@
@@ -5349,8 +5356,8 @@ index d920cf3..c55dce5 100644
 +            rom_type |= ROM_TYPE_WIFI_FLAG;
 +            printf("WiFi Support: Enabled (internet radio through the ESP-01)\n");
 +        }
-+        if ((uint32_t)picoamp_rom_len != 16384u) {
-+            printf("Embedded PICOAMP ROM must be 16384 bytes (found %u).\n", (unsigned)picoamp_rom_len);
++        if ((uint32_t)picoamp_rom_len % 16384u || !picoamp_rom_len || picoamp_rom_len > 65536u) {
++            printf("Embedded PICOAMP ROM must be 16, 32, 48 or 64 KB (found %u bytes).\n", (unsigned)picoamp_rom_len);
 +            return 1;
 +        }
 +        printf("ROM Type: %s [Embedded]\n", rom_types[ROM_TYPE_PICOAMP]);

@@ -18,6 +18,7 @@
 // program took to answer the keys.
 
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -102,6 +103,33 @@ static uint8_t eng_rd(uint16_t a)
         fprintf(stderr, "[%.2f s] cmd %02X args %02X %02X %02X -> %02X\n", cpu.cyc / 3579545.0, tr_code, tr_args[0], tr_args[1], tr_args[2], v);
     return v;
 }
+static int rom_mode;            // PICOAMP.ROM: at 4000h, started at its INIT, BIOS keys
+static uint8_t romimg[65536];   // its 16 KB banks (6000h selects the one in page 1, as ASCII16)
+static int rom_bank;
+// the MSX2 clock chip (RP5C01, ports B4h/B5h), block 0: running from PICOAMP_RTC
+// ("YYYY-MM-DD HH:MM:SS") or 2026-10-29 21:00:00
+static uint8_t rtc_reg, rtc_mode;
+static long long rtc_base = -1;
+static uint8_t rtc_read(void)
+{
+    if (rtc_reg == 13) return rtc_mode;
+    if ((rtc_mode & 3) != 0 || rtc_reg > 12) return 0x0F;
+    if (rtc_base < 0)
+    {
+        int Y = 2026, M = 10, D = 29, h = 21, m = 0, sec = 0;
+        const char *e = getenv("PICOAMP_RTC");
+        if (e) sscanf(e, "%d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec);
+        struct tm t = { 0 };
+        t.tm_year = Y - 1900; t.tm_mon = M - 1; t.tm_mday = D; t.tm_hour = h; t.tm_min = m; t.tm_sec = sec;
+        rtc_base = (long long)timegm(&t);
+    }
+    time_t now = (time_t)(rtc_base + (long long)(cpu.cyc / 3579545u));
+    struct tm g;
+    gmtime_r(&now, &g);
+    int v[13] = { g.tm_sec % 10, g.tm_sec / 10, g.tm_min % 10, g.tm_min / 10, g.tm_hour % 10, g.tm_hour / 10, g.tm_wday,
+                  g.tm_mday % 10, g.tm_mday / 10, (g.tm_mon + 1) % 10, (g.tm_mon + 1) / 10, (g.tm_year - 80) % 10, (g.tm_year - 80) / 10 % 10 };
+    return (uint8_t)v[rtc_reg];
+}
 static uint8_t rd(void *u, uint16_t a)
 {
     (void)u;
@@ -113,13 +141,21 @@ static void wr(void *u, uint16_t a, uint8_t v)
 {
     (void)u;
     if (page1 == ENGINE && a >= 0x4000 && a < 0x8000) { sync_engine(); eng_wr(a, v); return; }
+    if (rom_mode && a >= 0x4000 && a < 0x8000)
+    {
+        // the cartridge ROM: a write to 6000h-67FFh selects its bank
+        if ((a & 0xF800) == 0x6000 && (v & 3) != rom_bank) { rom_bank = v & 3; memcpy(&mem[0x4000], &romimg[rom_bank * 0x4000], 0x4000); }
+        return;
+    }
     wr_ram++;
     if (a >= 0x100) mem[a] = v;
 }
-static uint8_t pin(z80 *z, uint8_t p) { (void)z; if (p == 0x99) vlatch = false; return 0; }
+static uint8_t pin(z80 *z, uint8_t p) { (void)z; if (p == 0x99) vlatch = false; if (p == 0xB5) return rtc_read(); return 0; }
 static void pout(z80 *z, uint8_t p, uint8_t v)
 {
     (void)z;
+    if (p == 0xB4) { rtc_reg = v & 15; return; }
+    if (p == 0xB5) { if (rtc_reg == 13) rtc_mode = v & 15; return; }
     if (p == 0x98) { vram[vaddr & 0x3FFF] = v; vaddr++; vwrites++; vlatch = false; }
     else if (p == 0x9A)
     {
@@ -178,7 +214,6 @@ static void dos_path(uint16_t p, char *out, size_t n)
 }
 
 static uint8_t key_code(char k);
-static int rom_mode;            // PICOAMP.ROM: at 4000h, started at its INIT, BIOS keys
 static uint8_t pending_key;
 static uint8_t take_key(void)   // the next key of the script when it is due, else 0
 {
@@ -380,13 +415,14 @@ int main(int argc, char **argv)
     FILE *f = fopen(argv[1], "rb");
     size_t al1 = strlen(argv[1]);
     rom_mode = al1 > 4 && !strcasecmp(argv[1] + al1 - 4, ".ROM");
-    size_t n = fread(&mem[rom_mode ? 0x4000 : 0x100], 1, rom_mode ? 0x4000 : 0xD000, f);
+    size_t n = rom_mode ? fread(romimg, 1, sizeof romimg, f) : fread(&mem[0x100], 1, 0xD000, f);
+    if (rom_mode) memcpy(&mem[0x4000], romimg, 0x4000);
     fclose(f);
     if (argc > 7) load_font(argv[7]);
     if (host_disk_open(argv[2], 0)) { printf("no image\n"); return 2; }
-    static uint8_t arena[116 * 1024];
+    static uint8_t arena[200 * 1024];
     host_audio_unlimited = false;
-    pva_init(arena, sizeof arena);
+    pva_init(arena, rom_mode ? sizeof arena : 120u * 1024u);   // as the firmware: PicoAmp ~200 KB, Nextor modes 120 KB
     if (rom_mode) pva_allow_card_writes(true);  // as the PicoAmp firmware: no Nextor
     pva_core1_init();
     const char *a = argv[3];

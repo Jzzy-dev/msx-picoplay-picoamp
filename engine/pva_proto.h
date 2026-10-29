@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        10
+#define PVA_FW_MINOR        11
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -63,6 +63,9 @@
 #define PVA_R_FAULT_TEXT    0xF00u  // char[64] panic message
 // visualisation, about 50 updates a second while something plays (see PVA_VIZ_xxx)
 #define PVA_R_VIZ           0xC00u
+// time of day, place, weather now (see PVA_CK_xxx), engine 0.11
+#define PVA_R_CLOCK         0xD00u
+#define PVA_CLOCK_SIZE      32u
 #define PVA_R_STATUS        0x020u
 #define PVA_STATUS_SIZE     224u
 #define PVA_R_ARGS          0x100u
@@ -89,6 +92,15 @@
                                     // one else writes the card (PicoAmp ROM): else PVA_E_RDONLY
 #define PVA_C_FAV_DEL       0x16    // args: u16 entry of Internet radio/Favourites: it leaves the file,
                                     // the folder is read again (PVA_E_RDONLY as FAV_ADD)
+// settings: PICOAMP.INI in the root of the card (engine 0.11)
+#define PVA_C_CFG_LOAD      0x17    // read the file (none: empty); the clock starts (PVA_R_CLOCK)
+#define PVA_C_CFG_GET       0x18    // args: "section.key" (0-terminated); reply: the value (0-terminated),
+                                    // PVA_E_NOTFOUND when it is not set
+#define PVA_C_CFG_SET       0x19    // args: "section.key" 0, value 0; PVA_E_FULL when the text would
+                                    // pass PVA_CFG_MAX (1000) bytes. In memory until CFG_SAVE
+#define PVA_C_CFG_SAVE      0x1A    // write the file. Only where no one else writes the card (PicoAmp
+                                    // ROM): else PVA_E_RDONLY (the MSX writes CFG_TEXT through MSX-DOS)
+#define PVA_C_CFG_TEXT      0x1B    // reply: the text of the file
 #define PVA_C_PLAY_INDEX    0x20    // args: u16 index in the open folder
 #define PVA_C_PLAY_PATH     0x21    // args: path
 #define PVA_C_PAUSE         0x22    // toggle pause
@@ -101,7 +113,15 @@
 #define PVA_C_EQ            0x2A    // args: 5 x s8 band gains in dB (-12..+12): 60 Hz, 250 Hz,
                                     // 1 kHz, 4 kHz, 12 kHz
 #define PVA_C_BALANCE       0x2B    // args: u8 0 (left only) .. 50 (centre) .. 100 (right only)
-#define PVA_C_PLAY_URL      0x29    // args: URL (http:// or https://, 0-terminated), then an
+#define PVA_C_PLAY_URL      0x29
+// time, place, weather now (engine 0.11; the clock block PVA_R_CLOCK)
+#define PVA_C_CLOCK_INFO    0x30    // reply: place, zone (e.g. Europe/Amsterdam), abbreviation (CET),
+                                    // each 0-terminated
+#define PVA_C_LOC_IP        0x31    // the place of the internet connection (location.mode=ip)
+#define PVA_C_LOC_SEARCH    0x32    // args: text: places of that name; PVA_CK_LOC_STATE goes LOADING,
+                                    // then DONE (PVA_CK_LOC_COUNT found) or FAILED
+#define PVA_C_LOC_LIST      0x33    // reply: u8 count, the places' names (0-terminated each)
+#define PVA_C_LOC_PICK      0x34    // args: u8 index in the list: it becomes location.mode=place    // args: URL (http:// or https://, 0-terminated), then an
                                     // optional station name (0-terminated); MP3 streams
 
 // results
@@ -208,6 +228,35 @@
 #define PVA_VIZ_BANDS       24
 #define PVA_VIZ_MAX         31
 #define PVA_VIZ_WAVE        64
+
+// PVA_R_CLOCK block: offsets. Local time of the place (UTC when the zone is not known yet)
+#define PVA_CK_SEQ          0       // u8  odd while it is updated
+#define PVA_CK_FLAGS        1       // u8  PVA_CKF_xxx
+#define PVA_CK_SEC          2       // u8  0..59
+#define PVA_CK_MIN          3
+#define PVA_CK_HOUR         4       // u8  0..23
+#define PVA_CK_WDAY         5       // u8  0 = Monday .. 6 = Sunday
+#define PVA_CK_DAY          6       // u8  1..31
+#define PVA_CK_MONTH        7       // u8  1..12
+#define PVA_CK_YEAR         8       // u16
+#define PVA_CK_OFFSET       10      // s16 minutes east of UTC (with summer time)
+#define PVA_CK_LOC_STATE    12      // u8  PVA_LOCS_xxx of LOC_SEARCH
+#define PVA_CK_LOC_COUNT    13      // u8  places found
+#define PVA_CK_GEN          14      // u8  +1 when the place, zone or weather changed (CLOCK_INFO again)
+#define PVA_CK_WCODE        15      // u8  WMO weather code now (0 clear .. 99 thunderstorm)
+#define PVA_CK_TEMP         16      // s16 temperature now, 0.1 degrees C
+#define PVA_CK_ABBR         18      // char[8] zone abbreviation (CET, CEST, GMT+1 ...)
+#define PVA_CK_SYNCS        26      // u8  +1 for every time the clock was set
+#define PVA_CK_ERR          27      // u8  PVA_NERR_xxx of the last failed request
+#define PVA_CKF_TIME        0x01    // the time is known (from the internet)
+#define PVA_CKF_ZONE        0x02    // the zone is known (else the time is UTC)
+#define PVA_CKF_WEATHER     0x04    // temperature and weather code are valid
+#define PVA_CKF_BUSY        0x08    // a request runs
+#define PVA_CKF_FAILED      0x10    // the last request failed (PVA_CK_ERR)
+#define PVA_LOCS_IDLE       0
+#define PVA_LOCS_LOADING    1
+#define PVA_LOCS_DONE       2
+#define PVA_LOCS_FAILED     3
 
 #define PVA_STATE_STOPPED   0
 #define PVA_STATE_PLAYING   1

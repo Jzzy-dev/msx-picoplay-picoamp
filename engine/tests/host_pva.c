@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <time.h>
 #include "ff.h"
 #include "../pva.h"
 #include "../pva_internal.h"
@@ -40,6 +41,10 @@ extern uint32_t host_esp_clicks, host_esp_api_bps;
 extern char host_esp_last_click[48], host_esp_last_api[300];
 extern uint32_t host_esp_delay_next_rcv, host_esp_state_asks;
 extern bool host_esp_close_silent;
+extern long long host_esp_date_base;
+extern bool host_esp_web_down;
+extern uint32_t host_esp_web_requests;
+extern char host_esp_last_web[300];
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } else if (verbose) { printf("  ok: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -132,6 +137,35 @@ static int list_dir(uint16_t count)
 static int find(int n, const char *name) { for (int i = 0; i < n; i++) if (!strcmp(ents[i].name, name)) return i; return -1; }
 
 static void run_ms(uint32_t ms) { for (uint32_t i = 0; i < ms; i++) core1_tick(); }
+
+// the clock block (PVA_R_CLOCK)
+static uint8_t ck[PVA_CLOCK_SIZE];
+static void read_clock(void)
+{
+    for (int t = 0; t < 10; t++)
+    {
+        uint8_t s0 = rd(PVA_WIN_BASE + PVA_R_CLOCK);
+        for (unsigned i = 0; i < PVA_CLOCK_SIZE; i++) ck[i] = rd((uint16_t)(PVA_WIN_BASE + PVA_R_CLOCK + i));
+        if (!(s0 & 1) && rd(PVA_WIN_BASE + PVA_R_CLOCK) == s0) return;
+    }
+}
+// the local time the simulated servers' Date gives, at offset 'om' minutes:
+// 'clock y-m-d h:m'
+static void expect_time(int om, char *out, size_t size)
+{
+    long long t = host_esp_date_base + pva_hal_millis() / 1000u + om * 60;
+    time_t tt = (time_t)t;
+    struct tm g;
+    gmtime_r(&tt, &g);
+    snprintf(out, size, "%04d-%02d-%02d %02d:%02d wd%d", g.tm_year + 1900, g.tm_mon + 1, g.tm_mday, g.tm_hour, g.tm_min, (g.tm_wday + 6) % 7);
+}
+static void clock_text(char *out, size_t size)
+{
+    read_clock();
+    snprintf(out, size, "%04d-%02d-%02d %02d:%02d wd%d", ck[PVA_CK_YEAR] | (ck[PVA_CK_YEAR + 1] << 8), ck[PVA_CK_MONTH], ck[PVA_CK_DAY],
+             ck[PVA_CK_HOUR], ck[PVA_CK_MIN], ck[PVA_CK_WDAY]);
+}
+#define WAIT_CLOCK(cond, ms) do { for (int w_ = 0; w_ < (ms) / 50; w_++) { run_ms(50); read_clock(); if (cond) break; } } while (0)
 
 // ------------------------------------------------------------------ image
 static uint8_t *slurp(const char *path, size_t *len)
@@ -1030,6 +1064,115 @@ int main(int argc, char **argv)
         pva_allow_card_writes(false);
         cmd_str(PVA_C_DIR_OPEN, "/Internet radio");
         cmd_str(PVA_C_DIR_OPEN, "/Internet radio");
+
+
+        printf("[clock, place and settings]\n");
+        {
+            char a[64], b[64];
+            read_clock();
+            CHECK((ck[PVA_CK_FLAGS] & PVA_CKF_TIME) && !(ck[PVA_CK_FLAGS] & PVA_CKF_ZONE), "the Radio Browser's Date set the clock (flags %02X)", ck[PVA_CK_FLAGS]);
+            clock_text(a, sizeof a); expect_time(0, b, sizeof b);
+            CHECK(!strcmp(a, b), "UTC before a zone: %s (%s)", a, b);
+            uint32_t wr0 = host_esp_web_requests;
+            run_ms(3000);
+            CHECK(host_esp_web_requests == wr0, "no web requests before PicoAmp starts the clock");
+            f_unlink("0:/PICOAMP.INI");
+            CHECK(cmd(PVA_C_CFG_LOAD, NULL, 0) == PVA_OK, "CFG_LOAD without a file");
+            CHECK(cmd_str(PVA_C_CFG_GET, "clock.face") == PVA_E_NOTFOUND, "no setting: NOTFOUND");
+            WAIT_CLOCK((ck[PVA_CK_FLAGS] & PVA_CKF_WEATHER), 15000);
+            CHECK((ck[PVA_CK_FLAGS] & (PVA_CKF_ZONE | PVA_CKF_WEATHER)) == (PVA_CKF_ZONE | PVA_CKF_WEATHER), "by IP: zone and weather (flags %02X)", ck[PVA_CK_FLAGS]);
+            CHECK(strstr(host_esp_last_web, "latitude=52.3759&longitude=4.8975") && strstr(host_esp_last_web, "timezone=auto"), "the forecast for the IP's place: %s", host_esp_last_web);
+            int16_t om = (int16_t)(ck[PVA_CK_OFFSET] | (ck[PVA_CK_OFFSET + 1] << 8));
+            int16_t t10 = (int16_t)(ck[PVA_CK_TEMP] | (ck[PVA_CK_TEMP + 1] << 8));
+            CHECK(om == 60 && t10 == -4 && ck[PVA_CK_WCODE] == 61 && !strcmp((char *)&ck[PVA_CK_ABBR], "CET"), "UTC+60 min, -0.4 C, code 61, CET (%d %d %u %s)", om, t10, ck[PVA_CK_WCODE], (char *)&ck[PVA_CK_ABBR]);
+            clock_text(a, sizeof a); expect_time(60, b, sizeof b);
+            CHECK(!strcmp(a, b), "local time %s (%s)", a, b);
+            CHECK(cmd(PVA_C_CLOCK_INFO, NULL, 0) == PVA_OK && !strcmp((char *)reply, "Amsterdam, North Holland, NL") &&
+                  !strcmp((char *)reply + strlen((char *)reply) + 1, "Europe/Amsterdam"), "CLOCK_INFO: '%s'", reply);
+            uint8_t s0 = ck[PVA_CK_SEC];
+            run_ms(2000); read_clock();
+            CHECK(ck[PVA_CK_SEC] == (s0 + 2) % 60, "two seconds later: %u -> %u", s0, ck[PVA_CK_SEC]);
+            // places by name
+            CHECK(cmd_str(PVA_C_LOC_SEARCH, "zur") == PVA_OK, "LOC_SEARCH 'zur'");
+            read_clock();
+            CHECK(ck[PVA_CK_LOC_STATE] == PVA_LOCS_LOADING, "loading");
+            WAIT_CLOCK(ck[PVA_CK_LOC_STATE] != PVA_LOCS_LOADING, 10000);
+            CHECK(ck[PVA_CK_LOC_STATE] == PVA_LOCS_DONE && ck[PVA_CK_LOC_COUNT] == 2, "2 places (state %u)", ck[PVA_CK_LOC_STATE]);
+            CHECK(cmd(PVA_C_LOC_LIST, NULL, 0) == PVA_OK && reply[0] == 2 && !strcmp((char *)reply + 1, "Zurich, CH") &&
+                  !strcmp((char *)reply + 1 + strlen((char *)reply + 1) + 1, "Zurich, New York, US"), "LOC_LIST: '%s'", reply + 1);
+            CHECK(cmd_u8(PVA_C_LOC_PICK, 5) == PVA_E_RANGE, "LOC_PICK out of range");
+            uint8_t g0 = ck[PVA_CK_GEN];
+            CHECK(cmd_u8(PVA_C_LOC_PICK, 0) == PVA_OK, "LOC_PICK 0");
+            WAIT_CLOCK(ck[PVA_CK_GEN] != g0 && !(ck[PVA_CK_FLAGS] & PVA_CKF_BUSY) && strstr(host_esp_last_web, "latitude=47.36667"), 10000);
+            CHECK(strstr(host_esp_last_web, "latitude=47.36667&longitude=8.55"), "the forecast for Zurich: %s", host_esp_last_web);
+            CHECK(cmd(PVA_C_CLOCK_INFO, NULL, 0) == PVA_OK && !strcmp((char *)reply, "Zurich, CH"), "CLOCK_INFO: '%s'", reply);
+            CHECK(cmd_str(PVA_C_CFG_GET, "location.mode") == PVA_OK && !strcmp((char *)reply, "place"), "location.mode=%s", reply);
+            CHECK(cmd_str(PVA_C_LOC_SEARCH, "nowhere") == PVA_OK, "LOC_SEARCH 'nowhere'");
+            WAIT_CLOCK(ck[PVA_CK_LOC_STATE] != PVA_LOCS_LOADING, 10000);
+            CHECK(ck[PVA_CK_LOC_STATE] == PVA_LOCS_DONE && ck[PVA_CK_LOC_COUNT] == 0, "no places");
+            // the other side of the world
+            cmd_str(PVA_C_LOC_SEARCH, "sydney");
+            WAIT_CLOCK(ck[PVA_CK_LOC_STATE] != PVA_LOCS_LOADING, 10000);
+            CHECK(cmd_u8(PVA_C_LOC_PICK, 0) == PVA_OK, "Sydney");
+            WAIT_CLOCK((int16_t)(ck[PVA_CK_OFFSET] | (ck[PVA_CK_OFFSET + 1] << 8)) == 660, 10000);
+            t10 = (int16_t)(ck[PVA_CK_TEMP] | (ck[PVA_CK_TEMP + 1] << 8));
+            CHECK(t10 == 216 && ck[PVA_CK_WCODE] == 1 && !strcmp((char *)&ck[PVA_CK_ABBR], "AEDT"), "UTC+11, 21.6 C, AEDT (%d %s)", t10, (char *)&ck[PVA_CK_ABBR]);
+            clock_text(a, sizeof a); expect_time(660, b, sizeof b);
+            CHECK(!strcmp(a, b), "Sydney: %s (%s), the next day", a, b);
+            // settings text
+            {
+                uint8_t kv[] = "clock.face\0analog";
+                CHECK(cmd(PVA_C_CFG_SET, kv, sizeof kv) == PVA_OK, "CFG_SET clock.face");
+            }
+            CHECK(cmd_str(PVA_C_CFG_GET, "Clock.Face") == PVA_OK && !strcmp((char *)reply, "analog"), "CFG_GET (any case): %s", reply);
+            CHECK(cmd(PVA_C_CFG_TEXT, NULL, 0) == PVA_OK, "CFG_TEXT");
+            reply[reply_len] = 0;
+            CHECK(!strcmp((char *)reply, "[location]\r\nmode=place\r\nname=Sydney, New South Wales, AU\r\nlat=-33.86785\r\nlon=151.20732\r\n\r\n[clock]\r\nface=analog\r\n"),
+                  "the text:\n%s", reply);
+            char saved[400];
+            snprintf(saved, sizeof saved, "%s", (char *)reply);
+            CHECK(cmd(PVA_C_CFG_SAVE, NULL, 0) == PVA_E_RDONLY, "CFG_SAVE with Nextor's card: RDONLY");
+            pva_allow_card_writes(true);
+            CHECK(cmd(PVA_C_CFG_SAVE, NULL, 0) == PVA_OK, "CFG_SAVE");
+            {
+                FIL f; char t[400]; UINT got = 0;
+                f_open(&f, "0:/PICOAMP.INI", FA_READ); f_read(&f, t, sizeof t - 1, &got); t[got] = 0; f_close(&f);
+                CHECK(!strcmp(t, saved), "PICOAMP.INI written (%u bytes)", (unsigned)got);
+                // someone edited it: comments, other order, no line end at the end
+                const char *e = "; my settings\r\n[clock]\r\n; the face\r\nFace = digital\r\n\r\n[location]\nmode=ip\nname=x";
+                UINT put = 0;
+                f_open(&f, "0:/PICOAMP.INI", FA_CREATE_ALWAYS | FA_WRITE); f_write(&f, e, (UINT)strlen(e), &put); f_close(&f);
+            }
+            CHECK(cmd(PVA_C_CFG_LOAD, NULL, 0) == PVA_OK && cmd_str(PVA_C_CFG_GET, "clock.face") == PVA_OK && !strcmp((char *)reply, "digital"), "read again: face=%s", reply);
+            {
+                uint8_t k1[] = "clock.face\0analog", k2[] = "clock.time\0msx", k3[] = "screen.colours\0music", k4[] = "location.lat\0" "1";
+                cmd(PVA_C_CFG_SET, k1, sizeof k1); cmd(PVA_C_CFG_SET, k2, sizeof k2); cmd(PVA_C_CFG_SET, k3, sizeof k3); cmd(PVA_C_CFG_SET, k4, sizeof k4);
+            }
+            cmd(PVA_C_CFG_TEXT, NULL, 0);
+            reply[reply_len] = 0;
+            CHECK(!strcmp((char *)reply, "; my settings\r\n[clock]\r\n; the face\r\nFace = analog\r\ntime=msx\r\n\r\n[location]\nmode=ip\nname=x\r\nlat=1\r\n\r\n[screen]\r\ncolours=music\r\n"),
+                  "edited text kept:\n%s", reply);
+            WAIT_CLOCK(!(ck[PVA_CK_FLAGS] & PVA_CKF_BUSY) && (int16_t)(ck[PVA_CK_OFFSET] | (ck[PVA_CK_OFFSET + 1] << 8)) == 60, 15000);
+            CHECK(cmd(PVA_C_CLOCK_INFO, NULL, 0) == PVA_OK && !strcmp((char *)reply, "Amsterdam, North Holland, NL"), "mode=ip from the file: '%s'", reply);
+            {
+                uint8_t big[PVA_ARGS_SIZE];
+                memset(big, 'x', sizeof big);
+                memcpy(big, "x.y", 4);
+                big[200] = 0;
+                int r = PVA_OK;
+                for (int i = 0; i < 10 && r == PVA_OK; i++) { big[0] = (uint8_t)('a' + i); r = cmd(PVA_C_CFG_SET, big, 201); }
+                CHECK(r == PVA_E_FULL, "a full text: FULL");
+            }
+            pva_allow_card_writes(false);
+            f_unlink("0:/PICOAMP.INI");
+            cmd(PVA_C_CFG_LOAD, NULL, 0);
+            host_esp_web_down = true;
+            cmd_str(PVA_C_LOC_SEARCH, "zur");
+            WAIT_CLOCK(ck[PVA_CK_LOC_STATE] != PVA_LOCS_LOADING, 20000);
+            CHECK(ck[PVA_CK_LOC_STATE] == PVA_LOCS_FAILED && ck[PVA_CK_ERR] == PVA_NERR_CONNECT, "search with the server down: FAILED (%u)", ck[PVA_CK_ERR]);
+            host_esp_web_down = false;
+            CHECK(cmd(PVA_C_LOC_LIST, NULL, 0) == PVA_E_STATE, "no list after a failure");
+        }
 
         printf("[directory troubles]\n");
         host_esp_api_down = true;

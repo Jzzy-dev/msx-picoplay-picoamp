@@ -359,6 +359,7 @@ static void http_line(void)
     for (char *k = line; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);
     if (!strcmp(line, "location")) snprintf(location, URL_KEEP + 1, "%s", v);
     else if (!strcmp(line, "content-length")) content_len = (uint32_t)atol(v);
+    else if (!strcmp(line, "date")) pva_clock_http_date(v);
 }
 
 static void d_feed(const uint8_t *p, size_t n)

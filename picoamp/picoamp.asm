@@ -117,6 +117,18 @@ C_BAL    equ #2B
 M_REPEAT equ #01
 M_SHUF   equ #02
 E_BUSY   equ #0B
+; settings and the clock (engine 0.11)
+C_CFGLOAD equ #17
+C_CFGGET equ #18
+C_CFGSET equ #19
+C_CFGSAVE equ #1A
+C_CFGTEXT equ #1B
+C_CKINFO equ #30
+C_LOCIP  equ #31
+C_LOCSRCH equ #32
+C_LOCLIST equ #33
+C_LOCPICK equ #34
+W_CLOCK  equ #4D00
 
 ; status block offsets
 ST_SEQ   equ 0
@@ -218,6 +230,14 @@ start:
         ld bc,0
         call cmd
         jp c,noanswer
+        ld hl,W_ID+10           ; the engine's version (0.x)
+        call rd
+        ld (eng_minor),a
+        cp 11
+        jr c,.cfg
+        ld a,C_CFGLOAD          ; PICOAMP.INI (the clock starts with it)
+        call cmd0
+.cfg:
         ; the starting folder: the argument, or the root
     IFDEF ROMBUILD
         jr .root
@@ -276,6 +296,9 @@ mainloop:
         or a
         call nz,check_loading
         call ticker_run
+        ld a,(ck_on)
+        or a
+        call nz,ck_tick
         call msg_run
         call mouse
         call keys
@@ -378,6 +401,14 @@ fetch_frame:
         di
         ld a,(W_STATUS+ST_DGEN)
         ld (gen_new),a
+        ld a,(ck_on)            ; the clock page: the clock block
+        or a
+        jr z,.nock
+        ld hl,W_CLOCK
+        ld de,ckb
+        ld bc,32
+        ldir
+.nock:
         ld a,(W_VIZ+V_SEQ)
         ld hl,viz_seq
         cp (hl)
@@ -4034,7 +4065,11 @@ fs_open:
         jp fs_setup
 
 fs_close:
+        ld a,(ck_on)
+        or a
+        call nz,ck_leave
         xor a
+        ld (ck_on),a
         ld (fs_on),a
         jp redraw_all
 
@@ -4104,6 +4139,9 @@ fs_setup:
 
 ; row 0: the title, row 23: the picture's name and the time
 fs_info:
+        ld a,(ck_on)
+        or a
+        jp nz,ck_info
         ld hl,st+ST_TITLE
         ld a,(hl)
         or a
@@ -4163,6 +4201,11 @@ put2:   ld b,'0'-1              ; A (0..99): two digits at DE, DE after them
         ret
 
 fs_keys:
+        ld c,a
+        ld a,(ck_on)
+        or a
+        ld a,c
+        jp nz,ck_keys
         cp 29
         jp z,fs_prev
         cp 28
@@ -4187,6 +4230,9 @@ fs_keys:
 
 ; a new picture from the engine
 fs_draw:
+        ld a,(ck_on)
+        or a
+        jp nz,ck_frame
         ld a,(viz+V_SEQ)
         bit 0,a
         ret nz
@@ -5139,7 +5185,7 @@ ms_sprite:
         xor a
         out (VDP_D),a
         out (VDP_D),a
-        ld a,216
+        ld a,(spr_next)         ; the next sprite's Y (216: none; the clock's hand)
         out (VDP_D),a
         ei
         ret
@@ -5169,8 +5215,12 @@ left_click:
         jp nz,help_close
         ld a,(fs_on)
         or a
-        jp nz,fs_next
-        ld a,(ms_x)
+        jr z,.nofs
+        ld a,(ck_on)
+        or a
+        jp nz,ck_click
+        jp fs_next
+.nofs:  ld a,(ms_x)
         rrca
         rrca
         rrca
@@ -5500,6 +5550,10 @@ keys:
         jp z,srch_open
         cp 'j'
         jp z,srch_open
+        cp 'C'
+        jp z,ck_enter
+        cp 'c'
+        jp z,ck_enter
         ; fall through
 
 ; the keys of both screens: A = key
@@ -5656,7 +5710,81 @@ eq_keys:
         jp z,eq_reset
         jp keys_common
 
-quit:   call restore_screen
+;------------------------------------------------------------------------------
+; pages in modules: the clock page (clock.asm) is copied to MODBASE when it opens
+ck_enter:
+        ld a,(eq_open)
+        or a
+        call nz,eq_close
+        call mod_clock_load
+        ld a,1
+        ld (fs_on),a
+        ld (ck_on),a
+        jp ck_open
+
+mod_clock_load:
+    IFDEF ROMBUILD
+        di                      ; page 1 shows this ROM: its bank 1 holds the page
+        ld a,1
+        ld (#6000),a
+        ld hl,mod_clock_src-#4000
+        ld de,MODBASE
+        ld bc,mod_clock_end-mod_clock
+        ldir
+        xor a
+        ld (#6000),a
+        ei
+    ELSE
+        ld hl,mod_clock_src     ; in the COM file after the program
+        ld de,MODBASE
+        ld bc,mod_clock_end-mod_clock
+        ldir
+    ENDIF
+        xor a
+        ld (tk_built),a         ; (the ticker strips are gone)
+        ret
+
+; ini_save: the settings to PICOAMP.INI. The engine writes the file where no
+; one else writes the card (the ROM); under MSX-DOS this program does.
+ini_save:
+        ld a,C_CFGSAVE
+        call cmd0
+        ret c
+        ret z
+    IFNDEF ROMBUILD
+        cp E_RDONLY
+        ret nz
+        ld a,C_CFGTEXT
+        call cmd0
+        ret c
+        ret nz
+        call fav_drive
+        ld a,(fav_path)
+        ld (ini_path),a
+        ld de,ini_path
+        xor a
+        ld b,0
+        ld c,#44                ; _CREATE
+        call BDOS
+        or a
+        ret nz
+        ld a,b
+        ld (fav_fh),a
+        ld de,reply
+        ld hl,(rlen)
+        ld c,#49                ; _WRITE
+        call BDOS
+        ld a,(fav_fh)
+        ld b,a
+        ld c,#45                ; _CLOSE
+        jp BDOS
+    ENDIF
+        ret
+
+quit:   ld a,(ck_on)            ; (the clock page's settings)
+        or a
+        call nz,ck_leave
+        call restore_screen
         ld de,txt_bye
         jr bye
 
@@ -5856,7 +5984,7 @@ help_text:
         db #5E,"E          EQ preset  Z      full screen",0
         db #5E,"F          favourite+ D, DEL favourite-",0
         db #5E,"/ or J     search     ?      this page",0
-        db #5E,"ESC Q      quit",0
+        db #5E,"C          clock      ESC Q  quit",0
         db #5E,0
         db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
         db #4E,"           0 middle, G or ESC closes",0
@@ -6082,6 +6210,10 @@ pl_br:          db 0
 msg_on:         db 0
 msg_until:      dw 0
 fav_path:       db "A:\\RADIOFAV.M3U",0
+ini_path:       db "A:\\PICOAMP.INI",0
+eng_minor:      db 0
+ck_on:          db 0
+spr_next:       db 216
 fav_fh:         db 0
 fav_n:          dw 0
 fav_s:          dw 0
@@ -6089,7 +6221,17 @@ fav_e:          dw 0
 progend:
     IFDEF ROMBUILD
         ENT
-        ds #8000-$,#FF          ; the ROM: 16 KB
+        ds #8000-$,#FF          ; bank 0 of the ROM: 16 KB
+    ENDIF
+
+; the page modules, each assembled to run at MODBASE: in the COM file after
+; the program, in the ROM in bank 1 (4000h when 6000h is written 1)
+mod_clock_src:
+        DISP MODBASE
+        include "clock.asm"
+        ENT
+    IFDEF ROMBUILD
+        ds #C000-$,#FF          ; the ROM: 32 KB
     ENDIF
 
 ; buffers (not in the file; cleared at the start). They are in page 2: page
@@ -6126,9 +6268,12 @@ tkstrip         equ bar_raw + (NBARS+2)*2  ; a ticker's 8 shifted strips, 82 cel
 favbuf          equ tkstrip                 ; (shared: favourites, the plasma's rows)
 pl_tab          equ vizbuf                  ; the plasma's tables (free in the full screen)
         assert (pl_tab & #FF) = 0
+MODBASE         equ tkstrip                 ; (shared: a page module while it shows)
 fav_url         equ tkstrip + 8*82*8
 fav_name        equ fav_url + 256
-bss_end         equ fav_name + 64
+ckb             equ fav_name + 64           ; the engine's clock block (the clock page)
+bss_end         equ ckb + 32
+        assert mod_clock_end - mod_clock <= 8*82*8
         assert 8*82*8 >= FAV_MAX + 1
     IFDEF ROMBUILD
         assert progend - RUN_AT <= #4000 - (rom_payload - #4000)

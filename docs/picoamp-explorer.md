@@ -12,12 +12,13 @@ Two parts, both included:
 
 | Part | Where | What |
 |------|-------|------|
-| `PICOAMP.ROM` | `picoamp/` (built by `build.sh`) | a 16 KB MSX cartridge ROM ("AB" header, INIT at 4010h). Its INIT copies the program to RAM at 8000h and runs it there; it never needs MSX-DOS. Q returns from INIT, so the MSX goes on booting to BASIC (the music plays on). |
+| `PICOAMP.ROM` | `picoamp/` (built by `build.sh`) | a 32 KB MSX cartridge ROM in two 16 KB banks ("AB" header in bank 0, INIT at 4010h; bank 1 holds the clock page). Its INIT copies the program to RAM at 8000h and runs it there; it never needs MSX-DOS. Q returns from INIT, so the MSX goes on booting to BASIC (the music plays on). |
 | The PicoVerse Audio Engine | `engine/` | runs on core 1: MP3/WAV from the microSD card, internet radio and the Radio Browser directory over the ESP-01, equalizer, spectrum/VU/scope data. The MSX talks to it through a 4 KB register window. |
 
 No Nextor, no mapper, no ESP BIOS on the MSX side, and no files on the card
-except the music and `RADIOFAV.M3U`, the favourites, which the engine reads
-and writes itself in this mode (see "Favourites" below).
+except the music, `RADIOFAV.M3U` (the favourites) and `PICOAMP.INI` (the
+clock's settings), which the engine reads and writes itself in this mode (see
+"Favourites" below).
 
 ## The cartridge as the MSX sees it
 
@@ -25,16 +26,20 @@ One **expanded** slot (the sub-slot register at FFFFh, read back inverted):
 
 | Sub-slot | Page 1 (4000h-7FFFh) | Other pages |
 |----------|----------------------|-------------|
-| 0 | `PICOAMP.ROM` (16 KB) | FFh |
+| 0 | `PICOAMP.ROM`: one of its 16 KB banks | FFh |
 | 1, 2 | FFh | FFh |
 | 3 | engine window at 4000h-4FFFh (`"PVAUDIO"` at 4000h), FFh above | FFh |
 
 * Every read in the slot is answered (`in_window = true`), also where nothing
   is (FFh): the slot is expanded, nobody else drives the bus in it.
 * Writes: FFFFh sets the sub-slot register; page 1 of sub-slot 3 goes to
-  `pva_mem_write(addr, data)`; everything else is ignored.
-* Reads: FFFFh gives `~subslot_reg`; page 1 of sub-slot 0 the ROM byte;
-  page 1 of sub-slot 3 `pva_mem_read(addr)`.
+  `pva_mem_write(addr, data)`; 6000h-67FFh in sub-slot 0 selects the ROM's
+  bank in page 1 (`data & 3`, as the ASCII16 mapper; 0 after power on);
+  everything else is ignored.
+* Reads: FFFFh gives `~subslot_reg`; page 1 of sub-slot 0 the ROM byte at
+  `bank * 16 KB + (addr & 3FFFh)`; page 1 of sub-slot 3 `pva_mem_read(addr)`.
+* PICOAMP selects bank 1 only for the moment it copies a page module into
+  its RAM (interrupts off), then bank 0 again; the BIOS always finds bank 0.
 * **Apply all pending writes before answering a read.** The bus loop must
   drain the write FIFO again after it took the read address and before it
   computes the data. A sub-slot change at FFFFh followed at once by a read in
@@ -65,7 +70,9 @@ no header.
 * All of `engine/` except `pva_hal_pico.c`'s pin choices, which may need
   changing (below): `pva_window.c` (core 0: `pva_mem_read`/`pva_mem_write`,
   in RAM), `pva_engine.c`, `pva_decode.c`, `pva_net.c`, `pva_esp.c`,
-  `pva_dir.c`, `pva_eq.c`, `pva_viz.c`, `pva_hal_pico.c`.
+  `pva_dir.c`, `pva_eq.c`, `pva_viz.c`, `pva_json.c`, `pva_web.c` (web
+  requests in their own slot of the ESP link), `pva_cfg.c` (the settings
+  text), `pva_clock.c` (time, place, weather now), `pva_hal_pico.c`.
 * The Helix MP3 decoder (`lib/picomp3lib`), with its allocator pointed at
   the engine (`buffers.c` built with `MPDEC_ALLOCATOR` and
   `audio/mp3_alloc_dispatch.h`, as in LoadROM's `CMakeLists.txt`). Explorer
@@ -82,7 +89,7 @@ no header.
 |------|------|------|
 | `pva_init(arena, size)` | 0 | before core 1 starts; `size` ≥ `PVA_ARENA_MIN_SIZE` (96 KB) |
 | `pva_set_stack(stack, PVA_CORE1_STACK_SIZE)` | 0 | the core 1 stack (8 KB) for the crash notes |
-| `pva_allow_card_writes(true)` | 0 | before core 1 starts: nobody else writes the card in this mode, so the engine may change `RADIOFAV.M3U` (FAV_ADD / FAV_DEL). Leave it off wherever Nextor runs |
+| `pva_allow_card_writes(true)` | 0 | before core 1 starts: nobody else writes the card in this mode, so the engine may change `RADIOFAV.M3U` (FAV_ADD / FAV_DEL) and `PICOAMP.INI` (CFG_SAVE). Leave it off wherever Nextor runs |
 | `pva_mem_read(addr)`, `pva_mem_write(addr, data)` | 0 | from the bus loop (both `__not_in_flash`) |
 | `pva_command_pending()` | 1 | core 1 waits for the first command before it starts the engine, so a boot never depends on it |
 | `pva_core1_init()`, then `pva_core1_poll()` in a loop | 1 | `sleep_us(50)` when it returns false (nothing to do), to leave the buses to core 0 |
@@ -102,9 +109,9 @@ no header.
 
 | What | Size |
 |------|------|
-| ROM copy in SRAM (`rom_sram`) | 16 KB |
+| ROM copy in SRAM (`rom_sram`) | 32 KB |
 | core 1 stack | 8 KB |
-| engine arena (the rest of the 256 KB `rom_sram` cache) | ~232 KB here; 96 KB is the minimum |
+| engine arena (the rest of the 256 KB `rom_sram` cache) | ~216 KB here; 96 KB is the minimum |
 | stream RAM | 128 KB (emu2413 tables) |
 
 ## The MSX side, for reference
@@ -112,8 +119,12 @@ no header.
 * `PICOAMP.ROM` finds the engine by `"PVAUDIO"` at 4000h in every slot and
   sub-slot, so it works wherever the cartridge is.
 * It needs an MSX2 (SCREEN 4, the palette, sprites in mode 2) and 64 KB of
-  RAM: the program at 8000h-B6xxh, its buffers up to about E400h, the stack
-  of the BIOS above.
+  RAM: the program at 8000h-B7xxh, its buffers up to about E500h (the clock
+  page is copied into one of them while it shows), the stack of the BIOS
+  above.
+* The clock page needs engine 0.11 and WiFi for the internet time, the place
+  and the weather (web requests to ip-api.com and Open-Meteo, while the radio
+  plays); without them it shows the MSX2's clock chip.
 * Window protocol, status block and visualisation block:
   `engine/pva_proto.h` and `docs/picoplay.md` section 7.
 

@@ -166,6 +166,9 @@ static void set_reply_text(const char *s, size_t n)
     reply_len = (uint32_t)n;
 }
 
+void pva_reply_byte(uint8_t b) { set_reply_byte(b); }
+void pva_reply_str(const char *s) { set_reply_str(s); }
+
 // ---------------------------------------------------------------- folders
 static int read_dir(const char *path)
 {
@@ -1011,6 +1014,81 @@ static int cmd_fav_del(void)
     return PVA_OK;
 }
 
+// ---------------------------------------------------------------- settings
+#define CFG_FILE        "/PICOAMP.INI"
+
+// CFG_LOAD: read PICOAMP.INI (none: empty settings); the clock starts
+static int cmd_cfg_load(void)
+{
+    char fp[PATH_MAX_LEN + 8];
+    static char t[PVA_CFG_MAX + 1];
+    UINT got = 0;
+    if (mounted || do_mount())
+    {
+        fs_refresh();
+        fatfs_path(fp, sizeof fp, CFG_FILE);
+        FRESULT fr = f_open(m3u_file, fp, FA_READ);
+        if (fr == FR_OK)
+        {
+            fr = f_read(m3u_file, t, PVA_CFG_MAX, &got);
+            f_close(m3u_file);
+            if (fr != FR_OK) got = 0;
+        }
+    }
+    pva_cfg_load(t, got);
+    pva_clock_enable();
+    pva_log("settings: %u bytes", (unsigned)got);
+    return PVA_OK;
+}
+
+static int cmd_cfg_get(void)
+{
+    char k[64], v[PVA_NAME_MAX * 2];
+    args[PVA_ARGS_SIZE - 1] = 0;
+    snprintf(k, sizeof k, "%s", (const char *)args);
+    if (!pva_cfg_get(k, v, sizeof v)) return PVA_E_NOTFOUND;
+    set_reply_str(v);
+    return PVA_OK;
+}
+
+static int cmd_cfg_set(void)
+{
+    args[PVA_ARGS_SIZE - 1] = 0;
+    const char *k = (const char *)args;
+    size_t kl = strlen(k);
+    if (!kl || kl > 60 || kl + 2 >= PVA_ARGS_SIZE) return PVA_E_ARGS;
+    const char *v = k + kl + 1;
+    if (!pva_cfg_set(k, v)) return PVA_E_FULL;
+    if (!strncmp(k, "location.", 9)) pva_clock_cfg_changed();
+    return PVA_OK;
+}
+
+static int cmd_cfg_save(void)
+{
+    if (!card_writes) return PVA_E_RDONLY;
+    if (!mounted && !do_mount()) return PVA_E_NOCARD;
+    char fp[PATH_MAX_LEN + 8];
+    size_t n;
+    const char *t = pva_cfg_text(&n);
+    fs_refresh();
+    fatfs_path(fp, sizeof fp, CFG_FILE);
+    FRESULT fr = f_open(m3u_file, fp, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr != FR_OK) { last_fr = (uint8_t)fr; return PVA_E_IO; }
+    UINT put = 0;
+    fr = f_write(m3u_file, t, (UINT)n, &put);
+    FRESULT fc = f_close(m3u_file);
+    if (fr != FR_OK || fc != FR_OK || put != n) { last_fr = (uint8_t)(fr ? fr : fc); return PVA_E_IO; }
+    return PVA_OK;
+}
+
+static int cmd_cfg_text(void)
+{
+    size_t n;
+    const char *t = pva_cfg_text(&n);
+    set_reply_text(t, n);
+    return PVA_OK;
+}
+
 // ---------------------------------------------------------------- playback
 static void set_title_from_path(const char *path)
 {
@@ -1414,6 +1492,16 @@ static int execute(uint8_t code)
         case PVA_C_DIR_SEARCH: return cmd_dir_search();
         case PVA_C_FAV_ADD:   return cmd_fav_add();
         case PVA_C_FAV_DEL:   return cmd_fav_del();
+        case PVA_C_CFG_LOAD:  return cmd_cfg_load();
+        case PVA_C_CFG_GET:   return cmd_cfg_get();
+        case PVA_C_CFG_SET:   return cmd_cfg_set();
+        case PVA_C_CFG_SAVE:  return cmd_cfg_save();
+        case PVA_C_CFG_TEXT:  return cmd_cfg_text();
+        case PVA_C_CLOCK_INFO: return pva_clock_info();
+        case PVA_C_LOC_IP:    return pva_clock_loc_ip();
+        case PVA_C_LOC_SEARCH: args[PVA_ARGS_SIZE - 1] = 0; return pva_clock_search((const char *)args);
+        case PVA_C_LOC_LIST:  return pva_clock_list();
+        case PVA_C_LOC_PICK:  return pva_clock_pick(args[0]);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1624,6 +1712,7 @@ void pva_core1_init(void)
     bool dec_ok = pva_dec_init();
     bool net_ok = pva_net_init();
     pva_viz_init();                     // takes some of the stream RAM; before the directory
+    if (net_ok && !pva_web_init()) pva_log("web: no memory");
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();
     pva_hal_audio_mute(true);
@@ -1664,6 +1753,8 @@ bool pva_core1_poll(void)
 
     pva_win[PVA_R_WHERE] = PVA_W_RADIO;
     radio_poll();
+    pva_web_poll();
+    pva_clock_poll();
     pva_win[PVA_R_WHERE] = PVA_W_STREAM;
     if (pva_net_active())
     {

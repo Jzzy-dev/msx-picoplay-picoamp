@@ -3,7 +3,7 @@
 PICOAMP is a full-screen MP3/WAV and internet radio player for MSX-DOS. It
 looks like a mix of Winamp and the MUBScope player. It needs an **MSX2** and a
 PicoVerse 2350 cartridge running the PicoPlay firmware (Audio Engine 0.8 or
-newer; 0.9 for the station search). The engine does the decoding, the equalizer and the sound analysis.
+newer; 0.9 for the station search, 0.11 for the clock's internet time). The engine does the decoding, the equalizer and the sound analysis.
 PICOAMP only copies the data and draws it.
 
 ![PICOAMP playing](images/picoamp_playing.png)
@@ -16,13 +16,17 @@ PICOAMP only copies the data and draws it.
 |---|---|
 | ![Full screen](images/picoamp_fullscreen.png) | ![Help](images/picoamp_help.png) |
 
+| Clock (C): digital | Clock: analog |
+|---|---|
+| ![Digital clock](images/picoamp_clock_digital.png) | ![Analog clock](images/picoamp_clock_analog.png) |
+
 ## Running it
 
 Two builds of the same program:
 
 * `PICOAMP.COM` for MSX-DOS 2 / Nextor, with the PicoPlay firmware
   (`loadrom -p1 -w`).
-* `PICOAMP.ROM`, a 16 KB cartridge ROM, with the PicoAmp firmware
+* `PICOAMP.ROM`, a 32 KB cartridge ROM (two 16 KB banks), with the PicoAmp firmware
   (`loadrom -pa -w`): the MSX boots straight into the player, without Nextor.
   It copies itself to RAM at 8000h and reads the keys through the BIOS; Q
   goes back to the BIOS (and on to BASIC). F and D change the favourites
@@ -81,6 +85,7 @@ PICOAMP shows "LOADING THE LIST...".
 | G | Equalizer screen |
 | E | Next equalizer preset (Flat, Rock, Pop, Jazz, Classic, Voice, Bass, Loud) |
 | Z | Full screen pictures |
+| C | The clock page |
 | F | Add the chosen station (or the one that plays) to the favourites |
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
 | / or J | Search the station directory by name |
@@ -97,6 +102,73 @@ MSX-DOS: it asks the engine to add or remove the station (FAV_ADD / FAV_DEL,
 engine 0.10), which the PicoAmp firmware allows because nobody else writes
 the card there. A message in the path line says what
 happened ("Added to the favourites", "Already a favourite", ...).
+
+### Clock
+
+C opens a page with the time, digital or analog, for having the MSX on with
+the radio playing:
+
+* **Digital:** HH:MM in 7-segment digits 80 pixels high, a blinking colon, a
+  seconds bar, the date, the place, and one line with the zone (UTC+01:00
+  CET), the weather now (-0.4 C Rain) and where the time comes from.
+* **Analog:** a dial with hour strokes and minute dots, the hour and minute
+  hands, a second hand of red dots (sprites), the time in big digits beside
+  it, the day, the date, the place, the zone and the weather.
+* **Colours:** the digits and the dial are four colours that turn round a
+  colour wheel while music plays, faster when it is louder, brighter with the
+  bass (or calm cyan to blue, M).
+* **The small spectrum:** 24 bars of 4 cells at the bottom (B: on/off).
+* **Row 0:** what plays.
+
+| Key | Action |
+|-----|--------|
+| Left / Right, V, a click | Digital / analog |
+| T | The time: internet / the MSX's clock chip |
+| L | The place: type a name and Enter (a list to choose from), or Enter alone for the place of the internet connection |
+| M | Music colours / calm colours |
+| B | The small spectrum on / off |
+| K | Set the MSX's clock chip to the internet time |
+| C, Z, ESC, Enter, BS, the right button | Back |
+
+The other playback keys keep working.
+
+**Where the time and the place come from.** The engine (0.11) keeps the
+time: every web reply over the ESP-01 carries the time (its Date header), and
+the RP2350 counts on from it. The place is either the one of the internet
+connection (ip-api.com) or one found by name (Open-Meteo's geocoding); the
+zone with summer time and the weather now come from Open-Meteo's forecast,
+asked again every 30 minutes. All of this goes over the same WiFi link as the
+radio, while it plays, and PICOAMP gets it ready as local date and time: no
+date sums on the Z80. Without WiFi, or with an older engine, the page shows
+the MSX's own clock chip (MSX2), and says so. Open-Meteo and ip-api.com are
+free for non-commercial use and need no key.
+
+![Choosing a place](images/picoamp_clock_place.png)
+
+### Settings: PICOAMP.INI
+
+`PICOAMP.INI` in the root of the card keeps the clock's settings:
+
+```
+[clock]
+face=analog
+time=internet
+colours=music
+spectrum=on
+
+[location]
+mode=place
+name=Zurich, CH
+lat=47.36667
+lon=8.55
+```
+
+The engine reads the file when PICOAMP starts (and starts the clock with it);
+`location.mode=ip` (the default) takes the place of the internet connection.
+A changed setting is saved when the page closes (or PICOAMP quits): by the
+engine in the ROM version, by PICOAMP through MSX-DOS in the COM version, on
+the same drive as the favourites. The file can be edited by hand; comments
+(`;`) and the order of the lines are kept.
 
 ### Search
 
@@ -196,6 +268,16 @@ after it has reported standing still once.
   times a second. See `engine/pva_viz.c` and the `PVA_VIZ_*` offsets in
   `engine/pva_proto.h`. Any MSX program can read this block.
 
+### Page modules
+
+The clock page is a module (`clock.asm`): it is assembled to run at the ticker
+strips' buffer (5 KB in page 2, free while a page shows) and copied there when
+the page opens. In the COM file it comes after the program; in the ROM it is
+bank 1 (page 1 shows bank 1 when 6000h is written 1, as an ASCII16 mapper; the
+firmware does this for ROM type 23). So the main program stays within its
+limits: below 4000h in the COM file, 16 KB of ROM. Weather and news pages can
+come the same way.
+
 ## Building
 
 ```
@@ -205,10 +287,11 @@ python3 gen_digits.py > digits.inc      # 7-segment digits (already generated)
 ```
 
 `build.sh` runs `sjasmplus --raw=PICOAMP.COM picoamp.asm` and
-`sjasmplus -DROMBUILD --raw=PICOAMP.ROM picoamp.asm`.
+`sjasmplus -DROMBUILD --raw=PICOAMP.ROM picoamp.asm` (both include
+`clock.asm`).
 
-PICOAMP.COM is about 13.5 KB (page 0, below 4000h: page 1 is switched to the
-engine). Its buffers are in page 2, from 8000h to about AC60h; the program
+PICOAMP.COM is about 19 KB: the program (14 KB) in page 0, below 4000h (page
+1 is switched to the engine), then the clock page. Its buffers are in page 2, from 8000h to about AC60h; the program
 says so and stops when MSX-DOS leaves less room.
 
 ### Tests
@@ -235,7 +318,9 @@ reads and writes its RAM. On a 3.58 MHz Z80 a pass takes about 1.1 frames
 with the spectrum (the Z80 is idle 75% of the time), about 1.5 with the
 oscilloscope; equalizer changes are answered in 1-3 frames.
 `PICOAMP_PROF=file` writes a profile (program counter samples),
-`PICOAMP_COUNT="addr,..."` counts how often addresses are run. The harness
+`PICOAMP_COUNT="addr,..."` counts how often addresses are run,
+`PICOAMP_TRACE=1` prints every engine command with its result,
+`PICOAMP_RTC="2026-10-29 21:00:00"` sets the emulated MSX2 clock chip. The harness
 also answers the MSX-DOS 2 file calls (open, create, read, write, close and
 `PROGRAM`) on the card image, through the engine's own FatFs, and saves the
 palette after VRAM so the plasma's picture shows its real colours.
@@ -258,5 +343,6 @@ layout.
 
 ## Ideas for later
 
-An MSX1 version, more full screen pictures (a big oscilloscope, stars that
+Weather (the next days, with animations) and short news (teletext style)
+pages as modules, an MSX1 version, more full screen pictures (a big oscilloscope, stars that
 jump with the bass), a peak-hold setting for the spectrum.

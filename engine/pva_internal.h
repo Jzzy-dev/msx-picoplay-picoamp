@@ -194,6 +194,70 @@ void pva_viz_feed(const int16_t *stereo, uint32_t frames, uint32_t rate);
 void pva_viz_poll(bool playing);
 void pva_viz_get(uint8_t *levels, uint8_t *peaks, uint8_t *vu_lr);
 
+// streaming JSON (pva_json.c)
+#define PVA_JSON_DEPTH      6
+#define PVA_JSON_VALUE      1       // a value: path, its text, index in the innermost array
+#define PVA_JSON_END        2       // an object ended (path = where it was)
+typedef struct pva_json pva_json_t;
+typedef void (*pva_json_cb)(pva_json_t *j, int ev, const char *path, const char *val, uint16_t idx);
+struct pva_json
+{
+    pva_json_cb cb;
+    void    *user;
+    uint8_t  depth;
+    bool     is_arr[PVA_JSON_DEPTH];
+    uint16_t idx[PVA_JSON_DEPTH];
+    char     name[PVA_JSON_DEPTH][24];
+    bool     in_str, esc, is_key, expect_key, have_val, seen, done;
+    uint8_t  uhex, klen;
+    uint32_t ucp;
+    char     key[24];
+    char     val[200];
+    uint16_t vlen;
+    char     pbuf[96];
+};
+void pva_json_reset(pva_json_t *j);         // keeps cb and user
+void pva_json_byte(pva_json_t *j, char c);
+
+// web requests (pva_web.c)
+#define PVA_WEB_IDLE        0
+#define PVA_WEB_BUSY        1
+#define PVA_WEB_DONE        2
+#define PVA_WEB_FAILED      3
+typedef bool (*pva_web_body_fn)(const uint8_t *p, size_t n);   // true: enough
+typedef void (*pva_web_done_fn)(bool ok);
+bool     pva_web_init(void);
+int      pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done);
+void     pva_web_poll(void);
+bool     pva_web_busy(void);
+uint8_t  pva_web_result(void);
+uint8_t  pva_web_error(void);           // PVA_NERR_xxx
+uint16_t pva_web_http(void);
+
+// settings text, PICOAMP.INI (pva_cfg.c)
+#define PVA_CFG_MAX         1000u   // the MSX reads it in one reply
+void        pva_cfg_load(const char *t, size_t n);
+const char *pva_cfg_text(size_t *n);
+bool        pva_cfg_get(const char *sk, char *out, size_t size);   // "section.key"
+bool        pva_cfg_set(const char *sk, const char *val);          // false: no room
+uint8_t     pva_cfg_gen(void);
+
+// time, place and weather now (pva_clock.c)
+void pva_clock_http_date(const char *v);
+bool pva_clock_have_time(void);
+void pva_clock_poll(void);
+void pva_clock_enable(void);
+void pva_clock_cfg_changed(void);
+int  pva_clock_info(void);
+int  pva_clock_loc_ip(void);
+int  pva_clock_search(const char *text);
+int  pva_clock_list(void);
+int  pva_clock_pick(uint8_t i);
+
+// replies (pva_engine.c)
+void pva_reply_byte(uint8_t b);
+void pva_reply_str(const char *s);
+
 // helpers
 int  pva_kind_from_name(const char *name);   // PVA_DE_xxx or 0
 void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
