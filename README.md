@@ -22,7 +22,7 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 |---|---|
 | ![Digital clock](picoamp/images/picoamp_clock_digital.png) | ![Analog clock](picoamp/images/picoamp_clock_analog.png) |
 
-**v1.1 (this `clock` branch, not tried on a cartridge yet):** the clock page.
+**v1.1:** the clock page (tested on a PicoVerse 2350 with an NMS 8245, as COM and ROM).
 The engine (0.11) takes the time from the internet over the same WiFi link
 as the radio, the place from the internet connection or by name, and the
 zone (with summer time) and the weather now from Open-Meteo; the MSX2's own
@@ -32,7 +32,7 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(the same file as `bin/picoamp_wifi.uf2` on the `main` branch).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.1, with the clock).
 
 ## Downloads (`bin/`)
 
