@@ -3,7 +3,9 @@
 PICOAMP is a full-screen MP3/WAV and internet radio player for MSX-DOS. It
 looks like a mix of Winamp and the MUBScope player. It needs an **MSX2** and a
 PicoVerse 2350 cartridge running the PicoPlay firmware (Audio Engine 0.8 or
-newer; 0.9 for the station search, 0.11 for the clock's internet time). The engine does the decoding, the equalizer and the sound analysis.
+newer; 0.9 for the station search, 0.11 for the clock's internet time, 0.12
+for the weather, the news, the sleep timer and the alarm). The engine does
+the decoding, the equalizer and the sound analysis.
 PICOAMP only copies the data and draws it.
 
 ![PICOAMP playing](images/picoamp_playing.png)
@@ -20,13 +22,17 @@ PICOAMP only copies the data and draws it.
 |---|---|
 | ![Digital clock](images/picoamp_clock_digital.png) | ![Analog clock](images/picoamp_clock_analog.png) |
 
+| Weather (W) | News (T) |
+|---|---|
+| ![Weather](images/picoamp_weather.png) | ![News](images/picoamp_news_list.png) |
+
 ## Running it
 
 Two builds of the same program:
 
 * `PICOAMP.COM` for MSX-DOS 2 / Nextor, with the PicoPlay firmware
   (`loadrom -p1 -w`).
-* `PICOAMP.ROM`, a 32 KB cartridge ROM (two 16 KB banks), with the PicoAmp firmware
+* `PICOAMP.ROM`, a 64 KB cartridge ROM (four 16 KB banks), with the PicoAmp firmware
   (`loadrom -pa -w`): the MSX boots straight into the player, without Nextor.
   It copies itself to RAM at 8000h and reads the keys through the BIOS; Q
   goes back to the BIOS (and on to BASIC). F and D change the favourites
@@ -86,6 +92,8 @@ PICOAMP shows "LOADING THE LIST...".
 | E | Next equalizer preset (Flat, Rock, Pop, Jazz, Classic, Voice, Bass, Loud) |
 | Z | Full screen pictures |
 | C | The clock page |
+| W | The weather page |
+| T | The news page |
 | F | Add the chosen station (or the one that plays) to the favourites |
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
 | / or J | Search the station directory by name |
@@ -109,11 +117,13 @@ C opens a page with the time, digital or analog, for having the MSX on with
 the radio playing:
 
 * **Digital:** HH:MM in 7-segment digits 80 pixels high, a blinking colon, a
-  seconds bar, the date, the place, and one line with the zone (UTC+01:00
-  CET), the weather now (-0.4 C Rain) and where the time comes from.
+  seconds bar, the date, the place, and one line with the weather now
+  (-0.4 C Rain) and where the time comes from. Below it the sleep timer and
+  the alarm, when they are set.
 * **Analog:** a dial with hour strokes and minute dots, the hour and minute
   hands, a second hand of red dots (sprites), the time in big digits beside
-  it, the day, the date, the place, the zone and the weather.
+  it, the day, the date, the place, the weather, the sleep timer and the
+  alarm.
 * **Colours:** the digits and the dial are four colours that turn round a
   colour wheel while music plays, faster when it is louder, brighter with the
   bass (or calm cyan to blue, M).
@@ -123,11 +133,14 @@ the radio playing:
 | Key | Action |
 |-----|--------|
 | Left / Right, V, a click | Digital / analog |
-| T | The time: internet / the MSX's clock chip |
+| I | The time: internet / the MSX's clock chip |
 | L | The place: type a name and Enter (a list to choose from), or Enter alone for the place of the internet connection |
 | M | Music colours / calm colours |
 | B | The small spectrum on / off |
 | K | Set the MSX's clock chip to the internet time |
+| O | The sleep timer: 15, 30, 45, 60, 90 minutes, off |
+| A | The alarm: type the time (7:30, 0730; a `w` after it: Monday to Friday only), Enter; Enter alone switches it off |
+| W, T | The weather page, the news page |
 | C, Z, ESC, Enter, BS, the right button | Back |
 
 The other playback keys keep working.
@@ -145,6 +158,55 @@ free for non-commercial use and need no key.
 
 ![Choosing a place](images/picoamp_clock_place.png)
 
+**Sleep timer and alarm** (engine 0.12). The engine does both, so they work
+after PICOAMP has quit too. In the sleep time's last 30 seconds the music
+fades out, then it stops. The alarm plays what played when it was set (a
+station or a file; "Play the station for the alarm first" when nothing
+plays) at its time, every day or Monday to Friday, fading in over a minute;
+"Alarm 07:30 !" shows while it rings, until a playback key is pressed. The alarm
+is kept in `PICOAMP.INI` (below), so it still rings after the cartridge was
+switched off and on, if PICOAMP or the PicoAmp ROM has been started and the
+WiFi has the time.
+
+![Sleep timer and alarm](images/picoamp_clock_alarm.png)
+
+### Weather
+
+W opens the weather for the clock's place (engine 0.12, WiFi):
+
+* **Now:** a big picture that moves (the sun's rays turn, clouds drift,
+  stars twinkle at night, rain and snow fall as sprites, a thunderstorm
+  flashes), the temperature in big digits, the weather in words, how warm it
+  feels, the humidity and the wind, the date and the time.
+* **The next days:** up to six columns: the day, a small picture, the
+  highest and lowest temperature and the chance of rain.
+
+The data is Open-Meteo's forecast, which the engine asks for again every 30
+minutes. C goes to the clock, T to the news, W, ESC, Enter, BS or the right
+button back to the player.
+
+### News
+
+T opens the news as teletext pages (engine 0.12, WiFi), white and colour on
+black, with the page number and the time in the top row:
+
+* **Page 100**, the index: the feeds, 101 and on. Type a page number, or
+  choose with Up/Down and Enter.
+* **Page 101...**, a feed's headlines, six to a subpage. The subpages turn by
+  themselves every 20 seconds, as on teletext; Left/Right turn them by hand.
+  Enter opens the chosen story.
+* **A story:** the headline, the time, and the text, wrapped. Left/Right: the
+  story before or after, ESC: back to the headlines; I: the index.
+
+The engine reads the feed (RSS, RDF or Atom) while it comes in and keeps up
+to 40 stories, titles and text without HTML. The feeds are BBC World, Al
+Jazeera, DW, The Guardian and NOS (NL) unless `PICOAMP.INI` names others
+(below). C goes to the clock, W to the weather, T or ESC back to the player.
+
+| Index | A story |
+|---|---|
+| ![News index](images/picoamp_news_index.png) | ![News story](images/picoamp_news_story.png) |
+
 ### Settings: PICOAMP.INI
 
 `PICOAMP.INI` in the root of the card keeps the clock's settings:
@@ -161,10 +223,24 @@ mode=place
 name=Zurich, CH
 lat=47.36667
 lon=8.55
+
+[alarm]
+on=on
+time=07:30
+days=weekdays
+play=http://icecast.omroep.nl/radio2-bb-mp3
+name=NPO Radio 2
+
+[news]
+feed1=BBC World|http://feeds.bbci.co.uk/news/world/rss.xml
+feed2=NOS (NL)|https://feeds.nos.nl/nosnieuwsalgemeen
 ```
 
 The engine reads the file when PICOAMP starts (and starts the clock with it);
 `location.mode=ip` (the default) takes the place of the internet connection.
+`[alarm]` is written by A on the clock page; `days` is `daily` or `weekdays`.
+`[news]` has up to 8 feeds (`feed1` to `feed8`), `Name|URL` each (http or https); without the
+section the five feeds above are used.
 A changed setting is saved when the page closes (or PICOAMP quits): by the
 engine in the ROM version, by PICOAMP through MSX-DOS in the COM version, on
 the same drive as the favourites. The file can be edited by hand; comments
@@ -270,13 +346,17 @@ after it has reported standing still once.
 
 ### Page modules
 
-The clock page is a module (`clock.asm`): it is assembled to run at the ticker
-strips' buffer (5 KB in page 2, free while a page shows) and copied there when
-the page opens. In the COM file it comes after the program; in the ROM it is
-bank 1 (page 1 shows bank 1 when 6000h is written 1, as an ASCII16 mapper; the
-firmware does this for ROM type 23). So the main program stays within its
-limits: below 4000h in the COM file, 16 KB of ROM. Weather and news pages can
-come the same way.
+The clock, weather and news pages are modules (`clock.asm`, `weather.asm`,
+`news.asm`): each is assembled to run at the ticker strips' buffer (7 KB in
+page 2, free while a page shows) and copied there when the page opens. Each
+starts with a table of jumps (open, tick, frame, keys, info, click, leave)
+that the main program calls. In the COM file they come after the program; in
+the ROM they are banks 1, 2 and 3 (page 1 shows bank n when 6000h is
+written n, as an ASCII16 mapper; the firmware does this for ROM type 23). So
+the main program stays within its limits: below 4000h in the COM file, 16 KB
+of ROM. The weather page draws its pictures from circles and lines into
+three layers in the scope's buffer, and puts them together for each step of
+the animation.
 
 ## Building
 
@@ -288,10 +368,10 @@ python3 gen_digits.py > digits.inc      # 7-segment digits (already generated)
 
 `build.sh` runs `sjasmplus --raw=PICOAMP.COM picoamp.asm` and
 `sjasmplus -DROMBUILD --raw=PICOAMP.ROM picoamp.asm` (both include
-`clock.asm`).
+`clock.asm`, `weather.asm` and `news.asm`).
 
-PICOAMP.COM is about 19 KB: the program (14 KB) in page 0, below 4000h (page
-1 is switched to the engine), then the clock page. Its buffers are in page 2, from 8000h to about AC60h; the program
+PICOAMP.COM is about 26 KB: the program (14 KB) in page 0, below 4000h (page
+1 is switched to the engine), then the three pages. Its buffers are in page 2, from 8000h to below C000h; the program
 says so and stops when MSX-DOS leaves less room.
 
 ### Tests
@@ -343,6 +423,5 @@ layout.
 
 ## Ideas for later
 
-Weather (the next days, with animations) and short news (teletext style)
-pages as modules, an MSX1 version, more full screen pictures (a big oscilloscope, stars that
+An MSX1 version, more full screen pictures (a big oscilloscope, stars that
 jump with the bass), a peak-hold setting for the spectrum.

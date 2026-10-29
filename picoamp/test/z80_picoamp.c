@@ -103,7 +103,12 @@ static uint8_t eng_rd(uint16_t a)
         fprintf(stderr, "[%.2f s] cmd %02X args %02X %02X %02X -> %02X\n", cpu.cyc / 3579545.0, tr_code, tr_args[0], tr_args[1], tr_args[2], v);
     return v;
 }
-static int rom_mode;            // PICOAMP.ROM: at 4000h, started at its INIT, BIOS keys
+static int rom_mode;
+static uint16_t pc_ring[1024];
+static unsigned pc_ri;
+static int pc_warned;
+static uint16_t pc_last, jmp_from[32], jmp_to[32];
+static unsigned jmp_i;            // PICOAMP.ROM: at 4000h, started at its INIT, BIOS keys
 static uint8_t romimg[65536];   // its 16 KB banks (6000h selects the one in page 1, as ASCII16)
 static int rom_bank;
 // the MSX2 clock chip (RP5C01, ports B4h/B5h), block 0: running from PICOAMP_RTC
@@ -148,6 +153,8 @@ static void wr(void *u, uint16_t a, uint8_t v)
         return;
     }
     wr_ram++;
+    { static int w = -2; if (w == -2) { const char *e = getenv("PICOAMP_WATCH"); w = e ? (int)strtol(e, NULL, 16) : -1; }
+      if (w >= 0 && a == w) fprintf(stderr, "[write %02X to %04X at PC %04X, page 1 %02X, HL %04X]\n", v, a, cpu.pc, page1, (unsigned)(cpu.h << 8 | cpu.l)); }
     if (a >= 0x100) mem[a] = v;
 }
 static uint8_t pin(z80 *z, uint8_t p) { (void)z; if (p == 0x99) vlatch = false; if (p == 0xB5) return rtc_read(); return 0; }
@@ -259,9 +266,29 @@ static int run(unsigned long max_cyc)
             if (cpu.iff1) cpu.halted = false;
         }
         if (cpu.halted) { cpu.cyc += 4; busy_cyc += 4; continue; }
+        if (!rom_mode && ((cpu.pc >= 0x4000 && cpu.pc < 0x9698) || cpu.pc >= 0xA600) && getenv("PICOAMP_CRASH") && !pc_warned)
+        {
+            pc_warned = 1;
+            fprintf(stderr, "[jumps:");
+            for (int k = 0; k < 32; k++) fprintf(stderr, " %04X>%04X", jmp_from[(jmp_i + k) & 31], jmp_to[(jmp_i + k) & 31]);
+            fprintf(stderr, "]\n");
+            fprintf(stderr, "[code run in page 1 at %04X, SP %04X; before:", cpu.pc, cpu.sp);
+            for (int k = 0; k < 1024; k++) { uint16_t q = pc_ring[(pc_ri + k) & 1023]; if (q < 0xA0D5) fprintf(stderr, " %04X", q); }
+            fprintf(stderr, "]\n");
+        }
+        if (cpu.pc < pc_last || cpu.pc > pc_last + 4u) { jmp_from[jmp_i & 31] = pc_last; jmp_to[jmp_i & 31] = cpu.pc; jmp_i++; }
+        pc_last = cpu.pc;
+        pc_ring[pc_ri++ & 1023] = cpu.pc;
         switch (cpu.pc)
         {
-            case 0x0000: return 0;
+            case 0x0000:
+                if (getenv("PICOAMP_CRASH"))
+                {
+                    fprintf(stderr, "[ended at 0: the last PCs, SP %04X]", cpu.sp);
+                    for (int k = 0; k < 1024; k++) { uint16_t q = pc_ring[(pc_ri + k) & 1023]; if (q < 0xA0D5) fprintf(stderr, " %04X", q); }
+                    fprintf(stderr, "\n");
+                }
+                return 0;
             case 0x0005:
                 switch (cpu.c)
                 {

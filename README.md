@@ -13,14 +13,28 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 | What | For | What it is |
 |------|-----|------------|
-| **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data, the time of day, the place and the weather now from the internet, the settings file. The MSX talks to it through a 4 KB memory window |
-| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather), mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
+| **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data, the time of day, the place, the weather and forecast and news feeds from the internet, a sleep timer and a radio alarm, the settings file. The MSX talks to it through a 4 KB memory window |
+| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, teletext-style news, mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
 | **PicoPlay** | SymbOS 4.0 | A windowed player with folders, play lists, internet radio, the station directory, favourites and an equalizer |
 | **PVTEST** | MSX-DOS | A quick check of the cartridge from the prompt, and a small player |
 
 | Clock (C): digital | Clock: analog |
 |---|---|
 | ![Digital clock](picoamp/images/picoamp_clock_digital.png) | ![Analog clock](picoamp/images/picoamp_clock_analog.png) |
+
+| Weather (W) | News (T) |
+|---|---|
+| ![Weather](picoamp/images/picoamp_weather.png) | ![News](picoamp/images/picoamp_news_index.png) |
+
+**v1.2 (testing, not yet tried on the cartridge):** engine 0.12 and three new things to
+look at while the radio plays. **W**: the weather for the clock's place, with a big picture
+that moves (turning sun rays, drifting clouds, stars, falling rain and snow, thunder) and the
+next six days. **T**: the news as teletext pages: an index of feeds (BBC World, Al Jazeera,
+DW, The Guardian, NOS, or your own in `PICOAMP.INI`), headlines that turn by themselves, the
+stories. On the clock page, **O** sets a sleep timer (the music fades out and stops) and
+**A** a radio alarm (the station that plays now, at a time, daily or Monday to Friday, fading
+in). The zone line on the clock is gone. The ROM is 64 KB now (four banks). See
+`picoamp/README.md`, sections Clock, Weather and News.
 
 **v1.1:** the clock page (tested on a PicoVerse 2350 with an NMS 8245, as COM and ROM).
 The engine (0.11) takes the time from the internet over the same WiFi link
@@ -32,7 +46,7 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(v1.0; `bin/picoamp_wifi.uf2` here is v1.1, with the clock).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.2).
 
 ## Downloads (`bin/`)
 
@@ -42,7 +56,7 @@ PicoAmp v1.0 is also published as third-party firmware in the PicoVerse reposito
 | `picoamp.uf2` | the same without WiFi |
 | `picoplay_wifi.uf2` | **PicoPlay** firmware: Nextor (Sunrise IDE on the microSD), the 1 MB mapper, the engine and the WiFi, for SymbOS / MSX-DOS with `PICOPLAY.EXE`, `PICOAMP.COM`, `PVTEST.COM` |
 | `picoplay.uf2` | the same without WiFi |
-| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (32 KB: two banks, the second holds the clock page) |
+| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather and news pages) |
 | `PICOPLAY.EXE` | the SymbOS player |
 | `PVTEST.COM` | the MSX-DOS test tool |
 | `RADIO.M3U` | a few internet radio stations to start with |
@@ -70,8 +84,8 @@ the ESP-01 must already know your access point (as for the Nextor WiFi tools).
 
 | Folder | What |
 |--------|------|
-| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com and Open-Meteo, 307 checks) |
-| `picoamp/` | PICOAMP (Z80, sjasmplus) and its clock page (`clock.asm`, a page module), its Z80 test harness, screen tools and mock-ups |
+| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds, 344 checks) |
+| `picoamp/` | PICOAMP (Z80, sjasmplus) and its clock, weather and news pages (`clock.asm`, `weather.asm`, `news.asm`, page modules), its Z80 test harness, screen tools and mock-ups |
 | `picoplay/` | PicoPlay (SymbOS C Compiler) and PVTEST (sjasmplus), their PC tests, and an openMSX device that runs the engine (`emu/`) |
 | `devrig/` | a headless openMSX test bench (NMS 8245 + the cartridge's slot layout). The system ROMs it needs are not included |
 | `firmware/` | our changes to Cristiano's LoadROM firmware and tool, as a patch: the bus loop with the engine, ROM types 22 (PicoPlay) and 23 (PicoAmp), the tool's `-p1` / `-pa` options. It also carries the SE-ONE emulation, which shares those files |
@@ -120,6 +134,7 @@ By **JZZY & Claude**, 2026, on the MSX PicoVerse by **Cristiano Goncalves (The R
 The engine uses the Helix MP3 decoder (picomp3lib) and FatFs. Weather and
 places: [Open-Meteo](https://open-meteo.com/) (CC BY 4.0); the place of the
 internet connection: [ip-api.com](https://ip-api.com/). Both are free for
-non-commercial use.
+non-commercial use. The news comes from the feeds' own publishers; PICOAMP
+only shows their headlines and summaries.
 
 Licensed as the PicoVerse project: [Creative Commons Attribution-NonCommercial-ShareAlike 4.0](LICENSE.txt).

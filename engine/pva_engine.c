@@ -306,6 +306,7 @@ static void v_add_url(const char *name, const char *url)
 
 static void fav_build(void);
 static bool is_url(const char *p);
+static void alarm_apply(void);
 
 static void v_end(void)
 {
@@ -1037,6 +1038,7 @@ static int cmd_cfg_load(void)
     }
     pva_cfg_load(t, got);
     pva_clock_enable();
+    alarm_apply();
     pva_log("settings: %u bytes", (unsigned)got);
     return PVA_OK;
 }
@@ -1330,14 +1332,10 @@ static int cmd_play_index(void)
     return play_pos(start);
 }
 
-// args: URL, 0, optional station name, 0
-static int cmd_play_url(void)
+static int play_url(const char *u, const char *name)
 {
-    args[PVA_ARGS_SIZE - 1] = 0;
-    const char *u = (const char *)args;
     size_t ul = strlen(u);
     if (!is_url(u) || ul > URL_MAX_LEN) return PVA_E_ARGS;
-    const char *name = ul + 1 < PVA_ARGS_SIZE ? u + ul + 1 : "";
     char e[URL_MAX_LEN + PVA_ST_ALBUM_LEN + 2];
     int n = snprintf(e, sizeof e, "%s", u);
     if (name[0])
@@ -1353,12 +1351,20 @@ static int cmd_play_url(void)
     return play_pos(0);
 }
 
-static int cmd_play_path(void)
+// args: URL, 0, optional station name, 0
+static int cmd_play_url(void)
+{
+    args[PVA_ARGS_SIZE - 1] = 0;
+    const char *u = (const char *)args;
+    size_t ul = strlen(u);
+    return play_url(u, ul + 1 < PVA_ARGS_SIZE ? u + ul + 1 : "");
+}
+
+static int play_path(const char *p)
 {
     char path[PATH_MAX_LEN + 1];
-    args[PVA_ARGS_SIZE - 1] = 0;
-    if (is_url((const char *)args)) return cmd_play_url();
-    if (!normalise_path(path, sizeof path, (const char *)args) || !path[0]) return PVA_E_ARGS;
+    if (is_url(p)) return play_url(p, "");
+    if (!normalise_path(path, sizeof path, p) || !path[0]) return PVA_E_ARGS;
     if (!mounted && !do_mount()) return PVA_E_NOCARD;
     stop_playback();
     if (pva_kind_from_name(path) == PVA_DE_M3U)
@@ -1370,6 +1376,160 @@ static int cmd_play_path(void)
     pl_clear();
     pl_add(path);
     return play_pos(0);
+}
+
+static int cmd_play_path(void)
+{
+    args[PVA_ARGS_SIZE - 1] = 0;
+    return play_path((const char *)args);
+}
+
+// ---------------------------------------------------------------- sleep timer, alarm
+#define SLEEP_FADE_MS   30000u      // the last 30 s of the sleep timer fade out
+#define ALARM_FADE_MS   60000u      // the alarm fades in over a minute
+static bool     sleep_on, al_on, al_weekdays, al_ringing, al_fired, al_fading;
+static uint32_t sleep_end, al_fade_start, sa_last;
+static uint8_t  al_hour = 7, al_min = 0;
+static uint8_t  fade_vol = 0xFF;    // the volume a fade has set (FF: none)
+
+static void fade_to(uint8_t v)
+{
+    if (v != fade_vol) { fade_vol = v; pva_dec_set_volume(v); }
+}
+
+static void fade_end(void)
+{
+    if (fade_vol != 0xFF) { fade_vol = 0xFF; pva_dec_set_volume(volume); }
+}
+
+// the [alarm] settings
+static void alarm_apply(void)
+{
+    char v[16];
+    pva_cfg_get("alarm.on", v, sizeof v);
+    al_on = !strcmp(v, "on");
+    pva_cfg_get("alarm.days", v, sizeof v);
+    al_weekdays = !strcmp(v, "weekdays");
+    pva_cfg_get("alarm.time", v, sizeof v);
+    int h, m;
+    if (sscanf(v, "%d:%d", &h, &m) == 2 && h >= 0 && h < 24 && m >= 0 && m < 60) { al_hour = (uint8_t)h; al_min = (uint8_t)m; }
+}
+
+static void alarm_ring(void)
+{
+    char what[URL_MAX_LEN + 1], name[PVA_ST_ALBUM_LEN];
+    pva_cfg_get("alarm.play", what, sizeof what);
+    pva_cfg_get("alarm.name", name, sizeof name);
+    if (!what[0]) return;
+    fade_to(0);
+    int r = is_url(what) ? play_url(what, name) : (mounted || do_mount() ? play_path(what) : PVA_E_NOCARD);
+    pva_log("alarm: %.40s (%d)", name[0] ? name : what, r);
+    if (r != PVA_OK) { fade_end(); return; }
+    al_ringing = true;
+    al_fading = true;
+    al_fade_start = pva_hal_millis();
+}
+
+static void sleep_alarm_poll(void)
+{
+    uint32_t now = pva_hal_millis();
+    if (now - sa_last < 100u) return;
+    sa_last = now;
+    if (sleep_on)
+    {
+        int32_t rem = (int32_t)(sleep_end - now);
+        if (rem <= 0)
+        {
+            sleep_on = false;
+            if (state != PVA_STATE_STOPPED) stop_playback();
+            fade_end();
+            pva_log("sleep: stopped");
+        }
+        else if ((uint32_t)rem < SLEEP_FADE_MS)
+            fade_to((uint8_t)((uint32_t)volume * (uint32_t)rem / SLEEP_FADE_MS));
+    }
+    else if (al_fading)
+    {
+        uint32_t el = now - al_fade_start;
+        if (el >= ALARM_FADE_MS) { al_fading = false; fade_end(); }
+        else fade_to((uint8_t)((uint32_t)volume * el / ALARM_FADE_MS));
+    }
+    uint8_t h, m, wd;
+    if (al_on && pva_clock_local(&h, &m, &wd))
+    {
+        if (h == al_hour && m == al_min)
+        {
+            if (!al_fired && (!al_weekdays || wd < 5)) { al_fired = true; alarm_ring(); }
+        }
+        else al_fired = false;
+    }
+}
+
+// SLEEP: args u16 minutes, 0 = off
+static int cmd_sleep(void)
+{
+    uint16_t m = (uint16_t)(args[0] | (args[1] << 8));
+    sleep_on = m != 0;
+    sleep_end = pva_hal_millis() + (uint32_t)m * 60000u;
+    if (!sleep_on) fade_end();
+    return PVA_OK;
+}
+
+// ALARM: args u8 flags (PVA_AL_ON, PVA_AL_WEEKDAYS), u8 hour, u8 minute
+static int cmd_alarm(void)
+{
+    bool on = args[0] & PVA_AL_ON;
+    if (args[1] > 23 || args[2] > 59) return PVA_E_ARGS;
+    if (on)
+    {
+        // what plays now becomes the alarm's (else the one it had)
+        if (pl_count && state != PVA_STATE_STOPPED)
+        {
+            char e[URL_MAX_LEN + PVA_ST_ALBUM_LEN + 2];
+            snprintf(e, sizeof e, "%s", pl_pool + pl_off[pl_order[pl_pos]]);
+            char *sep = strchr(e, STATION_SEP);
+            const char *name = "";
+            if (sep)
+            {
+                *sep = 0;
+                name = sep + 1;
+                char *sep2 = strchr(sep + 1, STATION_SEP);
+                if (sep2) *sep2 = 0;
+            }
+            if (!name[0] && pva_dec_is_stream()) name = given_station[0] ? given_station : info.album;
+            if (!pva_cfg_set("alarm.play", e) || !pva_cfg_set("alarm.name", name)) return PVA_E_FULL;
+        }
+        else
+        {
+            char v[8];
+            if (!pva_cfg_get("alarm.play", v, sizeof v) || !v[0]) return PVA_E_STATE;
+        }
+    }
+    char t[8];
+    snprintf(t, sizeof t, "%02u:%02u", (unsigned)args[1], (unsigned)args[2]);
+    if (!pva_cfg_set("alarm.on", on ? "on" : "off") || !pva_cfg_set("alarm.time", t) ||
+        !pva_cfg_set("alarm.days", (args[0] & PVA_AL_WEEKDAYS) ? "weekdays" : "daily"))
+        return PVA_E_FULL;
+    alarm_apply();
+    al_fired = false;
+    al_ringing = false;
+    return PVA_OK;
+}
+
+void pva_engine_extra(uint8_t *out)
+{
+    memset(out, 0, PVA_CLOCK_SIZE - PVA_CK_EXTRA);
+    if (sleep_on)
+    {
+        uint32_t rem = sleep_end - pva_hal_millis();
+        uint32_t mins = (rem + 59999u) / 60000u;
+        out[PVA_CK_SLEEP - PVA_CK_EXTRA] = (uint8_t)(mins > 255u ? 255u : mins < 1u ? 1u : mins);
+    }
+    out[PVA_CK_ALARM - PVA_CK_EXTRA] = (uint8_t)((al_on ? PVA_AL_ON : 0) | (al_ringing ? PVA_AL_RINGING : 0) | (al_weekdays ? PVA_AL_WEEKDAYS : 0));
+    out[PVA_CK_AL_HOUR - PVA_CK_EXTRA] = al_hour;
+    out[PVA_CK_AL_MIN - PVA_CK_EXTRA] = al_min;
+    pva_news_state(&out[PVA_CK_NEWS_STATE - PVA_CK_EXTRA], &out[PVA_CK_NEWS_COUNT - PVA_CK_EXTRA],
+                   &out[PVA_CK_NEWS_FEED - PVA_CK_EXTRA], &out[PVA_CK_NEWS_ERR - PVA_CK_EXTRA]);
 }
 
 static int cmd_mode(void)
@@ -1464,6 +1624,13 @@ static int cmd_diag(void)
 
 static int execute(uint8_t code)
 {
+    // the music is the listener's again: the alarm stops ringing (and fading in)
+    if (code == PVA_C_PLAY_INDEX || code == PVA_C_PLAY_PATH || code == PVA_C_PLAY_URL || code == PVA_C_STOP ||
+        code == PVA_C_PAUSE || code == PVA_C_NEXT || code == PVA_C_PREV)
+    {
+        al_ringing = false;
+        if (al_fading) { al_fading = false; fade_end(); }
+    }
     if (!ready && code != PVA_C_PING && code != PVA_C_LOG && code != PVA_C_DIAG)
         return PVA_E_STATE;
     switch (code)
@@ -1502,6 +1669,13 @@ static int execute(uint8_t code)
         case PVA_C_LOC_SEARCH: args[PVA_ARGS_SIZE - 1] = 0; return pva_clock_search((const char *)args);
         case PVA_C_LOC_LIST:  return pva_clock_list();
         case PVA_C_LOC_PICK:  return pva_clock_pick(args[0]);
+        case PVA_C_WX_GET:    return pva_clock_wx();
+        case PVA_C_SLEEP:     return cmd_sleep();
+        case PVA_C_ALARM:     return cmd_alarm();
+        case PVA_C_NEWS_FEEDS: pva_news_feeds(); return PVA_OK;
+        case PVA_C_NEWS_FETCH: return pva_news_fetch(args[0]);
+        case PVA_C_NEWS_LIST: return pva_news_list(args[0], args[1]);
+        case PVA_C_NEWS_ITEM: return pva_news_item(args[0]);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1532,6 +1706,7 @@ static int execute(uint8_t code)
         case PVA_C_VOLUME:
             volume = args[0] > 100 ? 100 : args[0];
             pva_dec_set_volume(volume);
+            if (fade_vol != 0xFF) fade_vol = 0xFE;     // (the fade sets it again)
             return PVA_OK;
         case PVA_C_MODE:
             return cmd_mode();
@@ -1755,6 +1930,8 @@ bool pva_core1_poll(void)
     radio_poll();
     pva_web_poll();
     pva_clock_poll();
+    pva_news_poll();
+    sleep_alarm_poll();
     pva_win[PVA_R_WHERE] = PVA_W_STREAM;
     if (pva_net_active())
     {

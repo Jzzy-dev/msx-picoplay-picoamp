@@ -207,11 +207,11 @@ struct pva_json
     uint8_t  depth;
     bool     is_arr[PVA_JSON_DEPTH];
     uint16_t idx[PVA_JSON_DEPTH];
-    char     name[PVA_JSON_DEPTH][24];
+    char     name[PVA_JSON_DEPTH][32];
     bool     in_str, esc, is_key, expect_key, have_val, seen, done;
     uint8_t  uhex, klen;
     uint32_t ucp;
-    char     key[24];
+    char     key[32];
     char     val[200];
     uint16_t vlen;
     char     pbuf[96];
@@ -253,6 +253,17 @@ int  pva_clock_loc_ip(void);
 int  pva_clock_search(const char *text);
 int  pva_clock_list(void);
 int  pva_clock_pick(uint8_t i);
+int  pva_clock_wx(void);
+bool pva_clock_local(uint8_t *hour, uint8_t *min, uint8_t *wday);
+void pva_engine_extra(uint8_t *out);     // PVA_CK_EXTRA.. (sleep, alarm, news)
+
+// news feeds (pva_news.c)
+bool pva_news_feeds(void);              // reply: u8 count, names
+int  pva_news_fetch(uint8_t feed);
+int  pva_news_list(uint8_t first, uint8_t count);
+int  pva_news_item(uint8_t i);
+void pva_news_poll(void);
+void pva_news_state(uint8_t *st, uint8_t *count, uint8_t *feed, uint8_t *err);
 
 // replies (pva_engine.c)
 void pva_reply_byte(uint8_t b);

@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        11
+#define PVA_FW_MINOR        12
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -65,7 +65,7 @@
 #define PVA_R_VIZ           0xC00u
 // time of day, place, weather now (see PVA_CK_xxx), engine 0.11
 #define PVA_R_CLOCK         0xD00u
-#define PVA_CLOCK_SIZE      32u
+#define PVA_CLOCK_SIZE      48u
 #define PVA_R_STATUS        0x020u
 #define PVA_STATUS_SIZE     224u
 #define PVA_R_ARGS          0x100u
@@ -113,7 +113,8 @@
 #define PVA_C_EQ            0x2A    // args: 5 x s8 band gains in dB (-12..+12): 60 Hz, 250 Hz,
                                     // 1 kHz, 4 kHz, 12 kHz
 #define PVA_C_BALANCE       0x2B    // args: u8 0 (left only) .. 50 (centre) .. 100 (right only)
-#define PVA_C_PLAY_URL      0x29
+#define PVA_C_PLAY_URL      0x29    // args: URL (http:// or https://, 0-terminated), then an
+                                    // optional station name (0-terminated); MP3 streams
 // time, place, weather now (engine 0.11; the clock block PVA_R_CLOCK)
 #define PVA_C_CLOCK_INFO    0x30    // reply: place, zone (e.g. Europe/Amsterdam), abbreviation (CET),
                                     // each 0-terminated
@@ -121,8 +122,17 @@
 #define PVA_C_LOC_SEARCH    0x32    // args: text: places of that name; PVA_CK_LOC_STATE goes LOADING,
                                     // then DONE (PVA_CK_LOC_COUNT found) or FAILED
 #define PVA_C_LOC_LIST      0x33    // reply: u8 count, the places' names (0-terminated each)
-#define PVA_C_LOC_PICK      0x34    // args: u8 index in the list: it becomes location.mode=place    // args: URL (http:// or https://, 0-terminated), then an
-                                    // optional station name (0-terminated); MP3 streams
+#define PVA_C_LOC_PICK      0x34    // args: u8 index in the list: it becomes location.mode=place
+// engine 0.12
+#define PVA_C_WX_GET        0x35    // reply: the weather now and the next days (PVA_WX_xxx); PVA_E_STATE: none yet
+#define PVA_C_SLEEP         0x36    // args: u16 minutes (0 = off): then the music fades out and stops
+#define PVA_C_ALARM         0x37    // args: u8 PVA_AL_ON / PVA_AL_WEEKDAYS, u8 hour, u8 minute. Switched on, it
+                                    // plays what plays now (or what it played last), fading in; kept in the
+                                    // settings ([alarm]). PVA_E_STATE: nothing to play
+#define PVA_C_NEWS_FEEDS    0x38    // reply: u8 count, the feeds' names (0-terminated each)
+#define PVA_C_NEWS_FETCH    0x39    // args: u8 feed: PVA_CK_NEWS_STATE goes LOADING, then DONE (COUNT stories)
+#define PVA_C_NEWS_LIST     0x3A    // args: u8 first, u8 count: reply: the titles (0-terminated each)
+#define PVA_C_NEWS_ITEM     0x3B    // args: u8 story: reply: title, text, date (0-terminated each)
 
 // results
 #define PVA_OK              0x00
@@ -248,11 +258,46 @@
 #define PVA_CK_ABBR         18      // char[8] zone abbreviation (CET, CEST, GMT+1 ...)
 #define PVA_CK_SYNCS        26      // u8  +1 for every time the clock was set
 #define PVA_CK_ERR          27      // u8  PVA_NERR_xxx of the last failed request
+// engine 0.12
+#define PVA_CK_EXTRA        28      // (the engine's part:)
+#define PVA_CK_SLEEP        28      // u8  minutes the sleep timer has left (0 = off)
+#define PVA_CK_ALARM        29      // u8  PVA_AL_xxx
+#define PVA_CK_AL_HOUR      30      // u8  the alarm's time
+#define PVA_CK_AL_MIN       31
+#define PVA_CK_NEWS_STATE   32      // u8  PVA_NEWS_xxx of the feed asked for last
+#define PVA_CK_NEWS_COUNT   33      // u8  its stories
+#define PVA_CK_NEWS_FEED    34      // u8  which feed
+#define PVA_CK_NEWS_ERR     35      // u8  PVA_NERR_xxx when it failed
+#define PVA_AL_ON           0x01
+#define PVA_AL_RINGING      0x02    // it went off (until a command stops or changes the music)
+#define PVA_AL_WEEKDAYS     0x04    // Monday to Friday only
+#define PVA_NEWS_IDLE       0
+#define PVA_NEWS_LOADING    1
+#define PVA_NEWS_DONE       2
+#define PVA_NEWS_FAILED     3
+#define PVA_NEWS_NOMEM      4
 #define PVA_CKF_TIME        0x01    // the time is known (from the internet)
 #define PVA_CKF_ZONE        0x02    // the zone is known (else the time is UTC)
 #define PVA_CKF_WEATHER     0x04    // temperature and weather code are valid
 #define PVA_CKF_BUSY        0x08    // a request runs
 #define PVA_CKF_FAILED      0x10    // the last request failed (PVA_CK_ERR)
+// WX_GET reply
+#define PVA_WX_NDAYS        0       // u8  days that follow (today first)
+#define PVA_WX_IS_DAY       1       // u8  1 = daylight now
+#define PVA_WX_TEMP         2       // s16 0.1 C now
+#define PVA_WX_FEEL         4       // s16 0.1 C, as it feels
+#define PVA_WX_HUM          6       // u8  % humidity
+#define PVA_WX_CODE         7       // u8  WMO code now
+#define PVA_WX_WIND         8       // u8  km/h
+#define PVA_WX_DAY0         10      // then per day:
+#define PVA_WX_DAYSIZE      9
+#define PVA_WXD_WDAY        0       // u8  0 = Monday
+#define PVA_WXD_MDAY        1       // u8  day of the month
+#define PVA_WXD_CODE        2       // u8  WMO code
+#define PVA_WXD_PP          3       // u8  % chance of rain (FFh: unknown)
+#define PVA_WXD_WIND        4       // u8  km/h, the most
+#define PVA_WXD_TMAX        5       // s16 0.1 C
+#define PVA_WXD_TMIN        7       // s16 0.1 C
 #define PVA_LOCS_IDLE       0
 #define PVA_LOCS_LOADING    1
 #define PVA_LOCS_DONE       2

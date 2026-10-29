@@ -62,7 +62,7 @@ char     host_esp_last_api[300];
 long long host_esp_date_base = 1793303100LL;    // Date headers: 2026-10-29 19:45:00 UTC + the time
 bool     host_esp_web_down = false;         // 10.0.0.6..8 refuse connections
 uint32_t host_esp_web_requests;
-char     host_esp_last_web[300];
+char     host_esp_last_web[600];
 
 // statistics for the checks
 uint32_t host_esp_opens, host_esp_closes, host_esp_tls_opens, host_esp_requests, host_esp_rcvs;
@@ -347,26 +347,102 @@ static void web(conn_t *c, const char *path)
     }
     if (c->ip[3] == 8 && !strncmp(path, "/v1/forecast?", 13))
     {
-        char j[700];
+        char j[2000];
         bool syd = strstr(path, "latitude=-33") != NULL;
-        snprintf(j, sizeof j, "{\"latitude\":%s,\"longitude\":4.9,\"generationtime_ms\":0.03,\"utc_offset_seconds\":%d,"
+        bool daily = strstr(path, "&daily=") != NULL;
+        int n = snprintf(j, sizeof j, "{\"latitude\":%s,\"longitude\":4.9,\"generationtime_ms\":0.03,\"utc_offset_seconds\":%d,"
                  "\"timezone\":\"%s\",\"timezone_abbreviation\":\"%s\",\"elevation\":13.0,"
                  "\"current_units\":{\"time\":\"iso8601\",\"interval\":\"seconds\",\"temperature_2m\":\"\\u00b0C\",\"weather_code\":\"wmo code\"},"
-                 "\"current\":{\"time\":\"2026-10-29T20:45\",\"interval\":900,\"temperature_2m\":%s,\"weather_code\":%d}}",
+                 "\"current\":{\"time\":\"2026-10-29T20:45\",\"interval\":900,\"temperature_2m\":%s,\"weather_code\":%d,"
+                 "\"apparent_temperature\":%s,\"relative_humidity_2m\":87,\"wind_speed_10m\":14.8,\"is_day\":0}",
                  syd ? "-33.87" : "52.37", syd ? 39600 : 3600, syd ? "Australia/Sydney" : "Europe/Amsterdam", syd ? "AEDT" : "CET",
-                 syd ? "21.6" : "-0.4", syd ? 1 : 61);
+                 syd ? "21.6" : "-0.4", syd ? 1 : 61, syd ? "20.9" : "-3.5");
+        if (daily)
+            n += snprintf(j + n, sizeof j - (size_t)n, ",\"daily_units\":{\"time\":\"iso8601\"},\"daily\":{"
+                 "\"time\":[\"2026-10-29\",\"2026-10-30\",\"2026-10-31\",\"2026-11-01\",\"2026-11-02\",\"2026-11-03\"],"
+                 "\"weather_code\":[61,3,0,71,95,null],"
+                 "\"temperature_2m_max\":[8.4,10.1,12.0,2.5,15.2,null],"
+                 "\"temperature_2m_min\":[-1.2,3.3,4.0,-5.5,9.9,null],"
+                 "\"precipitation_probability_max\":[80,20,0,65,100,null],"
+                 "\"wind_speed_10m_max\":[25.4,18.0,9.6,30.2,61.5,null]}");
+        snprintf(j + n, sizeof j - (size_t)n, "}");
         web_json(c, j);
         return;
     }
     http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n", "<html>no</html>");
 }
 
+// RSS feeds: news.test (10.0.0.9): /rss (RSS 2.0, CDATA, entities, HTML), /rdf (RSS 1.0),
+// /atom (Atom), /many (60 stories)
+static void news(conn_t *c, const char *path)
+{
+    host_esp_web_requests++;
+    snprintf(host_esp_last_web, sizeof host_esp_last_web, "%s", path);
+    bq_t b = { 0 };
+    char t[600];
+    if (!strcmp(path, "/rss"))
+    {
+        const char *x = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+            "<channel><title>Test News</title><link>http://news.test/</link><description>Channel text</description>"
+            "<image><title>Test News</title><url>http://news.test/logo.png</url></image>"
+            "<item><title><![CDATA[Caf\xc3\xa9 owners & \"friends\" meet]]></title><link>http://news.test/1</link>"
+            "<description><![CDATA[<p>The first <b>story</b>, with   spaces\nand a line.</p><img src=\"x.jpg\"/>]]></description>"
+            "<pubDate>Thu, 29 Oct 2026 20:15:00 GMT</pubDate><guid isPermaLink=\"false\">a1</guid></item>\n"
+            "<item><title>Second &amp; &#8220;quoted&#8221; &lt;tag&gt; story</title>"
+            "<description>&lt;p&gt;Escaped &amp;amp; HTML &lt;a href=&quot;x&quot;&gt;link&lt;/a&gt;.&lt;/p&gt;</description>"
+            "<pubDate>Thu, 29 Oct 2026 19:00:00 +0100</pubDate><media:thumbnail url=\"t.jpg\" width=\"240\"/></item>\n"
+            "<!-- a comment <item><title>no</title></item> -->"
+            "<item><title>Third: no description</title><pubDate>Wed, 28 Oct 2026 08:00:00 GMT</pubDate></item>"
+            "</channel></rss>";
+        bq_put(&b, x, strlen(x));
+    }
+    else if (!strcmp(path, "/rdf"))
+    {
+        const char *x = "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns=\"http://purl.org/rss/1.0/\">"
+            "<channel rdf:about=\"x\"><title>RDF</title></channel>"
+            "<item rdf:about=\"y\"><title>RDF story</title><description>RDF text</description><dc:date>2026-10-29T18:30:00Z</dc:date></item>"
+            "</rdf:RDF>";
+        bq_put(&b, x, strlen(x));
+    }
+    else if (!strcmp(path, "/atom"))
+    {
+        const char *x = "<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><title>Atom</title>"
+            "<entry><title type=\"html\">Atom story</title><link href=\"x\"/><summary>Atom text</summary><updated>2026-10-29T17:00:00Z</updated></entry></feed>";
+        bq_put(&b, x, strlen(x));
+    }
+    else if (!strcmp(path, "/many"))
+    {
+        bq_put(&b, "<rss><channel>", 14);
+        for (int i = 0; i < 60; i++)
+        {
+            int n = snprintf(t, sizeof t, "<item><title>Story %02d</title><description>Text of story %02d, a bit longer to fill the pool "
+                             "with some words that go on and on.</description><pubDate>Thu, 29 Oct 2026 12:%02d:00 GMT</pubDate></item>\n", i, i, i % 60);
+            bq_put(&b, t, (size_t)n);
+        }
+        bq_put(&b, "</channel></rss>", 16);
+    }
+    else
+    {
+        http_reply(c, "HTTP/1.1 404 Not Found\r\n\r\n", "no");
+        return;
+    }
+    char hd[200], dt[64];
+    date_hdr(dt, sizeof dt);
+    snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\n%s\r\n", dt);   // no length: it ends with the close
+    bq_put(&c->out, hd, strlen(hd));
+    bq_put(&c->pend, b.b, b.len);
+    free(b.b);
+    c->kind = 4;
+    c->credit = 0;
+}
+
 static void serve(conn_t *c)
 {
     char *r = (char *)c->reqbuf.b;
-    char path[256] = "", hosth[128] = "";
-    sscanf(r, "GET %255s", path);
-    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4)) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }   // a stream's ?query does not matter
+    char path[600] = "", hosth[128] = "";
+    sscanf(r, "GET %599s", path);
+    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4)) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }
+   // a stream's ?query does not matter
     char *h = strstr(r, "\r\nHost: ");
     if (h) sscanf(h + 8, "%127[^\r]", hosth);
     snprintf(host_esp_last_get, sizeof host_esp_last_get, "%s", r);
@@ -374,6 +450,7 @@ static void serve(conn_t *c)
     bool icy_meta = strstr(r, "Icy-MetaData: 1") != NULL;
     bool r1 = c->ip[3] == 1, r2 = c->ip[3] == 2, sec = c->ip[3] == 3;
     if (c->ip[3] >= 6 && c->ip[3] <= 8) { web(c, path); return; }
+    if (c->ip[3] == 9) { news(c, path); return; }
     if (c->ip[3] == 4 || c->ip[3] == 5)
     {
         if (!strstr(r, "User-Agent: ")) { http_reply(c, "HTTP/1.1 403 Forbidden\r\n\r\n", NULL); return; }
@@ -479,7 +556,8 @@ static int dns(const char *name, uint8_t *ip)
         { "radio.test", { 10, 0, 0, 1 } }, { "radio2.test", { 10, 0, 0, 2 } }, { "secure.test", { 10, 0, 0, 3 } },
         { "all.api.radio-browser.info", { 10, 0, 0, 4 } }, { "de1.api.radio-browser.info", { 10, 0, 0, 4 } },
         { "nl1.api.radio-browser.info", { 10, 0, 0, 5 } }, { "ip-api.com", { 10, 0, 0, 6 } },
-        { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } } };
+        { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } },
+        { "news.test", { 10, 0, 0, 9 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
     return -1;
 }
@@ -513,7 +591,7 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 8);
+            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 9);
             if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];

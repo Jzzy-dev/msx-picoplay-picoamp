@@ -16,7 +16,7 @@
 #include "pva_internal.h"
 
 #define HOST_MAX        63u
-#define PATH_MAX_W      300u
+#define PATH_MAX_W      420u
 #define LOC_MAX         300u
 #define MAX_REDIRECTS   3u
 #define RCV_SIZE        1024u
@@ -229,10 +229,10 @@ void pva_web_poll(void)
             conn = WS->pfirst[0];
             pva_esp_clear(WS);
             {
-                int n = snprintf(req, 512,
+                int n = snprintf(req, 640,
                     "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: PicoAmp/1.1 (MSX PicoVerse 2350)\r\n"
                     "Accept: */*\r\nConnection: close\r\n\r\n", w_path, w_host);
-                req_len = (n > 0 && n < 512) ? (size_t)n : 0;
+                req_len = (n > 0 && n < 640) ? (size_t)n : 0;
                 req_pos = 0;
             }
             send_next();
@@ -306,7 +306,7 @@ bool pva_web_init(void)
     // a small piece of the stream RAM (none: no WiFi in this firmware)
     WS = pva_net_spare_take(sizeof *WS);
     w_path = pva_net_spare_take(PATH_MAX_W + 1u);
-    req = pva_net_spare_take(512u);
+    req = pva_net_spare_take(640u);
     location = pva_net_spare_take(LOC_MAX + 1u);
     available = WS && w_path && req && location;
     if (!available) return false;

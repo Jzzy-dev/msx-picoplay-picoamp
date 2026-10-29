@@ -1,5 +1,5 @@
 diff --git a/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt b/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
-index fb7b3ce..fa59a51 100644
+index fb7b3ce..0d02624 100644
 --- a/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
 +++ b/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
 @@ -45,6 +45,11 @@ pico_sdk_init()
@@ -14,7 +14,7 @@ index fb7b3ce..fa59a51 100644
  # add_compile_options(-O3)
  
  # Add executable. Default name is the project name, version 0.1
-@@ -59,6 +64,24 @@ add_executable(loadrom
+@@ -59,6 +64,25 @@ add_executable(loadrom
      storage/sunrise_sd.c
      storage/flash_sd.c
      storage/hw_config.c
@@ -35,11 +35,12 @@ index fb7b3ce..fa59a51 100644
 +    pvaudio/pva_web.c
 +    pvaudio/pva_cfg.c
 +    pvaudio/pva_clock.c
++    pvaudio/pva_news.c
 +    pvaudio/pva_hal_pico.c
      )
  
  pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
-@@ -82,10 +105,16 @@ target_link_libraries(loadrom
+@@ -82,10 +106,16 @@ target_link_libraries(loadrom
      hardware_uart
      tinyusb_board
      tinyusb_host

@@ -77,6 +77,10 @@ static int32_t  m_off;
 static int16_t  m_t10;
 static uint8_t  m_code;
 static char     m_tz[40], m_abbr[8];
+// the weather: now and the next days (Open-Meteo, with the zone)
+#define WX_DAYS 6
+typedef struct { uint8_t wday, mday, code, pp, wind; int16_t tmax, tmin; bool ok; } wxday_t;
+static struct { int16_t t10, feel10; uint8_t hum, code, wind, is_day, ndays; bool have; wxday_t d[WX_DAYS]; } wx, mw;
 
 // ---------------------------------------------------------------- time
 // days since 1970-01-01 of a civil date (H. Hinnant's algorithm)
@@ -134,6 +138,19 @@ void pva_clock_http_date(const char *v)
 }
 
 bool pva_clock_have_time(void) { return have_utc; }
+
+// the local time of the place (false: not known yet)
+bool pva_clock_local(uint8_t *hour, uint8_t *min, uint8_t *wday)
+{
+    if (!have_utc || !have_zone) return false;
+    int64_t t = now_utc() + offset_s;
+    int64_t days = t >= 0 ? t / 86400 : (t - 86399) / 86400;
+    int32_t rem = (int32_t)(t - days * 86400);
+    *hour = (uint8_t)(rem / 3600);
+    *min = (uint8_t)((rem / 60) % 60);
+    *wday = (uint8_t)(((days % 7) + 7 + 3) % 7);
+    return true;
+}
 
 // ---------------------------------------------------------------- helpers
 static int16_t tenths(const char *s)
@@ -218,6 +235,31 @@ static void json_cb(pva_json_t *j, int ev, const char *path, const char *v, uint
         else if (!strcmp(path, "timezone_abbreviation")) copy(m_abbr, sizeof m_abbr, v);
         else if (!strcmp(path, "current.temperature_2m") && v[0] != 'n') { m_t10 = tenths(v); m_have_t = true; }
         else if (!strcmp(path, "current.weather_code") && v[0] != 'n') { m_code = (uint8_t)atoi(v); m_have_c = true; }
+        else if (v[0] == 'n') { }
+        else if (!strcmp(path, "current.apparent_temperature")) mw.feel10 = tenths(v);
+        else if (!strcmp(path, "current.relative_humidity_2m")) mw.hum = (uint8_t)atoi(v);
+        else if (!strcmp(path, "current.wind_speed_10m")) mw.wind = (uint8_t)((tenths(v) + 5) / 10);
+        else if (!strcmp(path, "current.is_day")) mw.is_day = (uint8_t)atoi(v);
+        else if (!strncmp(path, "daily.", 6) && idx < WX_DAYS)
+        {
+            wxday_t *d = &mw.d[idx];
+            const char *f = path + 6;
+            if (!strcmp(f, "time"))
+            {
+                int y, mo, dd;
+                if (sscanf(v, "%d-%d-%d", &y, &mo, &dd) == 3 && mo >= 1 && mo <= 12 && dd >= 1 && dd <= 31)
+                {
+                    int64_t days = days_from_civil(y, (unsigned)mo, (unsigned)dd);
+                    d->wday = (uint8_t)(((days % 7) + 7 + 3) % 7);
+                    d->mday = (uint8_t)dd;
+                }
+            }
+            else if (!strcmp(f, "weather_code")) { d->code = (uint8_t)atoi(v); d->ok = true; }
+            else if (!strcmp(f, "temperature_2m_max")) d->tmax = tenths(v);
+            else if (!strcmp(f, "temperature_2m_min")) d->tmin = tenths(v);
+            else if (!strcmp(f, "precipitation_probability_max")) d->pp = (uint8_t)atoi(v);
+            else if (!strcmp(f, "wind_speed_10m_max")) d->wind = (uint8_t)((tenths(v) + 5) / 10);
+        }
     }
     else if (q == Q_SEARCH)
     {
@@ -296,6 +338,12 @@ static void fetch_done(bool ok)
             have_wx = m_have_t;
             temp10 = m_t10;
             wcode = m_have_c ? m_code : 0;
+            mw.ndays = 0;               // the days with a forecast (a day without one ends them)
+            while (mw.ndays < WX_DAYS && mw.d[mw.ndays].ok) mw.ndays++;
+            mw.t10 = m_t10;
+            mw.code = wcode;
+            mw.have = m_have_t;
+            wx = mw;
             next_fetch = now + REFRESH_MS;
             retry_ms = RETRY_MS;
             gen++;
@@ -326,6 +374,7 @@ static bool start(uint8_t what, const char *url)
 // ---------------------------------------------------------------- polling
 static uint8_t last_sec = 0xFF;
 static uint8_t pub_gen = 0xFF, pub_flags = 0xFF, pub_loc = 0xFF, pub_n = 0xFF, pub_err = 0xFF;
+static uint8_t pub_extra[PVA_CLOCK_SIZE - PVA_CK_EXTRA];
 
 static void publish(void)
 {
@@ -333,7 +382,11 @@ static void publish(void)
                     (q == Q_IP || q == Q_METEO ? PVA_CKF_BUSY : 0) | (last_err && !q_ok ? PVA_CKF_FAILED : 0);
     int64_t t = now_utc() + (have_zone ? offset_s : 0);
     uint8_t sec = (uint8_t)(have_utc ? (uint8_t)(((t % 60) + 60) % 60) : 0xFE);
-    if (sec == last_sec && gen == pub_gen && flags == pub_flags && loc_state == pub_loc && nres == pub_n && last_err == pub_err) return;
+    uint8_t extra[PVA_CLOCK_SIZE - PVA_CK_EXTRA];
+    pva_engine_extra(extra);
+    if (sec == last_sec && gen == pub_gen && flags == pub_flags && loc_state == pub_loc && nres == pub_n && last_err == pub_err &&
+        !memcmp(extra, pub_extra, sizeof extra)) return;
+    memcpy(pub_extra, extra, sizeof extra);
     pub_loc = loc_state;
     pub_n = nres;
     pub_err = last_err;
@@ -372,6 +425,7 @@ static void publish(void)
     for (unsigned i = 0; i < 8; i++) b[PVA_CK_ABBR + i] = i < 7 ? (uint8_t)abbr[i] : 0;
     b[PVA_CK_SYNCS] = syncs;
     b[PVA_CK_ERR] = last_err;
+    for (unsigned i = 0; i < sizeof extra; i++) b[PVA_CK_EXTRA + i] = extra[i];
     pva_barrier();
     b[PVA_CK_SEQ] = (uint8_t)(s + 1u);
 }
@@ -402,10 +456,14 @@ void pva_clock_poll(void)
         else if (have_ll && (fetch_now || (int32_t)(now - next_fetch) >= 0))
         {
             fetch_now = false;
-            char url[220];
+            char url[400];
             snprintf(url, sizeof url, "http://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
-                     "&timezone=auto&forecast_days=1&current=temperature_2m,weather_code", lat, lon);
+                     "&timezone=auto&forecast_days=%u&current=temperature_2m,weather_code,apparent_temperature,"
+                     "relative_humidity_2m,wind_speed_10m,is_day&daily=weather_code,temperature_2m_max,"
+                     "temperature_2m_min,precipitation_probability_max,wind_speed_10m_max", lat, lon, (unsigned)WX_DAYS);
             m_have_off = m_have_t = m_have_c = false;
+            memset(&mw, 0, sizeof mw);
+            for (unsigned i = 0; i < WX_DAYS; i++) mw.d[i].pp = 0xFF;
             m_tz[0] = m_abbr[0] = 0;
             start(Q_METEO, url);
         }
@@ -428,6 +486,34 @@ int pva_clock_info(void)
     pva_reply_str(place);
     pva_reply_str(zone);
     pva_reply_str(abbr);
+    return PVA_OK;
+}
+
+// WX_GET: the weather now and the next days (see PVA_WX_xxx)
+int pva_clock_wx(void)
+{
+    if (!wx.have) return PVA_E_STATE;
+    uint8_t b[PVA_WX_DAY0 + WX_DAYS * PVA_WX_DAYSIZE];
+    memset(b, 0, sizeof b);
+    b[PVA_WX_NDAYS] = wx.ndays;
+    b[PVA_WX_IS_DAY] = wx.is_day;
+    b[PVA_WX_TEMP] = (uint8_t)wx.t10; b[PVA_WX_TEMP + 1] = (uint8_t)((uint16_t)wx.t10 >> 8);
+    b[PVA_WX_FEEL] = (uint8_t)wx.feel10; b[PVA_WX_FEEL + 1] = (uint8_t)((uint16_t)wx.feel10 >> 8);
+    b[PVA_WX_HUM] = wx.hum;
+    b[PVA_WX_CODE] = wx.code;
+    b[PVA_WX_WIND] = wx.wind;
+    for (unsigned i = 0; i < wx.ndays && i < WX_DAYS; i++)
+    {
+        uint8_t *d = b + PVA_WX_DAY0 + i * PVA_WX_DAYSIZE;
+        d[PVA_WXD_WDAY] = wx.d[i].wday;
+        d[PVA_WXD_MDAY] = wx.d[i].mday;
+        d[PVA_WXD_CODE] = wx.d[i].code;
+        d[PVA_WXD_PP] = wx.d[i].pp;
+        d[PVA_WXD_WIND] = wx.d[i].wind;
+        d[PVA_WXD_TMAX] = (uint8_t)wx.d[i].tmax; d[PVA_WXD_TMAX + 1] = (uint8_t)((uint16_t)wx.d[i].tmax >> 8);
+        d[PVA_WXD_TMIN] = (uint8_t)wx.d[i].tmin; d[PVA_WXD_TMIN + 1] = (uint8_t)((uint16_t)wx.d[i].tmin >> 8);
+    }
+    for (size_t i = 0; i < sizeof b; i++) pva_reply_byte(b[i]);
     return PVA_OK;
 }
 

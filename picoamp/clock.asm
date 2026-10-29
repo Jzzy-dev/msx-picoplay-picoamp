@@ -24,6 +24,14 @@ CK_LOCN  equ 13
 CK_GEN   equ 14
 CK_WCODE equ 15
 CK_TEMP  equ 16
+CK_SLEEP equ 28
+CK_ALARM equ 29
+CK_AL_HOUR equ 30
+CK_AL_MIN equ 31
+CK_NST   equ 32
+CK_NCOUNT equ 33
+CK_NFEED equ 34
+CK_NERR  equ 35
 CKF_TIME equ 1
 CKF_ZONE equ 2
 CKF_WX   equ 4
@@ -44,6 +52,13 @@ G4      equ GREEN_D
 A_KEYS  equ GREY*16+NAVY
 
 mod_clock:
+        jp ck_open              ; the page's jump table (M_OPEN ...)
+        jp ck_tick
+        jp ck_frame
+        jp ck_keys
+        jp ck_info
+        jp ck_click
+        jp ck_leave
 ;------------------------------------------------------------------------------
 ck_open:
         xor a
@@ -355,7 +370,21 @@ ck_tick:
         ld hl,ck_ssec
         cp (hl)
         call nz,ck_second
-        ld a,(eng_minor)
+        ld a,(ckb+CK_SEQ)       ; the sleep timer or the alarm changed
+        bit 0,a
+        jr nz,.sa
+        ld hl,ckb+CK_SLEEP
+        ld de,ck_salshown
+        ld b,4
+.sc:    ld a,(de)
+        cp (hl)
+        jr nz,.sn
+        inc hl
+        inc de
+        djnz .sc
+        jr .sa
+.sn:    call ck_salline
+.sa:    ld a,(eng_minor)
         cp 11
         jr c,.m
         ld a,(ckb+CK_GEN)       ; the place, zone or weather changed
@@ -466,16 +495,15 @@ ck_lines:
         ld d,15
         ld c,WHITE*16+NAVY
         call ck_ctext
-        ld de,linebuf           ; zone, weather, source in one line
-        call ck_zonestr
-        call ck_sep
+        ld de,linebuf           ; weather and source in one line
         call ck_wxstr
         call ck_sep
         call ck_srcstr
         ld hl,linebuf
         ld d,16
         ld c,CYAN*16+NAVY
-        jp ck_ctext
+        call ck_ctext
+        jp ck_salline
 .an:    ; beside the dial (columns 18-31): the day, the date, ...
         ld hl,linebuf           ; "Thursday" alone, then the rest
 .sp:    ld a,(hl)
@@ -521,13 +549,7 @@ ck_lines:
         ld b,14
         ld c,WHITE*16+NAVY
         call text6s
-        ld de,linebuf
-        call ck_zonestr
-        ld hl,linebuf
-        ld de,#0C12
-        ld b,14
-        ld c,CYAN*16+NAVY
-        call text6s
+        call ck_salline
         ld de,linebuf
         call ck_wxstr
         ld hl,linebuf
@@ -637,57 +659,63 @@ ck_nth: or a
         djnz .s
         ret
 
-; "UTC+01:00 CET" (the internet time), else nothing
-ck_zonestr:
+; the sleep timer and the alarm: "Sleep 25 min  Alarm 07:30" (digital: row
+; 17 in the middle; analog: row 12 beside the dial)
+ck_salline:
+        ld hl,ckb+CK_SLEEP
+        ld de,ck_salshown
+        ld bc,4
+        ldir
+        ld de,linebuf
         xor a
         ld (de),a
-        ld a,(ck_isnet)
+        ld a,(eng_minor)
+        cp 12
+        jr c,.out
+        ld a,(ckb+CK_SLEEP)
         or a
-        ret z
-        ld a,(ckb+CK_FLAGS)
-        and CKF_ZONE
-        ld hl,txt_ck_utc
-        jp z,strcpy             ; the time is UTC (no zone yet)
+        jr z,.al
+        ld hl,txt_ck_sleep
         call strcpy
-        ld hl,(ckb+CK_OFF)      ; minutes
-        ld a,'+'
-        bit 7,h
-        jr z,.p
-        ld a,'-'
-        push af
-        xor a
-        sub l
+        ld a,(ckb+CK_SLEEP)
         ld l,a
-        sbc a,a
-        sub h
-        ld h,a
-        pop af
-.p:     ld (de),a
-        inc de
-        push de
-        ld de,60
-        call div16              ; HL = hours, DE = minutes
-        ld a,e
-        ld (tmp16),a
-        ld a,l
-        pop de
+        ld h,0
+        call fmt_u16
+        ld hl,txt_ck_min
+        call strcpy
+.al:    ld a,(ckb+CK_ALARM)
+        rrca
+        jr nc,.out
+        call ck_sep
+        ld hl,txt_ck_alarm
+        call strcpy
+        ld a,(ckb+CK_AL_HOUR)
         call put2
         ld a,':'
         ld (de),a
         inc de
-        ld a,(tmp16)
+        ld a,(ckb+CK_AL_MIN)
         call put2
-        ld a,(ck_abbr)
+        xor a
+        ld (de),a
+        ld a,(ckb+CK_ALARM)
+        and 4
+        ld hl,txt_ck_wkd
+        call nz,strcpy
+        ld a,(ckb+CK_ALARM)
+        and 2
+        ld hl,txt_ck_ring
+        call nz,strcpy
+.out:   ld hl,linebuf
+        ld a,(ck_face)
         or a
-        jr z,.e
-        ld a,' '
-        ld (de),a
-        inc de
-        ld hl,ck_abbr
-        jp strcpy
-.e:     xor a
-        ld (de),a
-        ret
+        ld c,YELLOW*16+NAVY
+        jr nz,.an
+        ld d,17
+        jp ck_ctext
+.an:    ld de,#0C12
+        ld b,14
+        jp text6s
 
 ; "-0.4 C Rain", else nothing
 ck_wxstr:
@@ -824,8 +852,18 @@ ck_keys:
         jp z,fs_close
         cp 'Z'
         jp z,fs_close
-        cp 'T'
+        cp 'I'
         jr z,ck_toggle_src
+        cp 'T'
+        ld c,PG_NEWS
+        jp z,pg_enter
+        cp 'W'
+        ld c,PG_WEATHER
+        jp z,pg_enter
+        cp 'O'
+        jp z,ck_sleep
+        cp 'A'
+        jp z,ck_alarm_open
         cp 'M'
         jr z,ck_toggle_col
         cp 'B'
@@ -909,11 +947,21 @@ ck_toggle_bars:
 ;------------------------------------------------------------------------------
 ; the place: L opens a line in row 23; a name is looked for (Open-Meteo),
 ; Enter alone takes the internet connection's place
+ck_alarm_open:
+        ld a,(eng_minor)
+        cp 12
+        ld hl,txt_ck_needs
+        jp c,ck_msg_err
+        ld a,1
+        jr ck_inp_go
 ck_inp_open:
         ld a,(eng_minor)
         cp 11
         ld hl,txt_ck_needs
         jp c,ck_msg_err
+        xor a
+ck_inp_go:
+        ld (ck_imode),a
         ld a,1
         ld (ck_inp),a
         xor a
@@ -922,7 +970,11 @@ ck_inp_open:
         ld (ck_msgon),a
 ck_inp_draw:
         ld hl,txt_ck_place
-        ld de,linebuf
+        ld a,(ck_imode)
+        or a
+        jr z,.p
+        ld hl,txt_ck_alin
+.p:     ld de,linebuf
         call strcpy
         ld hl,ck_itext
         call strcpy
@@ -973,6 +1025,9 @@ ck_inp_keys:
         jp ck_line23
 .go:    xor a
         ld (ck_inp),a
+        ld a,(ck_imode)
+        or a
+        jp nz,ck_alarm_set
         ld a,(ck_ilen)
         or a
         jr nz,.find
@@ -999,6 +1054,129 @@ ck_inp_keys:
         ld hl,txt_ck_looking
         ld c,WHITE*16+NAVY
         jp ck_row23
+
+; the alarm's time typed: "7:30", "0730", "07.30" ("w" after it: weekdays only);
+; nothing: the alarm off
+ck_alarm_set:
+        ld hl,ck_itext
+        ld de,0                 ; D = digits so far, E = 0
+        ld bc,0                 ; B = the number, C = weekdays
+        ld ix,ck_rbuf           ; (the digits)
+.d:     ld a,(hl)
+        inc hl
+        or a
+        jr z,.e
+        cp 'w'
+        jr z,.w
+        cp 'W'
+        jr z,.w
+        sub '0'
+        cp 10
+        jr nc,.d
+        ld e,a
+        ld a,d
+        cp 4                    ; (more than 4 digits: the rest is left out,
+        jr nc,.d                ; a "w" after them still counts)
+        ld (ix+0),e
+        inc ix
+        inc d
+        jr .d
+.w:     ld c,4
+        jr .d
+.e:     ld a,d
+        or a
+        jr z,.off
+        cp 3
+        jr c,.bad
+        ld ix,ck_rbuf           ; HMM or HHMM
+        cp 4
+        jr z,.h2
+        ld a,(ix+0)
+        ld b,a                  ; (H MM)
+        jr .mm
+.h2:    ld a,(ix+0)
+        ld b,a
+        add a,a
+        add a,a
+        add a,b
+        add a,a
+        add a,(ix+1)
+        ld b,a
+        inc ix
+.mm:    ld a,(ix+1)
+        add a,a
+        ld e,a
+        add a,a
+        add a,a
+        add a,e
+        add a,(ix+2)
+        cp 60
+        jr nc,.bad
+        ld e,a
+        ld a,b
+        cp 24
+        jr nc,.bad
+        ld a,c
+        or 1                    ; PVA_AL_ON
+        ld (args),a
+        ld a,b
+        ld (args+1),a
+        ld a,e
+        ld (args+2),a
+        ld bc,3
+        ld a,C_ALARM
+        call cmd
+        ret c
+        ld hl,txt_ck_alnone
+        jp nz,ck_msg_err
+        ld a,1
+        ld (ck_dirty),a
+        ld hl,txt_ck_alset
+        jp ck_msg_ok
+.off:   xor a
+        ld (args),a
+        ld a,(ckb+CK_AL_HOUR)
+        ld (args+1),a
+        ld a,(ckb+CK_AL_MIN)
+        ld (args+2),a
+        ld bc,3
+        ld a,C_ALARM
+        call cmd
+        ld a,1
+        ld (ck_dirty),a
+        ld hl,txt_ck_aloff
+        jp ck_msg_ok
+.bad:   ld hl,txt_ck_albad
+        jp ck_msg_err
+
+; O: the sleep timer 15, 30, 45, 60, 90 minutes, off
+ck_sleep:
+        ld a,(eng_minor)
+        cp 12
+        ld hl,txt_ck_needs
+        jp c,ck_msg_err
+        ld a,(ck_sleepi)
+        inc a
+        cp 6
+        jr c,.i
+        xor a
+.i:     ld (ck_sleepi),a
+        ld hl,ck_sleeps
+        call idx
+        ld l,(hl)
+        ld h,0
+        ld (args),hl
+        push hl
+        ld bc,2
+        ld a,C_SLEEP
+        call cmd
+        pop hl
+        ld a,h
+        or l
+        ld hl,txt_ck_sloff
+        jp z,ck_msg_ok
+        ld hl,txt_ck_slon
+        jp ck_msg_ok
 
 ; the place search's outcome
 ck_wait_poll:
@@ -1034,7 +1212,7 @@ ck_wait_poll:
 .n:     ld (ck_n),a
         ld b,a                  ; the names, 32 bytes each
         ld hl,reply+1
-        ld de,ck_names
+        ld de,CK_NAMES
 .c:     push bc
         push de
         ld bc,31
@@ -1072,7 +1250,7 @@ ck_list_draw:
         add a,5
         ld d,a
         ld e,1
-        ld l,c                  ; ck_names + 32 c
+        ld l,c                  ; CK_NAMES + 32 c
         ld h,0
         add hl,hl
         add hl,hl
@@ -1080,7 +1258,7 @@ ck_list_draw:
         add hl,hl
         add hl,hl
         push de
-        ld de,ck_names
+        ld de,CK_NAMES
         add hl,de
         pop de
         ld a,(ck_lsel)
@@ -1131,7 +1309,7 @@ ck_list_keys:
         add hl,hl
         add hl,hl
         add hl,hl
-        ld de,ck_names
+        ld de,CK_NAMES
         add hl,de
         ld de,ck_place
         call strcpy0
@@ -2182,7 +2360,23 @@ txt_ck_music:   db "music",0
 txt_ck_calm:    db "calm",0
 txt_ck_on:      db "on",0
 txt_ck_off:     db "off",0
-txt_ck_keys:    db "</> face T time L place M colours B bars",0
+txt_ck_keys:    db "</> face I time L place O sleep A alarm",0
+txt_ck_sleep:   db "Sleep ",0
+txt_ck_min:     db " min",0
+txt_ck_alarm:   db "Alarm ",0
+txt_ck_wkd:     db " Mo-Fr",0
+txt_ck_ring:    db " !",0
+txt_ck_alin:    db "Alarm at (e.g. 7:30, w: Mo-Fr): ",0
+txt_ck_alset:   db "Alarm set: it plays what plays now",0
+txt_ck_aloff:   db "Alarm off",0
+txt_ck_alnone:  db "Play the station for the alarm first",0
+txt_ck_albad:   db "The alarm's time: HH:MM",0
+txt_ck_slon:    db "Sleep timer on: the music fades out",0
+txt_ck_sloff:   db "Sleep timer off",0
+ck_sleeps:      db 15,30,45,60,90,0
+ck_sleepi:      db 5
+ck_imode:       db 0
+ck_salshown:    ds 4,#FF
 txt_ck_lkeys:   db "Up/Down, Enter: this place   ESC: back",0
 txt_ck_choose:  db "Which place?",0
 txt_ck_place:   db "Place (Enter alone: by IP): ",0
@@ -2198,12 +2392,12 @@ txt_ck_msx:     db "MSX clock",0
 txt_ck_wait:    db "MSX clock (waiting)",0
 txt_ck_old:     db "MSX clock (old engine)",0
 txt_ck_needs:   db "Places need engine 0.11 or newer",0
-txt_ck_utc:     db "UTC",0
 txt_ck_deg:     db " C ",0
 txt_ck_sep:     db "  ",0
 ck_days:        db "Monday",0,"Tuesday",0,"Wednesday",0,"Thursday",0,"Friday",0,"Saturday",0,"Sunday",0
 ck_months:      db "January",0,"February",0,"March",0,"April",0,"May",0,"June",0,"July",0
                 db "August",0,"September",0,"October",0,"November",0,"December",0
+CK_NAMES        equ vizbuf              ; the places found (8 x 32; no dial meanwhile)
 ; WMO weather codes: up to this code, this word
 ck_wx:          db 0,"Clear",0, 1,"Mainly clear",0, 2,"Partly cloudy",0, 3,"Overcast",0
                 db 48,"Fog",0, 57,"Drizzle",0, 67,"Rain",0, 77,"Snow",0, 82,"Showers",0
@@ -2275,5 +2469,4 @@ ln_dy:            db 0
 ln_sx:            db 0
 ln_sy:            db 0
 ln_err:           dw 0
-ck_names:       ds 8*32,0
 mod_clock_end:

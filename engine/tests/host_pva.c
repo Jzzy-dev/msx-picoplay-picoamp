@@ -44,7 +44,7 @@ extern bool host_esp_close_silent;
 extern long long host_esp_date_base;
 extern bool host_esp_web_down;
 extern uint32_t host_esp_web_requests;
-extern char host_esp_last_web[300];
+extern char host_esp_last_web[600];
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } else if (verbose) { printf("  ok: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -1172,6 +1172,115 @@ int main(int argc, char **argv)
             CHECK(ck[PVA_CK_LOC_STATE] == PVA_LOCS_FAILED && ck[PVA_CK_ERR] == PVA_NERR_CONNECT, "search with the server down: FAILED (%u)", ck[PVA_CK_ERR]);
             host_esp_web_down = false;
             CHECK(cmd(PVA_C_LOC_LIST, NULL, 0) == PVA_E_STATE, "no list after a failure");
+        }
+
+
+        printf("[weather, sleep timer, alarm, news]\n");
+        {
+            WAIT_CLOCK((ck[PVA_CK_FLAGS] & PVA_CKF_WEATHER) && !(ck[PVA_CK_FLAGS] & PVA_CKF_BUSY), 15000);
+            CHECK(strstr(host_esp_last_web, "&daily=weather_code,temperature_2m_max") != NULL, "the forecast asked for: %.60s", host_esp_last_web + 80);
+            CHECK(cmd(PVA_C_WX_GET, NULL, 0) == PVA_OK && reply_len == PVA_WX_DAY0 + 6 * PVA_WX_DAYSIZE, "WX_GET (%u bytes)", reply_len);
+            CHECK(reply[PVA_WX_NDAYS] == 5, "5 days with a forecast (the 6th is null): %u", reply[PVA_WX_NDAYS]);
+            #define S16(o) ((int16_t)(reply[o] | (reply[(o) + 1] << 8)))
+            CHECK(S16(PVA_WX_TEMP) == -4 && S16(PVA_WX_FEEL) == -35 && reply[PVA_WX_HUM] == 87 &&
+                  reply[PVA_WX_CODE] == 61 && reply[PVA_WX_WIND] == 15 && reply[PVA_WX_IS_DAY] == 0,
+                  "now: %d (feels %d), %u%%, code %u, %u km/h", S16(PVA_WX_TEMP), S16(PVA_WX_FEEL), reply[PVA_WX_HUM], reply[PVA_WX_CODE], reply[PVA_WX_WIND]);
+            const uint8_t *d0 = reply + PVA_WX_DAY0, *d4 = d0 + 4 * PVA_WX_DAYSIZE, *d5 = d0 + 5 * PVA_WX_DAYSIZE;
+            CHECK(d0[PVA_WXD_WDAY] == 3 && d0[PVA_WXD_MDAY] == 29 && d0[PVA_WXD_CODE] == 61 && d0[PVA_WXD_PP] == 80 &&
+                  (int16_t)(d0[PVA_WXD_TMAX] | (d0[PVA_WXD_TMAX + 1] << 8)) == 84 && (int16_t)(d0[PVA_WXD_TMIN] | (d0[PVA_WXD_TMIN + 1] << 8)) == -12 &&
+                  d0[PVA_WXD_WIND] == 25, "today: Thursday 29, code 61, 80%%, 8.4 / -1.2, 25 km/h (%u %u %u %u %d %d %u)", d0[0], d0[1], d0[2], d0[3],
+                  (int16_t)(d0[PVA_WXD_TMAX] | (d0[PVA_WXD_TMAX + 1] << 8)), (int16_t)(d0[PVA_WXD_TMIN] | (d0[PVA_WXD_TMIN + 1] << 8)), d0[PVA_WXD_WIND]);
+            CHECK(d4[PVA_WXD_WDAY] == 0 && d4[PVA_WXD_MDAY] == 2 && d4[PVA_WXD_CODE] == 95 && d4[PVA_WXD_PP] == 100 && d4[PVA_WXD_WIND] == 62,
+                  "day 5: Monday 2, thunder (%u %u %u)", d4[PVA_WXD_WDAY], d4[PVA_WXD_CODE], d4[PVA_WXD_WIND]);
+            (void)d5;
+            // the sleep timer
+            CHECK(cmd_str(PVA_C_PLAY_URL, "http://radio.test/stream.mp3") == PVA_OK, "a stream plays");
+            run_ms(3000);
+            uint8_t sl[2] = { 1, 0 };
+            CHECK(cmd(PVA_C_SLEEP, sl, 2) == PVA_OK, "SLEEP 1 minute");
+            run_ms(100); read_clock();
+            CHECK(ck[PVA_CK_SLEEP] == 1, "1 minute left (%u)", ck[PVA_CK_SLEEP]);
+            run_ms(45000); read_status();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING, "still playing after 45 s (fading)");
+            run_ms(16000); read_status(); read_clock();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_STOPPED && ck[PVA_CK_SLEEP] == 0, "stopped after a minute (state %u)", st[PVA_ST_STATE]);
+            // the alarm: what plays now, a minute from now
+            uint8_t al[3] = { PVA_AL_ON, 7, 30 };
+            cmd(PVA_C_CFG_TEXT, NULL, 0);
+            CHECK(cmd(PVA_C_ALARM, al, 3) == PVA_E_STATE, "ALARM with nothing to play: STATE");
+            uint8_t pu[] = "http://radio2.test:8000/live\0Radio Two Live";
+            cmd(PVA_C_PLAY_URL, pu, sizeof pu);
+            run_ms(2000);
+            read_clock();
+            uint8_t ah = ck[PVA_CK_HOUR], am = (uint8_t)(ck[PVA_CK_MIN] + 1u);
+            if (am == 60) { am = 0; ah = (uint8_t)((ah + 1u) % 24u); }
+            al[1] = ah; al[2] = am;
+            CHECK(cmd(PVA_C_ALARM, al, 3) == PVA_OK, "ALARM %02u:%02u", ah, am);
+            CHECK(cmd_str(PVA_C_CFG_GET, "alarm.play") == PVA_OK && !strcmp((char *)reply, "http://radio2.test:8000/live"), "alarm.play=%s", reply);
+            CHECK(cmd_str(PVA_C_CFG_GET, "alarm.name") == PVA_OK && !strcmp((char *)reply, "Radio Two Live"), "alarm.name=%s", reply);
+            cmd(PVA_C_STOP, NULL, 0);
+            run_ms(100); read_clock();
+            CHECK(ck[PVA_CK_ALARM] == PVA_AL_ON && ck[PVA_CK_AL_HOUR] == ah && ck[PVA_CK_AL_MIN] == am, "the clock block shows it");
+            WAIT_CLOCK(ck[PVA_CK_ALARM] & PVA_AL_RINGING, 65000);
+            read_status();
+            CHECK((ck[PVA_CK_ALARM] & PVA_AL_RINGING) && st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_ALBUM), "Radio Two Live"),
+                  "it rings: %s plays", ststr(PVA_ST_ALBUM));
+            cmd(PVA_C_PAUSE, NULL, 0);
+            run_ms(100); read_clock();
+            CHECK(!(ck[PVA_CK_ALARM] & PVA_AL_RINGING) && (ck[PVA_CK_ALARM] & PVA_AL_ON), "a key stops the ringing, the alarm stays on");
+            cmd(PVA_C_STOP, NULL, 0);
+            al[0] = 0;
+            CHECK(cmd(PVA_C_ALARM, al, 3) == PVA_OK && cmd_str(PVA_C_CFG_GET, "alarm.on") == PVA_OK && !strcmp((char *)reply, "off"), "alarm off");
+            // news: the world services by default
+            CHECK(cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 5 && !strcmp((char *)reply + 1, "BBC World"), "5 feeds by default, the first: %s", reply + 1);
+            {
+                uint8_t k1[] = "news.feed1\0Test|http://news.test/rss", k2[] = "news.feed2\0RDF|http://news.test/rdf",
+                        k3[] = "news.feed3\0Atom|http://news.test/atom", k4[] = "news.feed4\0Many|http://news.test/many";
+                cmd(PVA_C_CFG_SET, k1, sizeof k1); cmd(PVA_C_CFG_SET, k2, sizeof k2); cmd(PVA_C_CFG_SET, k3, sizeof k3); cmd(PVA_C_CFG_SET, k4, sizeof k4);
+            }
+            CHECK(cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 4 && !strcmp((char *)reply + 1, "Test"), "the INI's 4 feeds");
+            #define WAIT_NEWS() WAIT_CLOCK(ck[PVA_CK_NEWS_STATE] != PVA_NEWS_LOADING, 20000)
+            CHECK(cmd_u8(PVA_C_NEWS_FETCH, 0) == PVA_OK, "NEWS_FETCH 0");
+            read_clock();
+            CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_LOADING, "loading");
+            WAIT_NEWS();
+            CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_DONE && ck[PVA_CK_NEWS_COUNT] == 3 && ck[PVA_CK_NEWS_FEED] == 0, "3 stories (state %u, %u)", ck[PVA_CK_NEWS_STATE], ck[PVA_CK_NEWS_COUNT]);
+            uint8_t ls[2] = { 0, 10 };
+            CHECK(cmd(PVA_C_NEWS_LIST, ls, 2) == PVA_OK && !strcmp((char *)reply, "Cafe owners & \"friends\" meet"), "title 1: '%s'", reply);
+            const char *t2 = (char *)reply + strlen((char *)reply) + 1;
+            CHECK(!strcmp(t2, "Second & \"quoted\" story"), "title 2 (an HTML-like <tag> goes): '%s'", t2);
+            CHECK(cmd_u8(PVA_C_NEWS_ITEM, 0) == PVA_OK, "NEWS_ITEM 0");
+            const char *tx = (char *)reply + strlen((char *)reply) + 1, *dt = tx + strlen(tx) + 1;
+            CHECK(!strcmp(tx, "The first story, with spaces and a line.") && !strcmp(dt, "29 Oct 2026 20:15:00 GMT"), "text '%s', date '%s'", tx, dt);
+            cmd_u8(PVA_C_NEWS_ITEM, 1);
+            tx = (char *)reply + strlen((char *)reply) + 1;
+            CHECK(!strcmp(tx, "Escaped &amp; HTML link."), "escaped HTML: '%s'", tx);
+            cmd_u8(PVA_C_NEWS_ITEM, 2);
+            tx = (char *)reply + strlen((char *)reply) + 1;
+            CHECK(!strcmp((char *)reply, "Third: no description") && !tx[0], "no description");
+            CHECK(cmd_u8(PVA_C_NEWS_ITEM, 3) == PVA_E_RANGE, "story 4: RANGE");
+            cmd_u8(PVA_C_NEWS_FETCH, 1); WAIT_NEWS();
+            cmd_u8(PVA_C_NEWS_ITEM, 0);
+            tx = (char *)reply + strlen((char *)reply) + 1; dt = tx + strlen(tx) + 1;
+            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && !strcmp((char *)reply, "RDF story") && !strcmp(tx, "RDF text") && !strcmp(dt, "2026-10-29T18:30:00Z"), "RSS 1.0: %s / %s", reply, dt);
+            cmd_u8(PVA_C_NEWS_FETCH, 2); WAIT_NEWS();
+            cmd_u8(PVA_C_NEWS_ITEM, 0);
+            tx = (char *)reply + strlen((char *)reply) + 1;
+            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && !strcmp((char *)reply, "Atom story") && !strcmp(tx, "Atom text"), "Atom: %s", reply);
+            cmd_u8(PVA_C_NEWS_FETCH, 3); WAIT_NEWS();
+            uint8_t nn = ck[PVA_CK_NEWS_COUNT];
+            CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_DONE && nn >= 8 && nn <= 40, "a long feed: %u stories kept (as many as fit, at most 40)", nn);
+            uint8_t l2[2] = { (uint8_t)(nn - 2u), 5 };
+            cmd(PVA_C_NEWS_LIST, l2, 2);
+            char e1[16], e2[16];
+            snprintf(e1, sizeof e1, "Story %02u", (unsigned)(nn - 2u)); snprintf(e2, sizeof e2, "Story %02u", (unsigned)(nn - 1u));
+            CHECK(!strcmp((char *)reply, e1) && !strcmp((char *)reply + 9, e2) && reply_len == 18, "the last ones: %s (%u bytes)", reply, reply_len);
+            CHECK(cmd_u8(PVA_C_NEWS_FETCH, 7) == PVA_E_RANGE, "no feed 8");
+            uint8_t kb[] = "news.feed1\0Down|http://down.test/rss";
+            cmd(PVA_C_CFG_SET, kb, sizeof kb);
+            cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+            CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_FAILED && ck[PVA_CK_NEWS_ERR] == PVA_NERR_DNS, "an unknown host: FAILED, DNS (%u)", ck[PVA_CK_NEWS_ERR]);
+            cmd(PVA_C_CFG_LOAD, NULL, 0);
         }
 
         printf("[directory troubles]\n");

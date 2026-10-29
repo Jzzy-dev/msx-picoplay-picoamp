@@ -128,6 +128,13 @@ C_LOCIP  equ #31
 C_LOCSRCH equ #32
 C_LOCLIST equ #33
 C_LOCPICK equ #34
+C_WXGET  equ #35              ; (engine 0.12)
+C_SLEEP  equ #36
+C_ALARM  equ #37
+C_NFEEDS equ #38
+C_NFETCH equ #39
+C_NLIST  equ #3A
+C_NITEM  equ #3B
 W_CLOCK  equ #4D00
 
 ; status block offsets
@@ -296,9 +303,9 @@ mainloop:
         or a
         call nz,check_loading
         call ticker_run
-        ld a,(ck_on)
+        ld a,(pg_on)
         or a
-        call nz,ck_tick
+        call nz,M_TICK
         call msg_run
         call mouse
         call keys
@@ -401,12 +408,12 @@ fetch_frame:
         di
         ld a,(W_STATUS+ST_DGEN)
         ld (gen_new),a
-        ld a,(ck_on)            ; the clock page: the clock block
+        ld a,(pg_on)            ; a page: the clock block
         or a
         jr z,.nock
         ld hl,W_CLOCK
         ld de,ckb
-        ld bc,32
+        ld bc,48
         ldir
 .nock:
         ld a,(W_VIZ+V_SEQ)
@@ -913,12 +920,12 @@ put_digit:
         pop ix
         ld b,3
 .r:     push bc
-        ld a,RED*16+NAVY
+        ld a,(dig_col)
         call put_cell
         ld bc,8
         add ix,bc
         inc e
-        ld a,RED*16+NAVY
+        ld a,(dig_col)
         call put_cell
         ld bc,8
         add ix,bc
@@ -934,7 +941,7 @@ put_colon:
         ld ix,colon
         ld b,3
 .r:     push bc
-        ld a,RED*16+NAVY
+        ld a,(dig_col)
         call put_cell
         ld bc,8
         add ix,bc
@@ -4065,12 +4072,14 @@ fs_open:
         jp fs_setup
 
 fs_close:
-        ld a,(ck_on)
+        ld a,(pg_on)
         or a
-        call nz,ck_leave
+        call nz,M_LEAVE
         xor a
-        ld (ck_on),a
+        ld (pg_on),a
         ld (fs_on),a
+        ld a,RED*16+NAVY
+        ld (dig_col),a
         jp redraw_all
 
 fs_next:
@@ -4139,9 +4148,9 @@ fs_setup:
 
 ; row 0: the title, row 23: the picture's name and the time
 fs_info:
-        ld a,(ck_on)
+        ld a,(pg_on)
         or a
-        jp nz,ck_info
+        jp nz,M_INFO
         ld hl,st+ST_TITLE
         ld a,(hl)
         or a
@@ -4202,10 +4211,10 @@ put2:   ld b,'0'-1              ; A (0..99): two digits at DE, DE after them
 
 fs_keys:
         ld c,a
-        ld a,(ck_on)
+        ld a,(pg_on)
         or a
         ld a,c
-        jp nz,ck_keys
+        jp nz,M_KEYS
         cp 29
         jp z,fs_prev
         cp 28
@@ -4230,9 +4239,9 @@ fs_keys:
 
 ; a new picture from the engine
 fs_draw:
-        ld a,(ck_on)
+        ld a,(pg_on)
         or a
-        jp nz,ck_frame
+        jp nz,M_FRAME
         ld a,(viz+V_SEQ)
         bit 0,a
         ret nz
@@ -5216,9 +5225,9 @@ left_click:
         ld a,(fs_on)
         or a
         jr z,.nofs
-        ld a,(ck_on)
+        ld a,(pg_on)
         or a
-        jp nz,ck_click
+        jp nz,M_CLICK
         jp fs_next
 .nofs:  ld a,(ms_x)
         rrca
@@ -5550,10 +5559,17 @@ keys:
         jp z,srch_open
         cp 'j'
         jp z,srch_open
+        and #DF
         cp 'C'
-        jp z,ck_enter
-        cp 'c'
-        jp z,ck_enter
+        ld c,PG_CLOCK
+        jp z,pg_enter
+        cp 'W'
+        ld c,PG_WEATHER
+        jp z,pg_enter
+        cp 'T'
+        ld c,PG_NEWS
+        jp z,pg_enter
+        ld a,b
         ; fall through
 
 ; the keys of both screens: A = key
@@ -5711,38 +5727,74 @@ eq_keys:
         jp keys_common
 
 ;------------------------------------------------------------------------------
-; pages in modules: the clock page (clock.asm) is copied to MODBASE when it opens
-ck_enter:
+; pages in modules (clock.asm, weather.asm, news.asm): the one that shows is
+; copied to MODBASE; it starts with its jump table
+PG_CLOCK   equ 1
+PG_WEATHER equ 2
+PG_NEWS    equ 3
+M_OPEN  equ MODBASE
+M_TICK  equ MODBASE+3           ; each main loop pass
+M_FRAME equ MODBASE+6           ; a new picture from the engine
+M_KEYS  equ MODBASE+9           ; A = B = the key
+M_INFO  equ MODBASE+12          ; the status changed
+M_CLICK equ MODBASE+15          ; the left button
+M_LEAVE equ MODBASE+18          ; it closes (or another page comes)
+
+; pg_enter: C = the page (also from a page: the other one)
+pg_enter:
+        push bc
+        ld a,(pg_on)
+        or a
+        call nz,M_LEAVE
         ld a,(eq_open)
         or a
         call nz,eq_close
-        call mod_clock_load
-        ld a,1
-        ld (fs_on),a
-        ld (ck_on),a
-        jp ck_open
-
-mod_clock_load:
-    IFDEF ROMBUILD
-        di                      ; page 1 shows this ROM: its bank 1 holds the page
-        ld a,1
-        ld (#6000),a
-        ld hl,mod_clock_src-#4000
+        pop bc
+        ld a,c
+        ld (pg_on),a
+        dec a                   ; the module: its place, length, ROM bank
+        ld l,a
+        ld h,0
+        ld e,l
+        ld d,h
+        add hl,hl
+        add hl,hl
+        add hl,de               ; * 5
+        ld de,mod_tab
+        add hl,de
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld c,(hl)
+        inc hl
+        ld b,(hl)
+        inc hl
+        ld a,(hl)
+        ex de,hl
         ld de,MODBASE
-        ld bc,mod_clock_end-mod_clock
+    IFDEF ROMBUILD
+        di                      ; page 1 shows this ROM: the module's bank
+        ld (#6000),a
         ldir
         xor a
         ld (#6000),a
         ei
     ELSE
-        ld hl,mod_clock_src     ; in the COM file after the program
-        ld de,MODBASE
-        ld bc,mod_clock_end-mod_clock
-        ldir
+        ldir                    ; (in the COM file after the program)
     ENDIF
         xor a
         ld (tk_built),a         ; (the ticker strips are gone)
-        ret
+        inc a
+        ld (fs_on),a
+        jp M_OPEN
+
+mod_tab:        dw mod_clock_src, mod_clock_end-mod_clock
+                db 1
+                dw mod_wx_src, mod_wx_end-mod_wx
+                db 2
+                dw mod_news_src, mod_news_end-mod_news
+                db 3
 
 ; ini_save: the settings to PICOAMP.INI. The engine writes the file where no
 ; one else writes the card (the ROM); under MSX-DOS this program does.
@@ -5781,9 +5833,9 @@ ini_save:
     ENDIF
         ret
 
-quit:   ld a,(ck_on)            ; (the clock page's settings)
+quit:   ld a,(pg_on)            ; (a page's settings)
         or a
-        call nz,ck_leave
+        call nz,M_LEAVE
         call restore_screen
         ld de,txt_bye
         jr bye
@@ -5984,7 +6036,7 @@ help_text:
         db #5E,"E          EQ preset  Z      full screen",0
         db #5E,"F          favourite+ D, DEL favourite-",0
         db #5E,"/ or J     search     ?      this page",0
-        db #5E,"C          clock      ESC Q  quit",0
+        db #5E,"C W T      pages      ESC Q  quit",0
         db #5E,0
         db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
         db #4E,"           0 middle, G or ESC closes",0
@@ -6212,7 +6264,8 @@ msg_until:      dw 0
 fav_path:       db "A:\\RADIOFAV.M3U",0
 ini_path:       db "A:\\PICOAMP.INI",0
 eng_minor:      db 0
-ck_on:          db 0
+pg_on:          db 0
+dig_col:        db RED*16+NAVY
 spr_next:       db 216
 fav_fh:         db 0
 fav_n:          dw 0
@@ -6225,13 +6278,32 @@ progend:
     ENDIF
 
 ; the page modules, each assembled to run at MODBASE: in the COM file after
-; the program, in the ROM in bank 1 (4000h when 6000h is written 1)
+; the program; in the ROM one a bank (bank n at 4000h when 6000h is written n)
+    IFDEF ROMBUILD
+        org #4000               ; fileorg-ok (bank 1)
+    ENDIF
 mod_clock_src:
         DISP MODBASE
         include "clock.asm"
         ENT
     IFDEF ROMBUILD
-        ds #C000-$,#FF          ; the ROM: 32 KB
+        ds #8000-$,#FF
+        org #4000               ; fileorg-ok (bank 2)
+    ENDIF
+mod_wx_src:
+        DISP MODBASE
+        include "weather.asm"
+        ENT
+    IFDEF ROMBUILD
+        ds #8000-$,#FF
+        org #4000               ; fileorg-ok (bank 3)
+    ENDIF
+mod_news_src:
+        DISP MODBASE
+        include "news.asm"
+        ENT
+    IFDEF ROMBUILD
+        ds #8000-$,#FF          ; the ROM: 64 KB
     ENDIF
 
 ; buffers (not in the file; cleared at the start). They are in page 2: page
@@ -6271,14 +6343,18 @@ pl_tab          equ vizbuf                  ; the plasma's tables (free in the f
 MODBASE         equ tkstrip                 ; (shared: a page module while it shows)
 fav_url         equ tkstrip + 8*82*8
 fav_name        equ fav_url + 256
-ckb             equ fav_name + 64           ; the engine's clock block (the clock page)
-bss_end         equ ckb + 32
-        assert mod_clock_end - mod_clock <= 8*82*8
+modext          equ fav_name + 64           ; (more room for a page module)
+ckb             equ modext + 1600           ; the engine's clock block (pages)
+bss_end         equ ckb + 48
+MOD_MAX         equ ckb - MODBASE
+        assert mod_clock_end - mod_clock <= MOD_MAX
+        assert mod_wx_end - mod_wx <= MOD_MAX
+        assert mod_news_end - mod_news <= MOD_MAX
         assert 8*82*8 >= FAV_MAX + 1
     IFDEF ROMBUILD
         assert progend - RUN_AT <= #4000 - (rom_payload - #4000)
         assert bss_end < #EE00          ; (the stack and the BIOS above)
     ELSE
         assert progend < #4000
-        assert bss_end < #B000
+        assert bss_end < #C000
     ENDIF

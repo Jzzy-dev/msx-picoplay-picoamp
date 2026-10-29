@@ -12,7 +12,7 @@ Two parts, both included:
 
 | Part | Where | What |
 |------|-------|------|
-| `PICOAMP.ROM` | `picoamp/` (built by `build.sh`) | a 32 KB MSX cartridge ROM in two 16 KB banks ("AB" header in bank 0, INIT at 4010h; bank 1 holds the clock page). Its INIT copies the program to RAM at 8000h and runs it there; it never needs MSX-DOS. Q returns from INIT, so the MSX goes on booting to BASIC (the music plays on). |
+| `PICOAMP.ROM` | `picoamp/` (built by `build.sh`) | a 64 KB MSX cartridge ROM in four 16 KB banks ("AB" header in bank 0, INIT at 4010h; banks 1, 2 and 3 hold the clock, weather and news pages). Its INIT copies the program to RAM at 8000h and runs it there; it never needs MSX-DOS. Q returns from INIT, so the MSX goes on booting to BASIC (the music plays on). |
 | The PicoVerse Audio Engine | `engine/` | runs on core 1: MP3/WAV from the microSD card, internet radio and the Radio Browser directory over the ESP-01, equalizer, spectrum/VU/scope data. The MSX talks to it through a 4 KB register window. |
 
 No Nextor, no mapper, no ESP BIOS on the MSX side, and no files on the card
@@ -38,8 +38,8 @@ One **expanded** slot (the sub-slot register at FFFFh, read back inverted):
   everything else is ignored.
 * Reads: FFFFh gives `~subslot_reg`; page 1 of sub-slot 0 the ROM byte at
   `bank * 16 KB + (addr & 3FFFh)`; page 1 of sub-slot 3 `pva_mem_read(addr)`.
-* PICOAMP selects bank 1 only for the moment it copies a page module into
-  its RAM (interrupts off), then bank 0 again; the BIOS always finds bank 0.
+* PICOAMP selects bank 1, 2 or 3 only for the moment it copies a page module
+  into its RAM (interrupts off), then bank 0 again; the BIOS always finds bank 0.
 * **Apply all pending writes before answering a read.** The bus loop must
   drain the write FIFO again after it took the read address and before it
   computes the data. A sub-slot change at FFFFh followed at once by a read in
@@ -72,7 +72,8 @@ no header.
   in RAM), `pva_engine.c`, `pva_decode.c`, `pva_net.c`, `pva_esp.c`,
   `pva_dir.c`, `pva_eq.c`, `pva_viz.c`, `pva_json.c`, `pva_web.c` (web
   requests in their own slot of the ESP link), `pva_cfg.c` (the settings
-  text), `pva_clock.c` (time, place, weather now), `pva_hal_pico.c`.
+  text), `pva_clock.c` (time, place, weather now and the next days), `pva_news.c`
+  (news feeds: RSS, RDF, Atom), `pva_hal_pico.c`.
 * The Helix MP3 decoder (`lib/picomp3lib`), with its allocator pointed at
   the engine (`buffers.c` built with `MPDEC_ALLOCATOR` and
   `audio/mp3_alloc_dispatch.h`, as in LoadROM's `CMakeLists.txt`). Explorer
@@ -109,9 +110,9 @@ no header.
 
 | What | Size |
 |------|------|
-| ROM copy in SRAM (`rom_sram`) | 32 KB |
+| ROM copy in SRAM (`rom_sram`) | 64 KB |
 | core 1 stack | 8 KB |
-| engine arena (the rest of the 256 KB `rom_sram` cache) | ~216 KB here; 96 KB is the minimum |
+| engine arena (the rest of the 256 KB `rom_sram` cache) | ~184 KB here; 96 KB is the minimum (the news takes up to 12 KB of it once it is opened) |
 | stream RAM | 128 KB (emu2413 tables) |
 
 ## The MSX side, for reference
@@ -119,12 +120,14 @@ no header.
 * `PICOAMP.ROM` finds the engine by `"PVAUDIO"` at 4000h in every slot and
   sub-slot, so it works wherever the cartridge is.
 * It needs an MSX2 (SCREEN 4, the palette, sprites in mode 2) and 64 KB of
-  RAM: the program at 8000h-B7xxh, its buffers up to about E500h (the clock
-  page is copied into one of them while it shows), the stack of the BIOS
-  above.
+  RAM: the program at 8000h-B7xxh, its buffers up to about E500h (the page
+  that shows, clock, weather or news, is copied into one of them), the stack
+  of the BIOS above.
 * The clock page needs engine 0.11 and WiFi for the internet time, the place
   and the weather (web requests to ip-api.com and Open-Meteo, while the radio
-  plays); without them it shows the MSX2's clock chip.
+  plays); without them it shows the MSX2's clock chip. The weather page, the
+  news page, the sleep timer and the alarm need engine 0.12 (the news also
+  fetches its feeds over the ESP-01, http or https).
 * Window protocol, status block and visualisation block:
   `engine/pva_proto.h` and `docs/picoplay.md` section 7.
 
