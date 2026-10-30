@@ -144,6 +144,7 @@ static uint8_t  after;              // what follows S_CLOSE
 static uint8_t  redirects;
 static uint32_t wait_until;
 static uint32_t retry_delay_ms;
+static bool     lend;               // a web request needs the ESP's one TLS connection
 static uint32_t t_start;            // start of the current request phase
 static uint32_t last_data_ms;
 static bool     ever_streamed;
@@ -667,6 +668,15 @@ static void poll_receive(uint32_t now)
         if (gap > st.longest_gap_ms) st.longest_gap_ms = gap;
         if (gap > T_NODATA_MS) { lost_connection(PVA_NERR_TIMEOUT); return; }
     }
+    if (!want_fn && lend && tls && s == S_BODY && !body_playlist)
+    {
+        // the ESP-01 has one TLS connection: the stream lends it (the buffer plays on) and
+        // connects again when the web request is done
+        pva_log("stream: lends its TLS connection");
+        retry_delay_ms = 100u;
+        close_then(AFTER_RETRY);
+        return;
+    }
     if (want_fn) return;
     if ((int32_t)(now - wait_until) >= 0 && now - last_rx_ms >= QUIET_MS && now - state_ask_ms >= 2u * QUIET_MS)
     {
@@ -835,6 +845,7 @@ void pva_net_poll(void)
 
         case S_WAIT:
             if ((int32_t)(now - wait_until) < 0) return;
+            if (lend && tls && after == AFTER_RETRY) return;   // (its TLS connection is lent)
             if (after == AFTER_RETRY) { begin_connect(); return; }
             esp_request(FN_NETSTATE, NULL, 0, NULL, 0, T_NETSTATE_MS);
             s = S_NETSTATE;
@@ -998,6 +1009,11 @@ const char *pva_net_stream_title(void) { return title ? title : ""; }
 const char *pva_net_host(void) { return host; }
 
 uint8_t pva_net_conn(void) { return conn; }
+// a web request borrows the stream's TLS connection (on), or gives it back
+void pva_net_lend_tls(bool on) { lend = on; }
+// the stream holds no TLS connection now
+bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAILED); }
+
 uint8_t *pva_net_spare(size_t *size) { *size = spare_size; return spare; }
 
 // take n bytes (4-byte aligned) off the front of the spare RAM

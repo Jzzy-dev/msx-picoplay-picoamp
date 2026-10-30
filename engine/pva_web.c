@@ -25,11 +25,12 @@
 #define T_SEND_MS       3000u
 #define T_RCV_MS        2000u
 #define T_CLOSE_MS      1000u
-#define T_QUERY_MS      30000u
+#define T_QUERY_MS      90000u         // (an article's page can be big)
+#define T_LEND_MS       6000u
 #define IDLE_POLL_MS    4u
 #define QUIET_MS        400u
 
-enum { W_IDLE, W_DNS, W_OPEN, W_SEND, W_HEAD, W_BODY, W_CLOSE };
+enum { W_IDLE, W_DNS, W_OPEN, W_SEND, W_HEAD, W_BODY, W_CLOSE, W_LEND };
 enum { A_DONE, A_FAIL, A_REDIRECT };
 
 static pva_esp_slot_t *WS;
@@ -38,6 +39,7 @@ static bool     held, available;
 static uint8_t  conn, redirects, after, werr;
 static uint16_t whttp;
 static bool     w_tls;
+static bool     lending, lent_once;  // the stream's TLS connection borrowed
 static uint16_t w_port;
 static char     w_host[HOST_MAX + 1];
 static char    *w_path;             // PATH_MAX_W + 1
@@ -58,6 +60,7 @@ uint16_t pva_web_http(void) { return whttp; }
 bool     pva_web_busy(void) { return w != W_IDLE; }
 uint8_t  pva_web_result(void) { return result; }
 uint32_t pva_web_length(void) { return content_len; }     // the body's size (0: not said)
+bool     pva_web_lending(void) { return lending; }        // the stream's TLS connection is borrowed
 
 static void w_close_then(uint8_t what)
 {
@@ -180,6 +183,7 @@ static void w_end(bool ok)
     w = W_IDLE;
     pva_esp_clear(WS);
     conn = 0;
+    if (lending) { pva_net_lend_tls(false); lending = false; pva_log("web: the TLS connection back to the stream"); }
     if (held) { pva_esp_release(); held = false; }
     result = ok ? PVA_WEB_DONE : PVA_WEB_FAILED;
     pva_web_done_fn f = done_fn;
@@ -202,7 +206,7 @@ void pva_web_poll(void)
 {
     if (w == W_IDLE) return;
     pva_esp_io();
-    if (!pva_esp_finished(WS) && w != W_HEAD && w != W_BODY) return;
+    if (!pva_esp_finished(WS) && w != W_HEAD && w != W_BODY && w != W_LEND) return;
     uint32_t now = pva_hal_millis();
     switch (w)
     {
@@ -223,6 +227,18 @@ void pva_web_poll(void)
             if (WS->rsp_timeout || WS->rc != 0 || WS->pgot < 1)
             {
                 pva_log("web: %s open failed (rc %u)", w_tls ? "TLS" : "TCP", (unsigned)WS->rc);
+                if (w_tls && !WS->rsp_timeout && WS->rc == 9 && !lent_once && !pva_net_tls_free())
+                {
+                    // no free connection (UNAPI ERR_NO_FREE_CONN): the ESP-01 has one for TLS,
+                    // and the radio uses it; it lends it for this request
+                    pva_esp_clear(WS);
+                    lent_once = true;
+                    lending = true;
+                    pva_net_lend_tls(true);
+                    t_phase = now;
+                    w = W_LEND;
+                    return;
+                }
                 pva_esp_clear(WS);
                 w_trouble(PVA_NERR_CONNECT);
                 return;
@@ -285,6 +301,10 @@ void pva_web_poll(void)
             if (now - t_phase > 10000u || now - t_query > T_QUERY_MS) { w_trouble(PVA_NERR_TIMEOUT); return; }
             if (!WS->want_fn && (int32_t)(now - wait_until) >= 0) ask_rcv();
             return;
+        case W_LEND:                    // the stream closes its TLS connection, then this one opens
+            if (pva_net_tls_free()) { pva_log("web: TLS lent by the stream"); w_connect(); return; }
+            if (now - t_phase > T_LEND_MS) { w_trouble(PVA_NERR_CONNECT); return; }
+            return;
         case W_CLOSE:
             pva_esp_clear(WS);
             conn = 0;
@@ -331,6 +351,7 @@ int pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done)
     done_fn = done;
     redirects = 0;
     werr = 0;
+    lent_once = false;
     result = PVA_WEB_BUSY;
     t_query = pva_hal_millis();
     pva_log("web: %.48s", url);

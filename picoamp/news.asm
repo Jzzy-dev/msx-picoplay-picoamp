@@ -1061,6 +1061,9 @@ nw_status:
         ld hl,txt_nw_sload
         bit 0,a
         jr nz,.ld
+        ld hl,txt_nw_spart
+        bit 3,a
+        jr nz,.s
         ld hl,txt_nw_sart
         bit 1,a
         jr nz,.s
@@ -1740,9 +1743,9 @@ nw_skeys:
         cp 'F'
         jr z,.full
         cp 'N'
-        jr z,.next
+        jp z,.next
         cp 'P'
-        jr z,.prev
+        jp z,.prev
         jp nw_kcommon
 .up:    ld hl,(nw_top)
         dec hl
@@ -1759,6 +1762,12 @@ nw_skeys:
         add hl,de
         jp nw_scroll
 .full:  ld a,(nw_which)         ; the full article, or back to the summary
+        or a
+        jr z,.f1
+        ld a,(nw_aflags)        ; (a part of it: all of it now)
+        and 8
+        jr nz,.all
+.f1:    ld a,(nw_which)
         xor 1
         ld (nw_which),a
         ld hl,0
@@ -1774,6 +1783,19 @@ nw_skeys:
         ld hl,txt_nw_nomem
         jp nz,nw_msg
         ld a,PVA_TXF_LOADING    ; (shown at once; nw_tick follows it)
+        ld (nw_aflags),a
+        jp nw_stext
+.all:   ld a,(nw_sel)
+        ld e,a
+        ld a,C_NFULL
+        call cmd_u8
+        ret c
+        ld hl,(nw_top)          ; (the place in it stays)
+        push hl
+        ld hl,0
+        ld (nw_alen),hl
+        pop hl
+        ld a,PVA_TXF_LOADING
         ld (nw_aflags),a
         jp nw_stext
 .next:  ld a,(nw_sel)
@@ -1884,6 +1906,7 @@ txt_nw_story:   db "  ",TX_VL,"  story ",0
 txt_nw_lines:   db "lines ",0
 txt_nw_ssum:    db " Summary   (Enter: the full article)",0
 txt_nw_sart:    db " The full article",0
+txt_nw_spart:   db " Part of it: the radio needed the line (Enter: all)",0
 txt_nw_snone:   db " No full article from the site: the summary",0
 txt_nw_sload:   db " Fetching the full article... ",0
 txt_nw_kb:      db " KB",0

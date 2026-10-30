@@ -117,6 +117,8 @@ void pva_esp_shorten(pva_esp_slot_t *s, uint32_t ms);
 void pva_esp_io(void);
 uint8_t pva_net_conn(void);     // the stream's ESP connection (0 = none)
 uint8_t *pva_net_spare(size_t *size);   // stream RAM the ring does not use
+void   pva_net_lend_tls(bool on);     // a web request borrows the stream's TLS connection (the ESP-01 has one)
+bool   pva_net_tls_free(void);        // the stream holds none now
 void   *pva_net_spare_take(size_t n);   // a piece of it for good (NULL: none left)
 uint8_t pva_dir_conn(void);     // the directory's
 
@@ -279,6 +281,7 @@ void pva_reply_byte(uint8_t b);
 void pva_reply_str(const char *s);
 size_t pva_log_tail(char *out, size_t size);     // the newest log lines, 0-terminated each
 uint32_t pva_web_length(void);                   // the body's Content-Length (0: none)
+bool     pva_web_lending(void);                  // the radio lent its TLS connection to this request
 void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the reply (little-endian)
 
 // helpers

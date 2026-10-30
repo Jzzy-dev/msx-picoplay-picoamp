@@ -1350,6 +1350,41 @@ int main(int argc, char **argv)
             CHECK(cmd_u8(PVA_C_NEWS_FETCH, 7) == PVA_E_RANGE, "no favourite 8");
             CHECK(cmd(PVA_C_NEWS_INFO, NULL, 0) == PVA_OK && !strncmp((char *)reply, "Feed 4: in, ", 12) && strstr(nth_str((char *)reply, 1), "Memory: stories") &&
                   reply_len < 1024, "NEWS_INFO: '%s' / '%s' (%u bytes)", reply, nth_str((char *)reply, 1), reply_len);
+            {
+                // an https feed while an https station plays: the ESP-01 has one TLS connection,
+                // the stream lends it and connects again
+                static const char sx[] = "https://secure.test/stream.mp3\0";
+                cmd(PVA_C_PLAY_URL, sx, sizeof sx);
+                run_ms(40000);                  // (its buffer fills)
+                read_status();
+                uint16_t un0 = st16(PVA_ST_UNDERRUNS);
+                CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "the TLS station plays");
+                uint8_t ks[] = "news.feed1\0Secure|https://news.test/rss";
+                cmd(PVA_C_CFG_SET, ks, sizeof ks);
+                uint32_t t0 = host_esp_tls_opens, tls_ms = host_esp_tls_ms;
+                host_esp_tls_ms = 800;          // (as the ESP-01 did on the cartridge: 0.5-1 s)
+                cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+                CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_DONE && ck[PVA_CK_NEWS_COUNT] == 3, "an https feed while it plays: %u stories (state %u, error %u)",
+                      ck[PVA_CK_NEWS_COUNT], ck[PVA_CK_NEWS_STATE], ck[PVA_CK_NEWS_ERR]);
+                run_ms(6000);
+                read_status();
+                CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM && host_esp_tls_opens >= t0 + 2,
+                      "the station has its TLS connection again (%u opens, net state %u)", host_esp_tls_opens - t0, st[PVA_ST_NET_STATE]);
+                uint8_t kc[] = "news.feed1\0Secure|https://news.test/content";
+                cmd(PVA_C_CFG_SET, kc, sizeof kc);
+                cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+                run_ms(5000);
+                cmd_u8(PVA_C_NEWS_FULL, 0); WAIT_ART();
+                uint8_t tq[6] = { 0, 1, 0, 0, 2, 78 };
+                cmd(PVA_C_NEWS_TEXT, tq, 6);
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && (reply[2] & PVA_TXF_ARTICLE), "an article over https while it plays (flags %u)", reply[2]);
+                run_ms(6000);
+                read_status();
+                CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "the station plays on after it");
+                host_esp_tls_ms = tls_ms;
+                CHECK(st16(PVA_ST_UNDERRUNS) == un0 && host_audio_underruns == 0, "and played on from its buffer meanwhile (underruns %u)", st16(PVA_ST_UNDERRUNS) - un0);
+                cmd(PVA_C_STOP, NULL, 0);
+            }
             uint8_t kb[] = "news.feed1\0Down|http://down.test/rss";
             cmd(PVA_C_CFG_SET, kb, sizeof kb);
             cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();

@@ -153,6 +153,7 @@
 #define PVA_TXF_LOADING     0x01    // the article is still coming in
 #define PVA_TXF_ARTICLE     0x02    // these are the article's lines (else the summary's)
 #define PVA_TXF_FAILED      0x04    // there is no article (the summary instead)
+#define PVA_TXF_PART        0x08    // only a part: the radio needed its TLS connection back (FULL again: all)
 
 // results
 #define PVA_OK              0x00

@@ -219,6 +219,16 @@ time; a bar under it says what you see.
   marks the ones in My feeds), BS goes back to the topics; on the left Enter
   reads the feed, D or DEL removes it, U/J move it up or down. Up to 20 feeds.
 
+**Secure feeds and a secure station.** The ESP-01 keeps one TLS (https)
+connection at a time. When a radio station plays over https and a feed or an
+article is https too (most are, and the BBC's http feeds move to https), the
+station lends its connection: it closes it while its buffer plays on, the
+engine reads the feed, and the station connects again, usually without a
+gap. A long article page would take longer than the buffer lasts: then the
+reading stops when the radio's buffer is down to a third ("Part of it: the
+radio needed the line"), and Enter reads all of it, with the radio waiting
+(it pauses when its buffer is empty and goes on after).
+
 I shows what the engine says about the news: the feed's state and error, its
 memory, and the engine's last log lines (the web requests and their
 answers), for finding out why a feed does not come.
