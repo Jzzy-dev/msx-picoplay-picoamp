@@ -131,7 +131,8 @@ the radio playing:
 * **The small spectrum:** 24 bars of 4 cells at the bottom (B: on/off).
 * **Row 0:** what plays: the title, the artist and, for a radio station, its
   name ("Song - Artist  | Station"), moving like a ticker when it is longer
-  than the row. The weather and news pages have the same row 0.
+  than the row. The weather and news pages and the full screen pictures (Z) have
+  the same row 0.
 
 | Key | Action |
 |-----|--------|

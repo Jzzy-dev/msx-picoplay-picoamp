@@ -3158,13 +3158,7 @@ ticker_run:
         ld a,(help_on)
         or a
         ret nz
-        ld a,(fs_on)
-        or a
-        jr z,.run
-        ld a,(pg_on)            ; the full screen pictures: none
-        or a
-        ret z
-.run:
+
         ld hl,(tk_turn)
         ld a,h
         or l
@@ -3223,7 +3217,7 @@ ticker_run:
         ld (ix+T_LAST+1),h
         jp tk_render
 .done:  call tk_home            ; a whole round
-.next:  ld a,(pg_on)            ; a page: only its row 0 (tk_title)
+.next:  ld a,(fs_on)            ; a page, the full screen: only row 0 (tk_title)
         or a
         jr z,.nm
         ld ix,tk_title
@@ -3362,7 +3356,7 @@ tk_strip_out:
 ; tk_build_one: IX = the ticker with the turn: the next of its 8 strips, the
 ; text (round and round) shifted 0-7 pixels left, with a guard cell in front
 tk_build_one:
-        ld a,(pg_on)            ; a page has the strips' buffer
+        ld a,(fs_on)            ; a page or the plasma has the strips' buffer
         or a
         ret nz
         ld a,(tk_built)
@@ -4131,6 +4125,7 @@ fs_set: ld (fs_mode),a
 fs_setup:
         call setpal
         call cls
+        call tk_row0_reset
         ld a,#FF
         ld (fs_shown),a
         call fs_info
@@ -4177,7 +4172,20 @@ fs_setup:
         ld (bp_nbars),a
         jp bars_reset
 
-; pg_row0: row 0 of the clock and weather pages: what plays, as one line
+; tk_row0_reset: the tickers stop; row 0 starts again (a page, the full screen)
+tk_row0_reset:
+        ld hl,0
+        ld (tk_turn),hl
+        ld (t6_owner),hl
+        xor a
+        ld (tk_title+T_ACT),a
+        ld (tk_title+T_LAST),a
+        ld (tk_title+T_LAST+1),a
+        dec a
+        ld (tk_title+T_ROW),a
+        ret
+
+; pg_row0: row 0 of the clock and weather pages and the full screen: what plays, as one line
 ; ("title - artist  . station"), moving as a ticker when it is long
 pg_row0:
         call pg_row0_text
@@ -4224,15 +4232,7 @@ fs_info:
         ld a,(pg_on)
         or a
         jp nz,M_INFO
-        ld hl,st+ST_TITLE
-        ld a,(hl)
-        or a
-        jr nz,.t
-        ld hl,txt_notrack
-.t:     ld de,#0000
-        ld b,32
-        ld c,WHITE*16+NAVY
-        call text6s
+        call pg_row0            ; title - artist | station, as on the pages
         ld de,linebuf
         ld a,(fs_mode)
         add a,a
@@ -5825,16 +5825,8 @@ pg_enter:
         pop bc
         ld a,c
         ld (pg_on),a
-        push af                 ; the tickers stop (row 0 starts again on the page)
-        ld hl,0
-        ld (tk_turn),hl
-        ld (t6_owner),hl
-        xor a
-        ld (tk_title+T_ACT),a
-        ld (tk_title+T_LAST),a
-        ld (tk_title+T_LAST+1),a
-        dec a
-        ld (tk_title+T_ROW),a
+        push af
+        call tk_row0_reset
         pop af
         dec a                   ; the module: its place, length, ROM bank
         ld l,a
