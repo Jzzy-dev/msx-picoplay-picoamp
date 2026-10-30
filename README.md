@@ -26,7 +26,7 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 |---|---|
 | ![Weather](picoamp/images/picoamp_weather.png) | ![News](picoamp/images/picoamp_news_list.png) |
 
-**v1.2 (testing, not yet tried on the cartridge):** engine 0.12 and three new things to
+**v1.2** (tested on a PicoVerse 2350 with an NMS 8245, as COM and ROM): engine 0.12 and three new things to
 look at while the radio plays. **W**: the weather for the clock's place, with a big picture
 that moves (turning sun rays, drifting clouds, stars, falling rain and snow, thunder) and the
 next six days. **T**: a news reader in 80 columns (the MSX2's text mode): the headlines of a feed with the
