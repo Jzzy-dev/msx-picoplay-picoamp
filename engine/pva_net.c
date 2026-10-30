@@ -846,7 +846,7 @@ void pva_net_poll(void)
 }
 
 // ---------------------------------------------------------------- public
-bool pva_net_init(void)
+bool pva_net_init(size_t keep)
 {
     url = pva_alloc(URL_MAX + 1);
     cur = pva_alloc(URL_MAX + 1);
@@ -864,6 +864,7 @@ bool pva_net_init(void)
     size_t big = 0;
     ring = pva_hal_stream_ram(&big);
     if (ring && big >= RING_MIN) ring_size = big > RING_MAX ? RING_MAX : big;
+    if (ring_size >= RING_MIN + keep + 32u * 1024u) ring_size -= keep;     // (stream RAM for the news)
     if (ring && big > ring_size) { spare = ring + ring_size; spare_size = big - ring_size; }
     else
     {

@@ -108,6 +108,9 @@ static void civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d)
     *y = (int)(yy + (*m <= 2));
 }
 
+int64_t pva_days_from_civil(int y, unsigned m, unsigned d) { return days_from_civil(y, m, d); }
+void pva_civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d) { civil_from_days(z, y, m, d); }
+
 static int64_t now_utc(void) { return utc_s + (int64_t)((pva_hal_millis() - utc_ms) / 1000u); }
 
 // "Thu, 29 Oct 2026 19:42:05 GMT" (RFC 7231 IMF-fixdate)
@@ -138,6 +141,13 @@ void pva_clock_http_date(const char *v)
 }
 
 bool pva_clock_have_time(void) { return have_utc; }
+
+bool pva_clock_utc(int64_t *now, int32_t *offset)
+{
+    *now = have_utc ? now_utc() : 0;
+    *offset = have_zone ? offset_s : 0;
+    return have_utc;
+}
 
 // the local time of the place (false: not known yet)
 bool pva_clock_local(uint8_t *hour, uint8_t *min, uint8_t *wday)

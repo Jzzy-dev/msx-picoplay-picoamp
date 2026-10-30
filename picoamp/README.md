@@ -124,18 +124,21 @@ the radio playing:
   hands, a second hand of red dots (sprites), the time in big digits beside
   it, the day, the date, the place, the weather, the sleep timer and the
   alarm.
-* **Colours:** the digits and the dial are four colours that turn round a
-  colour wheel while music plays, faster when it is louder, brighter with the
-  bass (or calm cyan to blue, M).
+* **Colours:** the digits, the dial and the small spectrum are four colours
+  that turn round a colour wheel while music plays, faster when it is louder,
+  brighter with the bass; or one colour of your choice (M: music, cyan,
+  green, amber, red, purple, white, kept in `PICOAMP.INI`).
 * **The small spectrum:** 24 bars of 4 cells at the bottom (B: on/off).
-* **Row 0:** what plays.
+* **Row 0:** what plays: the title, the artist and, for a radio station, its
+  name ("Song - Artist  | Station"), moving like a ticker when it is longer
+  than the row. The weather and news pages have the same row 0.
 
 | Key | Action |
 |-----|--------|
 | Left / Right, V, a click | Digital / analog |
 | I | The time: internet / the MSX's clock chip |
 | L | The place: type a name and Enter (a list to choose from), or Enter alone for the place of the internet connection |
-| M | Music colours / calm colours |
+| M | The colours: music, then cyan, green, amber, red, purple, white |
 | B | The small spectrum on / off |
 | K | Set the MSX's clock chip to the internet time |
 | O | The sleep timer: 15, 30, 45, 60, 90 minutes, off |
@@ -187,25 +190,51 @@ button back to the player.
 
 ### News
 
-T opens the news as teletext pages (engine 0.12, WiFi), white and colour on
-black, with the page number and the time in the top row:
+T opens a news reader (engine 0.12, WiFi) in the MSX2's 80-column text mode,
+26 rows, one line a headline, as an RSS reader. Row 0 has what plays and the
+time; a bar under it says what you see.
 
-* **Page 100**, the index: the feeds, 101 and on. Type a page number, or
-  choose with Up/Down and Enter.
-* **Page 101...**, a feed's headlines, six to a subpage. The subpages turn by
-  themselves every 20 seconds, as on teletext; Left/Right turn them by hand.
-  Enter opens the chosen story.
-* **A story:** the headline, the time, and the text, wrapped. Left/Right: the
-  story before or after, ESC: back to the headlines; I: the index.
+* **The headlines** of a feed, newest first, with their time ("20:15" today,
+  else "29 Oct"), 17 at a time; the chosen one's summary is under the list.
+  Up/Down choose, Left/Right turn a page, Enter reads the story, 1-9 open the
+  first nine feeds of My feeds, F (or BS) My feeds.
+* **A story:** its title, the feed and the date in the bar, and its text,
+  scrolled with Up/Down (a line) and Left/Right (a page); the bar under it
+  says what it is and which lines show. Enter fetches the **full article**:
+  the engine takes the whole text from the feed when the feed has it, else
+  from the story's web page (only its paragraphs: menus, scripts, captions,
+  headers and footers are left out). It shows while it comes in ("Fetching
+  the full article... 34 KB"), so a long page can be read from its start;
+  Enter again goes back to the summary. Sites that build their pages with
+  JavaScript or keep them for subscribers give no text: then the summary
+  stays ("No full article from the site"). N/P: the next or previous story,
+  ESC or BS: the headlines.
+* **My feeds** (F): your favourite feeds on the left, the catalogue on the
+  right: 11 topics (World news, UK and Europe, Nederland, Deutsch/Francais/
+  Espanol, US news, Business, Technology, Science and space, Sports, Games,
+  MSX and retro computing) with about 110 feeds, gathered from the lists of
+  opentweet.io, feeder.co, rssly.io and feedspot. Left/Right (or Tab) change
+  the side; on the right Enter opens a topic and adds the chosen feed (a `*`
+  marks the ones in My feeds), BS goes back to the topics; on the left Enter
+  reads the feed, D or DEL removes it, U/J move it up or down. Up to 20 feeds.
 
-The engine reads the feed (RSS, RDF or Atom) while it comes in and keeps up
-to 40 stories, titles and text without HTML. The feeds are BBC World, Al
-Jazeera, DW, The Guardian and NOS (NL) unless `PICOAMP.INI` names others
-(below). C goes to the clock, W to the weather, T or ESC back to the player.
+C goes to the clock, W to the weather, T (or ESC in the headlines) back to
+the player; the other playback keys keep working (N and P are the stories in
+a story). The page has no mouse pointer (the text mode has no sprites).
 
-| Index | A story |
+The engine reads a feed (RSS 2.0, RSS 1.0/RDF or Atom) while it comes in and
+keeps up to 40 stories with their summaries (HTML, entities and accents
+taken out, paragraphs kept), and wraps the text into lines for the MSX. In
+the PicoPlay firmware (MSX-DOS) the engine has less memory: it then takes
+24 KB of the radio's stream buffer for the news (72 KB are left, about 4.5
+seconds at 128 kbit/s); an article keeps about 9 KB of text there, 16 KB in
+the PicoAmp ROM mode.
+
+| Headlines | A story (the full article) |
 |---|---|
-| ![News index](images/picoamp_news_index.png) | ![News story](images/picoamp_news_story.png) |
+| ![News](images/picoamp_news_list.png) | ![News story](images/picoamp_news_story.png) |
+
+![My feeds and the catalogue](images/picoamp_news_feeds.png)
 
 ### Settings: PICOAMP.INI
 
@@ -232,15 +261,19 @@ play=http://icecast.omroep.nl/radio2-bb-mp3
 name=NPO Radio 2
 
 [news]
-feed1=BBC World|http://feeds.bbci.co.uk/news/world/rss.xml
-feed2=NOS (NL)|https://feeds.nos.nl/nosnieuwsalgemeen
+feeds=bbcw,nos,ars,mrc,#1
+feed1=My club|https://www.example.org/news/rss
 ```
 
 The engine reads the file when PICOAMP starts (and starts the clock with it);
 `location.mode=ip` (the default) takes the place of the internet connection.
 `[alarm]` is written by A on the clock page; `days` is `daily` or `weekdays`.
-`[news]` has up to 8 feeds (`feed1` to `feed8`), `Name|URL` each (http or https); without the
-section the five feeds above are used.
+`[news] feeds` is My feeds, written by the news page: the catalogue's codes
+(in `engine/pva_news_cat.c`) and `#n` for a feed of your own, given as
+`feedN=Name|URL` (http or https, n 1-9). Without `feeds` My feeds are BBC
+News World, Al Jazeera, DW, The Guardian World and NOS, and your own feeds
+after them. `clock.colours` is `music`, `cyan`, `green`, `amber`, `red`,
+`purple` or `white`.
 A changed setting is saved when the page closes (or PICOAMP quits): by the
 engine in the ROM version, by PICOAMP through MSX-DOS in the COM version, on
 the same drive as the favourites. The file can be edited by hand; comments
@@ -354,7 +387,9 @@ that the main program calls. In the COM file they come after the program; in
 the ROM they are banks 1, 2 and 3 (page 1 shows bank n when 6000h is
 written n, as an ASCII16 mapper; the firmware does this for ROM type 23). So
 the main program stays within its limits: below 4000h in the COM file, 16 KB
-of ROM. The weather page draws its pictures from circles and lines into
+of ROM. The news page switches the VDP to TEXT 2 itself (the patterns at
+1000h, the names at 0000h, the blink bits for the bars at 0A00h) and calls
+`screen_init` when it closes. The weather page draws its pictures from circles and lines into
 three layers in the scope's buffer, and puts them together for each step of
 the animation.
 

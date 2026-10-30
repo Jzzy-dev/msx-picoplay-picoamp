@@ -168,6 +168,7 @@ static void set_reply_text(const char *s, size_t n)
 
 void pva_reply_byte(uint8_t b) { set_reply_byte(b); }
 void pva_reply_str(const char *s) { set_reply_str(s); }
+void pva_reply_patch16(uint32_t at, uint16_t v) { if (at + 1 < reply_len) { reply[at] = (uint8_t)v; reply[at + 1] = (uint8_t)(v >> 8); } }
 
 // ---------------------------------------------------------------- folders
 static int read_dir(const char *path)
@@ -1528,8 +1529,7 @@ void pva_engine_extra(uint8_t *out)
     out[PVA_CK_ALARM - PVA_CK_EXTRA] = (uint8_t)((al_on ? PVA_AL_ON : 0) | (al_ringing ? PVA_AL_RINGING : 0) | (al_weekdays ? PVA_AL_WEEKDAYS : 0));
     out[PVA_CK_AL_HOUR - PVA_CK_EXTRA] = al_hour;
     out[PVA_CK_AL_MIN - PVA_CK_EXTRA] = al_min;
-    pva_news_state(&out[PVA_CK_NEWS_STATE - PVA_CK_EXTRA], &out[PVA_CK_NEWS_COUNT - PVA_CK_EXTRA],
-                   &out[PVA_CK_NEWS_FEED - PVA_CK_EXTRA], &out[PVA_CK_NEWS_ERR - PVA_CK_EXTRA]);
+    pva_news_state(&out[PVA_CK_NEWS_STATE - PVA_CK_EXTRA]);
 }
 
 static int cmd_mode(void)
@@ -1672,10 +1672,10 @@ static int execute(uint8_t code)
         case PVA_C_WX_GET:    return pva_clock_wx();
         case PVA_C_SLEEP:     return cmd_sleep();
         case PVA_C_ALARM:     return cmd_alarm();
-        case PVA_C_NEWS_FEEDS: pva_news_feeds(); return PVA_OK;
-        case PVA_C_NEWS_FETCH: return pva_news_fetch(args[0]);
-        case PVA_C_NEWS_LIST: return pva_news_list(args[0], args[1]);
-        case PVA_C_NEWS_ITEM: return pva_news_item(args[0]);
+        case PVA_C_NEWS_FEEDS: case PVA_C_NEWS_FETCH: case PVA_C_NEWS_LIST: case PVA_C_NEWS_ITEM:
+        case PVA_C_NEWS_TOPICS: case PVA_C_NEWS_CAT: case PVA_C_NEWS_ADD: case PVA_C_NEWS_DEL:
+        case PVA_C_NEWS_MOVE: case PVA_C_NEWS_FULL: case PVA_C_NEWS_TEXT:
+            return pva_news_cmd(code, args);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1827,8 +1827,8 @@ static void publish_status(void)
     {
         uint8_t pct = st_new[PVA_ST_BUF_PCT];
         if (!strm) disp_buf = 0;
-        else if (pct >= 99) disp_buf = 100;
-        else if (pct + 5u < disp_buf || pct >= disp_buf + 10u) disp_buf = (uint8_t)((pct / 10u) * 10u);
+        else if (pct >= 97) disp_buf = 100;
+        else if (pct + 12u < disp_buf || pct >= disp_buf + 10u) disp_buf = (uint8_t)((pct / 10u) * 10u);
         uint32_t now = pva_hal_millis();
         if (!strm) disp_rate = 0;
         else if (now - disp_rate_ms >= 5000u || !disp_rate)
@@ -1885,8 +1885,11 @@ void pva_core1_init(void)
     pl_pool = pva_alloc(PL_POOL);
     reply = pva_alloc(PVA_REPLY_SIZE);
     bool dec_ok = pva_dec_init();
-    bool net_ok = pva_net_init();
+    // the Nextor modes leave the engine less RAM: the news then takes some of the stream RAM
+    size_t news_keep = pva_arena_size() < 160u * 1024u ? PVA_NEWS_KEEP : 0u;
+    bool net_ok = pva_net_init(news_keep);
     pva_viz_init();                     // takes some of the stream RAM; before the directory
+    if (net_ok && news_keep) pva_news_init(news_keep);
     if (net_ok && !pva_web_init()) pva_log("web: no memory");
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();

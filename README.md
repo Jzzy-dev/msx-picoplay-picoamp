@@ -13,8 +13,8 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 | What | For | What it is |
 |------|-----|------------|
-| **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data, the time of day, the place, the weather and forecast and news feeds from the internet, a sleep timer and a radio alarm, the settings file. The MSX talks to it through a 4 KB memory window |
-| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, teletext-style news, mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
+| **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data, the time of day, the place, the weather and forecast, news feeds and full articles from the internet, a sleep timer and a radio alarm, the settings file. The MSX talks to it through a 4 KB memory window |
+| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, an 80-column news reader, mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
 | **PicoPlay** | SymbOS 4.0 | A windowed player with folders, play lists, internet radio, the station directory, favourites and an equalizer |
 | **PVTEST** | MSX-DOS | A quick check of the cartridge from the prompt, and a small player |
 
@@ -24,16 +24,20 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 | Weather (W) | News (T) |
 |---|---|
-| ![Weather](picoamp/images/picoamp_weather.png) | ![News](picoamp/images/picoamp_news_index.png) |
+| ![Weather](picoamp/images/picoamp_weather.png) | ![News](picoamp/images/picoamp_news_list.png) |
 
 **v1.2 (testing, not yet tried on the cartridge):** engine 0.12 and three new things to
 look at while the radio plays. **W**: the weather for the clock's place, with a big picture
 that moves (turning sun rays, drifting clouds, stars, falling rain and snow, thunder) and the
-next six days. **T**: the news as teletext pages: an index of feeds (BBC World, Al Jazeera,
-DW, The Guardian, NOS, or your own in `PICOAMP.INI`), headlines that turn by themselves, the
-stories. On the clock page, **O** sets a sleep timer (the music fades out and stops) and
+next six days. **T**: a news reader in 80 columns (the MSX2's text mode): the headlines of a feed with the
+chosen one's summary, the stories scrolled, the full article fetched from the site while you
+read, and My feeds beside a catalogue of 110 feeds in 11 topics (world, Europe, Nederland,
+Deutsch/Francais/Espanol, US, business, technology, science, sports, games, MSX and retro), to
+add and remove from the page itself. On the clock page, **O** sets a sleep timer (the music fades out and stops) and
 **A** a radio alarm (the station that plays now, at a time, daily or Monday to Friday, fading
-in). The zone line on the clock is gone. The ROM is 64 KB now (four banks). See
+in). The zone line on the clock is gone. On the clock and weather pages row 0 shows the title,
+the artist and the station, moving like a ticker; M on the clock picks music colours or one
+colour (cyan, green, amber, red, purple, white). The ROM is 64 KB now (four banks). See
 `picoamp/README.md`, sections Clock, Weather and News.
 
 **v1.1:** the clock page (tested on a PicoVerse 2350 with an NMS 8245, as COM and ROM).
@@ -84,7 +88,7 @@ the ESP-01 must already know your access point (as for the Nextor WiFi tools).
 
 | Folder | What |
 |--------|------|
-| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds, 344 checks) |
+| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds and the full articles, 371 checks) |
 | `picoamp/` | PICOAMP (Z80, sjasmplus) and its clock, weather and news pages (`clock.asm`, `weather.asm`, `news.asm`, page modules), its Z80 test harness, screen tools and mock-ups |
 | `picoplay/` | PicoPlay (SymbOS C Compiler) and PVTEST (sjasmplus), their PC tests, and an openMSX device that runs the engine (`emu/`) |
 | `devrig/` | a headless openMSX test bench (NMS 8245 + the cartridge's slot layout). The system ROMs it needs are not included |

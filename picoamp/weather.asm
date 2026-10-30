@@ -93,16 +93,7 @@ wx_leave:
         ret
 
 ; row 0: what plays
-wx_info:
-        ld hl,st+ST_TITLE
-        ld a,(hl)
-        or a
-        jr nz,.t
-        ld hl,txt_notrack
-.t:     ld de,#0000
-        ld b,32
-        ld c,WHITE*16+NAVY
-        jp text6s
+wx_info:  jp pg_row0             ; row 0: what plays
 
 wx_keys:
         cp 27

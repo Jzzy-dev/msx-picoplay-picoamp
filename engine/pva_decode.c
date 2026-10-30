@@ -101,9 +101,13 @@ int pva_kind_from_name(const char *name)
 }
 
 // Latin-1 / UTF-8 to plain ASCII for the MSX font: accents are dropped.
-static char fold_latin1(uint32_t c)
+char pva_fold_ascii(uint32_t c)
 {
     if (c >= 0x20 && c < 0x7F) return (char)c;
+    if (c == 0xA0) return ' ';
+    if (c == 0x2022 || c == 0xB7) return '*';
+    if (c == 0x2032 || c == 0xB4) return '\'';
+    if (c == 0x200B || c == 0x200C || c == 0x200D || c == 0xFEFF || c == 0xAD) return 0;   // (zero width)
     static const char map[] = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
     if (c >= 0xC0 && c <= 0xFF) return map[c - 0xC0];
     if (c == 0x2018 || c == 0x2019) return '\'';
@@ -131,7 +135,7 @@ void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len)
         }
         else
             i++;
-        char a = fold_latin1(c);
+        char a = pva_fold_ascii(c);
         if (a) dst[o++] = a;
     }
     while (o > 0 && dst[o - 1] == ' ') o--;
@@ -154,7 +158,7 @@ static void id3_text(char *dst, size_t size, const uint8_t *p, uint32_t len)
         {
             uint32_t c = be ? ((uint32_t)p[i] << 8 | p[i + 1]) : ((uint32_t)p[i + 1] << 8 | p[i]);
             if (!c) break;
-            char a = fold_latin1(c);
+            char a = pva_fold_ascii(c);
             if (a) dst[o++] = a;
         }
         while (o > 0 && dst[o - 1] == ' ') o--;
@@ -167,7 +171,7 @@ static void id3_text(char *dst, size_t size, const uint8_t *p, uint32_t len)
         size_t o = 0;
         for (uint32_t i = 0; i < len && p[i] && o + 1 < size; i++)
         {
-            char a = fold_latin1(p[i]);
+            char a = pva_fold_ascii(p[i]);
             if (a) dst[o++] = a;
         }
         while (o > 0 && dst[o - 1] == ' ') o--;

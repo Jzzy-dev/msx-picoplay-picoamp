@@ -129,10 +129,28 @@
 #define PVA_C_ALARM         0x37    // args: u8 PVA_AL_ON / PVA_AL_WEEKDAYS, u8 hour, u8 minute. Switched on, it
                                     // plays what plays now (or what it played last), fading in; kept in the
                                     // settings ([alarm]). PVA_E_STATE: nothing to play
-#define PVA_C_NEWS_FEEDS    0x38    // reply: u8 count, the feeds' names (0-terminated each)
-#define PVA_C_NEWS_FETCH    0x39    // args: u8 feed: PVA_CK_NEWS_STATE goes LOADING, then DONE (COUNT stories)
-#define PVA_C_NEWS_LIST     0x3A    // args: u8 first, u8 count: reply: the titles (0-terminated each)
-#define PVA_C_NEWS_ITEM     0x3B    // args: u8 story: reply: title, text, date (0-terminated each)
+// the news reader: the favourite feeds ([news] feeds=code,... in PICOAMP.INI), the catalogue, the stories
+#define PVA_C_NEWS_FEEDS    0x38    // reply: u8 count, the favourites' names (0-terminated each)
+#define PVA_C_NEWS_FETCH    0x39    // args: u8 favourite: PVA_CK_NEWS_STATE goes LOADING, then DONE (COUNT stories)
+#define PVA_C_NEWS_LIST     0x3A    // args: u8 first, u8 count, u8 width: reply per story: its time ("20:15"
+                                    // today, else "29 Oct") and its title cut to width (0-terminated each)
+#define PVA_C_NEWS_ITEM     0x3B    // args: u8 story: reply: the date ("Thu 29 Oct 2026 21:15"), the site,
+                                    // (0-terminated each), u8 1 = the feed has the whole text
+#define PVA_C_NEWS_TOPICS   0x3C    // reply: u8 count, the catalogue's topics' names
+#define PVA_C_NEWS_CAT      0x3D    // args: u8 topic: reply: u8 count, the feeds' names, each after '*'
+                                    // (a favourite) or ' '
+#define PVA_C_NEWS_ADD      0x3E    // args: u8 topic, u8 feed: a favourite at the end. PVA_E_EXISTS, PVA_E_FULL
+#define PVA_C_NEWS_DEL      0x3F    // args: u8 favourite
+#define PVA_C_NEWS_MOVE     0x40    // args: u8 favourite, u8 0 = up / 1 = down
+#define PVA_C_NEWS_FULL     0x41    // args: u8 story: the full article is fetched (PVA_CK_ART_xxx); from the
+                                    // feed when it has it, else the page at the story's link
+#define PVA_C_NEWS_TEXT     0x42    // args: u8 story, u8 what (0 summary, 1 the full article as far as it
+                                    // is in, else the summary, 2 the title), u16 first line, u8 count,
+                                    // u8 width: reply: u16 lines in all, u8 PVA_TXF_xxx, the lines
+                                    // (0-terminated each; an empty one between paragraphs)
+#define PVA_TXF_LOADING     0x01    // the article is still coming in
+#define PVA_TXF_ARTICLE     0x02    // these are the article's lines (else the summary's)
+#define PVA_TXF_FAILED      0x04    // there is no article (the summary instead)
 
 // results
 #define PVA_OK              0x00
@@ -268,6 +286,14 @@
 #define PVA_CK_NEWS_COUNT   33      // u8  its stories
 #define PVA_CK_NEWS_FEED    34      // u8  which feed
 #define PVA_CK_NEWS_ERR     35      // u8  PVA_NERR_xxx when it failed
+#define PVA_CK_ART_STATE    36      // u8  PVA_ART_xxx of the full article
+#define PVA_CK_ART_STORY    37      // u8  its story
+#define PVA_CK_ART_LEN      38      // u16 bytes of its text so far
+#define PVA_CK_ART_KB       40      // u16 KB read from the web for it
+#define PVA_ART_IDLE        0
+#define PVA_ART_LOADING     1
+#define PVA_ART_DONE        2
+#define PVA_ART_FAILED      3
 #define PVA_AL_ON           0x01
 #define PVA_AL_RINGING      0x02    // it went off (until a command stops or changes the music)
 #define PVA_AL_WEEKDAYS     0x04    // Monday to Friday only

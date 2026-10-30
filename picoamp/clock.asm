@@ -32,6 +32,10 @@ CK_NST   equ 32
 CK_NCOUNT equ 33
 CK_NFEED equ 34
 CK_NERR  equ 35
+CK_ASTATE equ 36
+CK_ASTORY equ 37
+CK_ALEN  equ 38
+CK_AKB   equ 40
 CKF_TIME equ 1
 CKF_ZONE equ 2
 CKF_WX   equ 4
@@ -137,12 +141,36 @@ ck_load_cfg:
 .k2:     ld hl,k_cols
         call ck_get
         jr nz,.k3
-        ld a,(reply)
-        cp 'c'
-        ld a,0
-        jr nz,.c
-        inc a
-.c:     ld (ck_col),a
+        ld hl,ck_colnames       ; music, cyan, ... ("calm": cyan)
+        ld c,0
+.cn:    ld de,reply
+        push hl
+.cc:    ld a,(de)
+        cp (hl)
+        jr nz,.cx
+        or a
+        jr z,.cf
+        inc hl
+        inc de
+        jr .cc
+.cx:    pop hl
+        xor a                   ; the next name
+        push bc
+        ld bc,16
+        cpir
+        pop bc
+        inc c
+        ld a,(hl)
+        or a
+        jr nz,.cn
+        ld c,1                  ; (calm, or not known)
+        jr .c
+.cf:    pop hl
+.c:     ld a,c
+        cp CK_NCOL
+        jr c,.c2
+        ld a,1
+.c2:    ld (ck_col),a
 .k3:     ld hl,k_bars
         call ck_get
         ret nz
@@ -789,16 +817,7 @@ ck_srcstr:
 
 ;------------------------------------------------------------------------------
 ; row 0: what plays; row 23: the keys (or a message, or the place being typed)
-ck_info:
-        ld hl,st+ST_TITLE
-        ld a,(hl)
-        or a
-        jr nz,.t
-        ld hl,txt_notrack
-.t:     ld de,#0000
-        ld b,32
-        ld c,WHITE*16+NAVY
-        jp text6s
+ck_info:  jp pg_row0             ; row 0: what plays
 
 ck_line23:
         ld a,(ck_inp)
@@ -865,9 +884,9 @@ ck_keys:
         cp 'A'
         jp z,ck_alarm_open
         cp 'M'
-        jr z,ck_toggle_col
+        jp z,ck_toggle_col
         cp 'B'
-        jr z,ck_toggle_bars
+        jp z,ck_toggle_bars
         cp 'L'
         jp z,ck_inp_open
         cp 'K'
@@ -906,16 +925,38 @@ ck_toggle_src:
 .s:     call ck_set
         jp ck_redraw
 
+; M: the music's colours, then one colour after the other
 ck_toggle_col:
         ld a,(ck_col)
-        xor 1
-        ld (ck_col),a
-        ld hl,k_cols
-        ld de,txt_ck_music
+        inc a
+        cp CK_NCOL
+        jr c,.n
+        xor a
+.n:     ld (ck_col),a
+        ld hl,ck_colnames
         or a
         jr z,.s
-        ld de,txt_ck_calm
-.s:     call ck_set
+        ld b,a
+.f:     xor a
+        push bc
+        ld bc,16
+        cpir
+        pop bc
+        djnz .f
+.s:     push hl
+        ld de,linebuf           ; "Colours: amber"
+        ld hl,txt_ck_colmsg
+        call strcpy
+        pop hl
+        push hl
+        call strcpy
+        pop de
+        ld hl,k_cols
+        call ck_set
+        ld hl,linebuf
+        call ck_msg_ok
+        ld a,#FF                ; shown again by ck_frame / now
+        ld (ck_phase),a
         jp ck_calm
 
 ck_toggle_bars:
@@ -1320,7 +1361,17 @@ ck_list_keys:
 ;------------------------------------------------------------------------------
 ; colours: the four glow entries, calm, or turning with the music
 ck_calm:
-        ld hl,ck_calmpal
+        ld a,(ck_col)           ; 0 (music): its calm colours are cyan
+        or a
+        jr z,.c1
+        dec a
+.c1:    add a,a
+        add a,a
+        add a,a
+        ld l,a
+        ld h,0
+        ld de,ck_calmpal
+        add hl,de
         ld c,0
 .c:     ld a,c
         push hl
@@ -2356,8 +2407,6 @@ txt_ck_digital: db "digital",0
 txt_ck_analog:  db "analog",0
 txt_ck_internet: db "internet",0
 txt_ck_msxv:    db "msx",0
-txt_ck_music:   db "music",0
-txt_ck_calm:    db "calm",0
 txt_ck_on:      db "on",0
 txt_ck_off:     db "off",0
 txt_ck_keys:    db "</> face I time L place O sleep A alarm",0
@@ -2404,6 +2453,14 @@ ck_wx:          db 0,"Clear",0, 1,"Mainly clear",0, 2,"Partly cloudy",0, 3,"Over
                 db 86,"Snow showers",0, 255,"Thunderstorm",0
 ck_gents:       db G1,G2,G3,G4
 ck_calmpal:     db #37,7, #27,6, #16,5, #15,4       ; 0RRR0BBB, 00000GGG: cyan to blue
+                db #22,7, #11,6, #01,5, #00,4       ; green
+                db #70,6, #70,5, #60,3, #50,2       ; amber
+                db #72,2, #71,1, #60,0, #40,0       ; red
+                db #67,2, #57,1, #46,0, #35,0       ; purple
+                db #77,7, #66,6, #55,5, #44,4       ; white
+CK_NCOL         equ 7
+ck_colnames:    db "music",0,"cyan",0,"green",0,"amber",0,"red",0,"purple",0,"white",0,0
+txt_ck_colmsg:  db "Colours: ",0
 ck_segof:       db 0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8
 ck_segcol:      db G1*16+NAVY,G1*16+NAVY,G2*16+NAVY,G2*16+NAVY,G3*16+NAVY,G3*16+NAVY,G4*16+NAVY,RED*16+NAVY
 ck_barcol:      db NAVY*16+NAVY,G1*16+NAVY,G1*16+NAVY,G2*16+NAVY,G2*16+NAVY,G3*16+NAVY,BLUE*16+NAVY,NAVY*16+NAVY

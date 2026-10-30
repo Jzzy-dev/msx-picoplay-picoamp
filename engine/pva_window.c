@@ -53,6 +53,7 @@ void *pva_alloc(size_t size)
 }
 
 size_t pva_arena_free(void) { return arena_size - arena_used; }
+size_t pva_arena_size(void) { return arena_size; }
 
 // ---------------------------------------------------------------- log
 #define LOG_LINES   32

@@ -72,7 +72,7 @@ no header.
   in RAM), `pva_engine.c`, `pva_decode.c`, `pva_net.c`, `pva_esp.c`,
   `pva_dir.c`, `pva_eq.c`, `pva_viz.c`, `pva_json.c`, `pva_web.c` (web
   requests in their own slot of the ESP link), `pva_cfg.c` (the settings
-  text), `pva_clock.c` (time, place, weather now and the next days), `pva_news.c`
+  text), `pva_clock.c` (time, place, weather now and the next days), `pva_news.c`, `pva_news_cat.c`
   (news feeds: RSS, RDF, Atom), `pva_hal_pico.c`.
 * The Helix MP3 decoder (`lib/picomp3lib`), with its allocator pointed at
   the engine (`buffers.c` built with `MPDEC_ALLOCATOR` and
@@ -112,7 +112,7 @@ no header.
 |------|------|
 | ROM copy in SRAM (`rom_sram`) | 64 KB |
 | core 1 stack | 8 KB |
-| engine arena (the rest of the 256 KB `rom_sram` cache) | ~184 KB here; 96 KB is the minimum (the news takes up to 12 KB of it once it is opened) |
+| engine arena (the rest of the 256 KB `rom_sram` cache) | ~184 KB here; 96 KB is the minimum (the news takes about 43 KB of it once it is opened: 24 KB of stories, 16 KB of an article, a field buffer) |
 | stream RAM | 128 KB (emu2413 tables) |
 
 ## The MSX side, for reference

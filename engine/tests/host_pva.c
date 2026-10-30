@@ -165,6 +165,8 @@ static void clock_text(char *out, size_t size)
     snprintf(out, size, "%04d-%02d-%02d %02d:%02d wd%d", ck[PVA_CK_YEAR] | (ck[PVA_CK_YEAR + 1] << 8), ck[PVA_CK_MONTH], ck[PVA_CK_DAY],
              ck[PVA_CK_HOUR], ck[PVA_CK_MIN], ck[PVA_CK_WDAY]);
 }
+// the i-th of the 0-terminated strings from s on
+static const char *nth_str(const char *s, int i) { while (i-- > 0) s += strlen(s) + 1; return s; }
 #define WAIT_CLOCK(cond, ms) do { for (int w_ = 0; w_ < (ms) / 50; w_++) { run_ms(50); read_clock(); if (cond) break; } } while (0)
 
 // ------------------------------------------------------------------ image
@@ -523,7 +525,7 @@ int main(int argc, char **argv)
           "HTTP/1.0 request with Host and Icy-MetaData");
     CHECK(st16(PVA_ST_BITRATE) == 128 && st16(PVA_ST_RATE) > 0 && st16(PVA_ST_TOTAL) == 0 && !(st[PVA_ST_FLAGS] & PVA_F_SEEKABLE),
           "128 kbit/s, %u Hz, no length, not seekable", st16(PVA_ST_RATE) * 10);
-    CHECK(st16(PVA_ST_BUF_KB) == 96, "96 KB stream buffer (from the spare RAM)");
+    CHECK(st16(PVA_ST_BUF_KB) == 72, "72 KB stream buffer (the Nextor modes: 24 KB of the stream RAM for the news)");
     uint32_t rate_hz = st16(PVA_ST_RATE) * 10u;
     bool seen_b = false;
     uint32_t f1 = host_audio_frames;
@@ -1231,51 +1233,121 @@ int main(int argc, char **argv)
             cmd(PVA_C_STOP, NULL, 0);
             al[0] = 0;
             CHECK(cmd(PVA_C_ALARM, al, 3) == PVA_OK && cmd_str(PVA_C_CFG_GET, "alarm.on") == PVA_OK && !strcmp((char *)reply, "off"), "alarm off");
-            // news: the world services by default
-            CHECK(cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 5 && !strcmp((char *)reply + 1, "BBC World"), "5 feeds by default, the first: %s", reply + 1);
+            // news: the favourites (by default a few world services) and the catalogue
+            #define NTH(i) nth_str((char *)reply + 1, i)
+            CHECK(cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 5 && !strcmp(NTH(0), "BBC News, World") && !strcmp(NTH(4), "NOS Nieuws"),
+                  "5 favourites by default: %s ... %s", NTH(0), NTH(4));
+            CHECK(cmd(PVA_C_NEWS_TOPICS, NULL, 0) == PVA_OK && reply[0] >= 10 && !strcmp(NTH(0), "World news"), "%u topics, the first: %s", reply[0], NTH(0));
+            CHECK(cmd_u8(PVA_C_NEWS_CAT, 0) == PVA_OK && reply[0] >= 10 && !strcmp(NTH(0), "*BBC News, World") && !strcmp(NTH(1), " BBC News, top stories"),
+                  "topic 0: %u feeds, '%s', '%s'", reply[0], NTH(0), NTH(1));
+            CHECK(cmd_u8(PVA_C_NEWS_CAT, 99) == PVA_E_RANGE, "no topic 99");
+            uint8_t ad[2] = { 0, 1 };
+            CHECK(cmd(PVA_C_NEWS_ADD, ad, 2) == PVA_OK && cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 6 && !strcmp(NTH(5), "BBC News, top stories"),
+                  "added: 6 favourites, the last %s", NTH(5));
+            CHECK(cmd(PVA_C_NEWS_ADD, ad, 2) == PVA_E_EXISTS, "added again: EXISTS");
+            CHECK(cmd_str(PVA_C_CFG_GET, "news.feeds") == PVA_OK && !strcmp((char *)reply, "bbcw,alj,dw,guardw,nos,bbc"), "news.feeds=%s", reply);
+            uint8_t mv[2] = { 5, 0 };
+            cmd(PVA_C_NEWS_MOVE, mv, 2);
+            CHECK(cmd_str(PVA_C_CFG_GET, "news.feeds") == PVA_OK && !strcmp((char *)reply, "bbcw,alj,dw,guardw,bbc,nos"), "moved up: %s", reply);
+            mv[0] = 0; mv[1] = 1;
+            cmd(PVA_C_NEWS_MOVE, mv, 2);
+            CHECK(cmd_str(PVA_C_CFG_GET, "news.feeds") == PVA_OK && !strcmp((char *)reply, "alj,bbcw,dw,guardw,bbc,nos"), "moved down: %s", reply);
+            CHECK(cmd_u8(PVA_C_NEWS_DEL, 5) == PVA_OK && cmd_str(PVA_C_CFG_GET, "news.feeds") == PVA_OK && !strcmp((char *)reply, "alj,bbcw,dw,guardw,bbc"), "removed: %s", reply);
+            CHECK(cmd_u8(PVA_C_NEWS_DEL, 9) == PVA_E_RANGE, "no favourite 10");
+            CHECK(cmd_u8(PVA_C_NEWS_CAT, 2) == PVA_OK && !strcmp(NTH(0), " NOS Nieuws"), "NOS no longer a favourite: '%s'", NTH(0));
             {
                 uint8_t k1[] = "news.feed1\0Test|http://news.test/rss", k2[] = "news.feed2\0RDF|http://news.test/rdf",
-                        k3[] = "news.feed3\0Atom|http://news.test/atom", k4[] = "news.feed4\0Many|http://news.test/many";
-                cmd(PVA_C_CFG_SET, k1, sizeof k1); cmd(PVA_C_CFG_SET, k2, sizeof k2); cmd(PVA_C_CFG_SET, k3, sizeof k3); cmd(PVA_C_CFG_SET, k4, sizeof k4);
+                        k3[] = "news.feed3\0Atom|http://news.test/atom", k4[] = "news.feed4\0Many|http://news.test/many",
+                        k5[] = "news.feed5\0Content|http://news.test/content", kf[] = "news.feeds\0#1,#2,#3,#4,#5";
+                cmd(PVA_C_CFG_SET, k1, sizeof k1); cmd(PVA_C_CFG_SET, k2, sizeof k2); cmd(PVA_C_CFG_SET, k3, sizeof k3);
+                cmd(PVA_C_CFG_SET, k4, sizeof k4); cmd(PVA_C_CFG_SET, k5, sizeof k5); cmd(PVA_C_CFG_SET, kf, sizeof kf);
             }
-            CHECK(cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 4 && !strcmp((char *)reply + 1, "Test"), "the INI's 4 feeds");
+            CHECK(cmd(PVA_C_NEWS_FEEDS, NULL, 0) == PVA_OK && reply[0] == 5 && !strcmp(NTH(0), "Test") && !strcmp(NTH(4), "Content"), "feeds of one's own: %u, %s", reply[0], NTH(0));
             #define WAIT_NEWS() WAIT_CLOCK(ck[PVA_CK_NEWS_STATE] != PVA_NEWS_LOADING, 20000)
+            #define WAIT_ART() WAIT_CLOCK(ck[PVA_CK_ART_STATE] != PVA_ART_LOADING, 30000)
             CHECK(cmd_u8(PVA_C_NEWS_FETCH, 0) == PVA_OK, "NEWS_FETCH 0");
             read_clock();
             CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_LOADING, "loading");
             WAIT_NEWS();
             CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_DONE && ck[PVA_CK_NEWS_COUNT] == 3 && ck[PVA_CK_NEWS_FEED] == 0, "3 stories (state %u, %u)", ck[PVA_CK_NEWS_STATE], ck[PVA_CK_NEWS_COUNT]);
-            uint8_t ls[2] = { 0, 10 };
-            CHECK(cmd(PVA_C_NEWS_LIST, ls, 2) == PVA_OK && !strcmp((char *)reply, "Cafe owners & \"friends\" meet"), "title 1: '%s'", reply);
-            const char *t2 = (char *)reply + strlen((char *)reply) + 1;
-            CHECK(!strcmp(t2, "Second & \"quoted\" story"), "title 2 (an HTML-like <tag> goes): '%s'", t2);
-            CHECK(cmd_u8(PVA_C_NEWS_ITEM, 0) == PVA_OK, "NEWS_ITEM 0");
-            const char *tx = (char *)reply + strlen((char *)reply) + 1, *dt = tx + strlen(tx) + 1;
-            CHECK(!strcmp(tx, "The first story, with spaces and a line.") && !strcmp(dt, "29 Oct 2026 20:15:00 GMT"), "text '%s', date '%s'", tx, dt);
-            cmd_u8(PVA_C_NEWS_ITEM, 1);
-            tx = (char *)reply + strlen((char *)reply) + 1;
-            CHECK(!strcmp(tx, "Escaped &amp; HTML link."), "escaped HTML: '%s'", tx);
-            cmd_u8(PVA_C_NEWS_ITEM, 2);
-            tx = (char *)reply + strlen((char *)reply) + 1;
-            CHECK(!strcmp((char *)reply, "Third: no description") && !tx[0], "no description");
-            CHECK(cmd_u8(PVA_C_NEWS_ITEM, 3) == PVA_E_RANGE, "story 4: RANGE");
+            uint8_t ls[3] = { 0, 10, 70 };
+            CHECK(cmd(PVA_C_NEWS_LIST, ls, 3) == PVA_OK, "NEWS_LIST");
+            const char *n0 = (char *)reply, *n1 = n0 + strlen(n0) + 1, *n2 = n1 + strlen(n1) + 1, *n3 = n2 + strlen(n2) + 1;
+            CHECK(strlen(n0) == 5 && !strcmp(n1, "Cafe owners & \"friends\" meet"), "story 1: '%s' '%s'", n0, n1);
+            CHECK(!strcmp(n3, "Second & \"quoted\" story"), "title 2 (an HTML-like <tag> goes): '%s'", n3);
+            ls[2] = 12;
+            cmd(PVA_C_NEWS_LIST, ls, 3);
+            n1 = (char *)reply + strlen((char *)reply) + 1;
+            CHECK(!strcmp(n1, "Cafe owne..."), "a title cut to 12: '%s'", n1);
+            uint8_t tx[6] = { 0, 0, 0, 0, 10, 30 };
+            CHECK(cmd(PVA_C_NEWS_TEXT, tx, 6) == PVA_OK && reply[0] == 2 && reply[1] == 0 && reply[2] == 0 &&
+                  !strcmp((char *)reply + 3, "The first story, with spaces") && !strcmp(nth_str((char *)reply + 3, 1), "and a line."),
+                  "the summary in lines of 30: %u lines, '%s'", reply[0], reply + 3);
+            tx[1] = 2; tx[5] = 12;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(reply[0] == 3 && !strcmp((char *)reply + 3, "Cafe owners") && !strcmp(nth_str((char *)reply + 3, 2), "meet"), "the title in lines of 12: %u", reply[0]);
+            CHECK(cmd_u8(PVA_C_NEWS_ITEM, 0) == PVA_OK && !strcmp(nth_str((char *)reply, 1), "news.test") && strstr((char *)reply, "29 Oct 2026"),
+                  "ITEM 0: '%s', '%s'", reply, nth_str((char *)reply, 1));
+            tx[0] = 1; tx[1] = 0; tx[5] = 78;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(!strcmp((char *)reply + 3, "Escaped & HTML link."), "escaped HTML: '%s'", reply + 3);
+            tx[0] = 2;
+            CHECK(cmd(PVA_C_NEWS_TEXT, tx, 6) == PVA_OK && reply[0] == 0, "no description: 0 lines");
+            tx[0] = 3;
+            CHECK(cmd(PVA_C_NEWS_TEXT, tx, 6) == PVA_E_RANGE && cmd_u8(PVA_C_NEWS_ITEM, 3) == PVA_E_RANGE, "story 4: RANGE");
+            // the full article: the page at the story's link
+            CHECK(cmd_u8(PVA_C_NEWS_FULL, 0) == PVA_OK, "NEWS_FULL 0");
+            read_clock();
+            CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_LOADING && ck[PVA_CK_ART_STORY] == 0, "the article: loading");
+            WAIT_ART();
+            CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && !strcmp(host_esp_last_web, "/1"), "the article: in (%u), from %s", ck[PVA_CK_ART_STATE], host_esp_last_web);
+            tx[0] = 0; tx[1] = 1; tx[5] = 78;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            {
+                const char *l0 = (char *)reply + 3, *l2 = nth_str(l0, 2), *l4 = nth_str(l0, 4);
+                CHECK(reply[0] == 5 && reply[2] == PVA_TXF_ARTICLE && !strcmp(l0, "The first paragraph of the article, long enough to be kept as text.") && !nth_str(l0, 1)[0],
+                      "the article: %u lines (flags %u): '%s'", reply[0], reply[2], l0);
+                CHECK(!strcmp(l2, "Second paragraph with a link & an entity, cafe and \"quotes\" - done."), "its paragraph 2: '%s'", l2);
+                CHECK(!strcmp(l4, "Third paragraph: the end of the article text, again long enough - really."), "its paragraph 3 (menus, captions, scripts, footer left out): '%s'", l4);
+            }
+            tx[0] = 1;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(reply[2] == 0, "another story: its summary (flags %u)", reply[2]);
+            CHECK(cmd_u8(PVA_C_NEWS_FULL, 2) == PVA_OK && (read_clock(), ck[PVA_CK_ART_STATE] == PVA_ART_FAILED), "no link: FAILED at once");
+            tx[0] = 2;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(reply[2] == PVA_TXF_FAILED, "and the summary shows (flags %u)", reply[2]);
+            // the whole text in the feed
+            cmd_u8(PVA_C_NEWS_FETCH, 4); WAIT_NEWS();
+            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && cmd_u8(PVA_C_NEWS_ITEM, 0) == PVA_OK && reply_len > 2 && reply[reply_len - 1] == 1, "a feed with content: flagged");
+            cmd_u8(PVA_C_NEWS_FULL, 0); WAIT_ART();
+            tx[0] = 0; tx[2] = 0; tx[4] = 4;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && !strcmp(host_esp_last_web, "/content") && reply[2] == PVA_TXF_ARTICLE &&
+                  !strncmp((char *)reply + 3, "Paragraph 1 of the whole story", 30), "from the feed: %u lines, '%s'", reply[0] | reply[1] << 8, reply + 3);
+            uint16_t alines = (uint16_t)(reply[0] | reply[1] << 8);
+            tx[2] = (uint8_t)(alines - 1); tx[3] = 0;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(alines >= 23 && strstr((char *)reply + 3, "two.") && reply_len < 90, "the last line: '%s'", reply + 3);
             cmd_u8(PVA_C_NEWS_FETCH, 1); WAIT_NEWS();
-            cmd_u8(PVA_C_NEWS_ITEM, 0);
-            tx = (char *)reply + strlen((char *)reply) + 1; dt = tx + strlen(tx) + 1;
-            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && !strcmp((char *)reply, "RDF story") && !strcmp(tx, "RDF text") && !strcmp(dt, "2026-10-29T18:30:00Z"), "RSS 1.0: %s / %s", reply, dt);
+            tx[0] = 0; tx[1] = 0; tx[2] = 0;
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && !strcmp((char *)reply + 3, "RDF text") && cmd_u8(PVA_C_NEWS_ITEM, 0) == PVA_OK && strstr((char *)reply, "29 Oct 2026"),
+                  "RSS 1.0: '%s'", reply);
             cmd_u8(PVA_C_NEWS_FETCH, 2); WAIT_NEWS();
+            cmd(PVA_C_NEWS_TEXT, tx, 6);
+            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && !strcmp((char *)reply + 3, "Atom text"), "Atom: '%s'", reply + 3);
             cmd_u8(PVA_C_NEWS_ITEM, 0);
-            tx = (char *)reply + strlen((char *)reply) + 1;
-            CHECK(ck[PVA_CK_NEWS_COUNT] == 1 && !strcmp((char *)reply, "Atom story") && !strcmp(tx, "Atom text"), "Atom: %s", reply);
+            CHECK(!strcmp(nth_str((char *)reply, 1), "x") || !strcmp(nth_str((char *)reply, 1), ""), "Atom's <link href>: '%s'", nth_str((char *)reply, 1));
             cmd_u8(PVA_C_NEWS_FETCH, 3); WAIT_NEWS();
             uint8_t nn = ck[PVA_CK_NEWS_COUNT];
             CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_DONE && nn >= 8 && nn <= 40, "a long feed: %u stories kept (as many as fit, at most 40)", nn);
-            uint8_t l2[2] = { (uint8_t)(nn - 2u), 5 };
-            cmd(PVA_C_NEWS_LIST, l2, 2);
+            uint8_t l2[3] = { (uint8_t)(nn - 2u), 5, 70 };
+            cmd(PVA_C_NEWS_LIST, l2, 3);
             char e1[16], e2[16];
             snprintf(e1, sizeof e1, "Story %02u", (unsigned)(nn - 2u)); snprintf(e2, sizeof e2, "Story %02u", (unsigned)(nn - 1u));
-            CHECK(!strcmp((char *)reply, e1) && !strcmp((char *)reply + 9, e2) && reply_len == 18, "the last ones: %s (%u bytes)", reply, reply_len);
-            CHECK(cmd_u8(PVA_C_NEWS_FETCH, 7) == PVA_E_RANGE, "no feed 8");
+            CHECK(!strcmp(nth_str((char *)reply, 1), e1) && !strcmp(nth_str((char *)reply, 3), e2) && !nth_str((char *)reply, 4)[0], "the last ones: %s, %s", nth_str((char *)reply, 1), nth_str((char *)reply, 3));
+            CHECK(cmd_u8(PVA_C_NEWS_FETCH, 7) == PVA_E_RANGE, "no favourite 8");
             uint8_t kb[] = "news.feed1\0Down|http://down.test/rss";
             cmd(PVA_C_CFG_SET, kb, sizeof kb);
             cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();

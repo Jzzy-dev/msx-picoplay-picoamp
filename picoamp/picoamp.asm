@@ -68,6 +68,7 @@ CHGET   equ #009F
 CHPUT   equ #00A2
 RG1SAV  equ #F3E0
 RG8SAV  equ #FFE7
+RG9SAV  equ #FFE8
 CGTABL  equ #0004
 ROMID   equ #002B               ; bit 7: 50 Hz
 
@@ -135,6 +136,13 @@ C_NFEEDS equ #38
 C_NFETCH equ #39
 C_NLIST  equ #3A
 C_NITEM  equ #3B
+C_NTOPICS equ #3C
+C_NCAT   equ #3D
+C_NADD   equ #3E
+C_NDEL   equ #3F
+C_NMOVE  equ #40
+C_NFULL  equ #41
+C_NTEXT  equ #42
 W_CLOCK  equ #4D00
 
 ; status block offsets
@@ -153,6 +161,7 @@ ST_MODE  equ 23
 ST_TITLE equ 32
 ST_ARTIST equ 80
 ST_ALBUM equ 120
+ST_FORMAT equ 160        ; 6 (PVA_DE_URL): a stream
 ST_BUFP  equ 163
 ST_DGEN  equ 173
 ST_DIRST equ 177
@@ -3142,10 +3151,16 @@ tk_home:                        ; IX back at its start
         jp tk_render
 
 ticker_run:
-        ld a,(fs_on)
-        ld hl,help_on
-        or (hl)
+        ld a,(help_on)
+        or a
         ret nz
+        ld a,(fs_on)
+        or a
+        jr z,.run
+        ld a,(pg_on)            ; the full screen pictures: none
+        or a
+        ret z
+.run:
         ld hl,(tk_turn)
         ld a,h
         or l
@@ -3205,7 +3220,17 @@ ticker_run:
         ld (ix+T_LAST+1),h
         jp tk_render
 .done:  call tk_home            ; a whole round
-.next:  ld b,3
+.next:  ld a,(pg_on)            ; a page: only its row 0 (tk_title)
+        or a
+        jr z,.nm
+        ld ix,tk_title
+        ld a,(ix+T_ACT)
+        or a
+        jr nz,.got
+        ld hl,0
+        ld (tk_turn),hl
+        ret
+.nm:    ld b,3
 .nx:    ld de,TSIZE
         add ix,de
         push ix
@@ -3334,6 +3359,9 @@ tk_strip_out:
 ; tk_build_one: IX = the ticker with the turn: the next of its 8 strips, the
 ; text (round and round) shifted 0-7 pixels left, with a guard cell in front
 tk_build_one:
+        ld a,(pg_on)            ; a page has the strips' buffer
+        or a
+        ret nz
         ld a,(tk_built)
         cp 8
         ret nc
@@ -4145,6 +4173,48 @@ fs_setup:
         ld a,NBARS
         ld (bp_nbars),a
         jp bars_reset
+
+; pg_row0: row 0 of the clock and weather pages: what plays, as one line
+; ("title - artist  . station"), moving as a ticker when it is long
+pg_row0:
+        call pg_row0_text
+        ld de,#0000
+        ld b,32
+        ld c,WHITE*16+NAVY
+        ld ix,tk_title
+        jp ticker_text
+; pg_row0_text: the line into pg_t0 (HL = pg_t0)
+pg_row0_text:
+        ld de,pg_t0
+        ld hl,st+ST_TITLE
+        ld a,(hl)
+        or a
+        jr nz,.t
+        ld hl,txt_notrack
+.t:     call strcpy
+        ld hl,st+ST_ARTIST
+        ld a,(hl)
+        or a
+        jr z,.s
+        push hl
+        ld hl,txt_dash
+        call strcpy
+        pop hl
+        call strcpy
+.s:     ld a,(st+ST_FORMAT)
+        cp 6
+        jr nz,.go
+        ld hl,st+ST_ALBUM       ; a stream: its station
+        ld a,(hl)
+        or a
+        jr z,.go
+        push hl
+        ld hl,txt_dot
+        call strcpy
+        pop hl
+        call strcpy
+.go:    ld hl,pg_t0
+        ret
 
 ; row 0: the title, row 23: the picture's name and the time
 fs_info:
@@ -5752,6 +5822,17 @@ pg_enter:
         pop bc
         ld a,c
         ld (pg_on),a
+        push af                 ; the tickers stop (row 0 starts again on the page)
+        ld hl,0
+        ld (tk_turn),hl
+        ld (t6_owner),hl
+        xor a
+        ld (tk_title+T_ACT),a
+        ld (tk_title+T_LAST),a
+        ld (tk_title+T_LAST+1),a
+        dec a
+        ld (tk_title+T_ROW),a
+        pop af
         dec a                   ; the module: its place, length, ROM bank
         ld l,a
         ld h,0
@@ -6000,6 +6081,8 @@ txt_shf:        db "SHF",0
 txt_rep:        db "REP",0
 txt_vol:        db "VOL",0
 txt_notrack:    db "NO TRACK",0
+txt_dash:       db " - ",0
+txt_dot:        db "  | ",0
 txt_playing:    db "PLAYING",0
 txt_paused:     db "PAUSED",0
 txt_stopped:    db "STOPPED",0
@@ -6265,6 +6348,7 @@ fav_path:       db "A:\\RADIOFAV.M3U",0
 ini_path:       db "A:\\PICOAMP.INI",0
 eng_minor:      db 0
 pg_on:          db 0
+pg_t0:          ds 64           ; row 0 of a page
 dig_col:        db RED*16+NAVY
 spr_next:       db 216
 fav_fh:         db 0

@@ -13,6 +13,32 @@ v = open(sys.argv[1], 'rb').read()
 if len(v) >= 0x4000 + 32:          # the palette the program set (the harness saves it)
     pv = v[0x4000:0x4020]
     PAL = [p3((pv[2 * i] >> 4) & 7, pv[2 * i + 1] & 7, pv[2 * i] & 7) for i in range(16)]
+R = list(v[0x4020:0x4060]) if len(v) >= 0x4060 else [0] * 64
+if (R[0] & 0x0E) == 0x04 and (R[1] & 0x18) == 0x10:
+    # TEXT 2 (80 columns): names at R#2, the blink bits at R#3/R#10, patterns at R#4
+    rows = 27 if R[9] & 0x80 else 24
+    nb = (R[2] & 0x7C) << 10
+    cb = (R[10] << 14) | ((R[3] & 0xF8) << 6)
+    pb = (R[4] & 0x3F) << 11
+    fg, bg, bfg, bbg = R[7] >> 4, R[7] & 15, R[12] >> 4, R[12] & 15
+    H = 212 if R[9] & 0x80 else 192
+    im = Image.new('RGB', (512, H), PAL[bg])
+    px = im.load()
+    for ty in range(rows):
+        for tx in range(80):
+            n = ty * 80 + tx
+            ch = v[(nb + n) & 0x3FFF]
+            bl = (v[(cb + n // 8) & 0x3FFF] >> (7 - n % 8)) & 1
+            f, b = (bfg, bbg) if bl else (fg, bg)
+            for r in range(8):
+                Y = ty * 8 + r
+                if Y >= H:
+                    break
+                pat = v[(pb + ch * 8 + r) & 0x3FFF]
+                for c in range(6):
+                    px[16 + tx * 6 + c, Y] = PAL[f if (pat >> (7 - c)) & 1 else b]
+    im.resize((1024, H * 4), Image.NEAREST).save(sys.argv[2])
+    sys.exit(0)
 im = Image.new('RGB', (256, 192))
 px = im.load()
 for ty in range(24):

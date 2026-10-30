@@ -26,6 +26,7 @@ extern pva_mailbox_t pva_mailbox;
 // arena
 void *pva_alloc(size_t size);       // zeroed, 4-byte aligned; NULL when full
 size_t pva_arena_free(void);
+size_t pva_arena_size(void);
 
 // log (engine/LOG command)
 void pva_log(const char *fmt, ...);
@@ -168,7 +169,7 @@ typedef struct
     uint8_t  title_gen;             // +1 for every new stream title
 } pva_net_stats_t;
 
-bool   pva_net_init(void);
+bool pva_net_init(size_t keep);     // keep: bytes of the stream RAM left to the spare (the news)
 int    pva_net_start(const char *url);          // PVA_OK, PVA_E_ARGS, PVA_E_NOWIFI
 void   pva_net_stop(void);
 void   pva_net_poll(void);
@@ -258,16 +259,25 @@ bool pva_clock_local(uint8_t *hour, uint8_t *min, uint8_t *wday);
 void pva_engine_extra(uint8_t *out);     // PVA_CK_EXTRA.. (sleep, alarm, news)
 
 // news feeds (pva_news.c)
-bool pva_news_feeds(void);              // reply: u8 count, names
-int  pva_news_fetch(uint8_t feed);
-int  pva_news_list(uint8_t first, uint8_t count);
-int  pva_news_item(uint8_t i);
+int  pva_news_cmd(uint8_t code, const uint8_t *args);   // PVA_C_NEWS_xxx
+#define PVA_NEWS_KEEP (24u * 1024u)    // the news' memory from the stream RAM (Nextor modes)
+void pva_news_init(size_t keep);       // takes 'keep' bytes of the stream RAM (before the directory does)
 void pva_news_poll(void);
-void pva_news_state(uint8_t *st, uint8_t *count, uint8_t *feed, uint8_t *err);
+void pva_news_state(uint8_t *out);      // PVA_CK_NEWS_STATE.. (10 bytes)
+typedef struct { const char *name; } pva_news_topic_t;
+typedef struct { uint8_t topic; const char *code, *name, *url; } pva_news_feed_t;
+extern const pva_news_topic_t pva_news_topics[];   // ends with a NULL name
+extern const pva_news_feed_t  pva_news_cat[];      // ends with a NULL name
+extern const char pva_news_default_favs[];
+char    pva_fold_ascii(uint32_t c);     // a character to the MSX font's ASCII (0: none)
+int64_t pva_days_from_civil(int y, unsigned m, unsigned d);
+void    pva_civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d);
+bool    pva_clock_utc(int64_t *now, int32_t *offset);   // false: no time yet (offset 0 without the zone)
 
 // replies (pva_engine.c)
 void pva_reply_byte(uint8_t b);
 void pva_reply_str(const char *s);
+void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the reply (little-endian)
 
 // helpers
 int  pva_kind_from_name(const char *name);   // PVA_DE_xxx or 0

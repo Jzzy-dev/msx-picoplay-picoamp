@@ -36,6 +36,7 @@ void pva_allow_card_writes(bool on);
 bool pva_core1_poll(void);
 int  host_disk_open(const char *path, uint32_t create_sectors);
 void host_advance_ms(uint32_t ms);
+int  host_esp_load_audio(const char *mp3_path);
 extern bool host_audio_unlimited;
 extern uint32_t host_audio_frames, host_audio_underruns;
 
@@ -54,6 +55,7 @@ static bool vlatch;
 static uint8_t vfirst;
 static uint8_t page1 = 0x00;
 static uint8_t pal[32], pal_i, pal_hi;      // the palette (R#16, port 9Ah)
+static uint8_t vregs[64] = { 0x04, 0x60, 0x06, 0x80, 0x00, 0x36, 0x07, 0x0E, 0x08 };   // VDP registers (SCREEN 4 to start with)
 static int pal_set;
 static z80 cpu;
 static unsigned long next_ms_cyc, next_frame_cyc;
@@ -178,7 +180,7 @@ static void pout(z80 *z, uint8_t p, uint8_t v)
         {
             vlatch = false;
             if (!(v & 0x80)) vaddr = (uint16_t)(vfirst | ((v & 0x3F) << 8));
-            else if ((v & 0x3F) == 16) { pal_i = vfirst & 15; pal_hi = 0; }
+            else { vregs[v & 0x3F] = vfirst; if ((v & 0x3F) == 16) { pal_i = vfirst & 15; pal_hi = 0; } }
         }
     }
 }
@@ -401,6 +403,13 @@ static int run(unsigned long max_cyc)
                     cpu.cyc += 3000;
                 }
                 else if (cpu.ix == 0x00DB) { cpu.a = 0xFF; cpu.cyc += 3000; }
+                else if (cpu.ix == 0x005F && cpu.a == 4)   // CHGMOD 4: SCREEN 4's registers
+                {
+                    static const uint8_t s4[10] = { 0x04, 0x60, 0x06, 0x80, 0x00, 0x36, 0x07, 0x0E, 0x08, 0x00 };
+                    memcpy(vregs, s4, sizeof s4);
+                    vregs[10] = vregs[11] = 0;
+                    cpu.cyc += 20000;
+                }
                 else if (cpu.ix == 0x00D8)              // GTTRIG
                 {
                     cpu.a = ((cpu.a == 1 && (m_b & 1)) || (cpu.a == 3 && (m_b & 2))) ? 0xFF : 0;
@@ -449,6 +458,10 @@ int main(int argc, char **argv)
     if (host_disk_open(argv[2], 0)) { printf("no image\n"); return 2; }
     static uint8_t arena[200 * 1024];
     host_audio_unlimited = false;
+    {   // the simulated radio stations' sound (PICOAMP_MP3, else assets/cbr128_v23.mp3)
+        const char *mp3 = getenv("PICOAMP_MP3");
+        host_esp_load_audio(mp3 ? mp3 : "assets/cbr128_v23.mp3");
+    }
     pva_init(arena, rom_mode ? sizeof arena : 120u * 1024u);   // as the firmware: PicoAmp ~200 KB, Nextor modes 120 KB
     if (rom_mode) pva_allow_card_writes(true);  // as the PicoAmp firmware: no Nextor
     pva_core1_init();
@@ -511,7 +524,8 @@ int main(int argc, char **argv)
     }
     f = fopen(argv[6], "wb");
     fwrite(vram, 1, sizeof vram, f);
-    if (pal_set) fwrite(pal, 1, sizeof pal, f);     // the palette after VRAM
+    fwrite(pal, 1, sizeof pal, f);                  // the palette after VRAM, then the VDP registers
+    fwrite(vregs, 1, sizeof vregs, f);
     fclose(f);
     return 0;
 }

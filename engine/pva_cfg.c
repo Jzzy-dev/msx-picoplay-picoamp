@@ -128,7 +128,7 @@ static bool splice(size_t at, size_t cut, const char *ins, size_t n)
 
 bool pva_cfg_set(const char *sk, const char *val)
 {
-    char v[128];
+    char v[400];
     size_t vn = 0;
     for (; val[vn] && vn < sizeof v - 1; vn++) v[vn] = (val[vn] == '\r' || val[vn] == '\n') ? ' ' : val[vn];
     v[vn] = 0;
@@ -142,7 +142,7 @@ bool pva_cfg_set(const char *sk, const char *val)
     }
     const char *dot = strchr(sk, '.');
     const char *key = dot ? dot + 1 : sk;
-    char ln[200];
+    char ln[440];
     size_t n;
     if (r.sect && r.se)
     {

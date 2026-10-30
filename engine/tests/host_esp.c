@@ -373,7 +373,7 @@ static void web(conn_t *c, const char *path)
 }
 
 // RSS feeds: news.test (10.0.0.9): /rss (RSS 2.0, CDATA, entities, HTML), /rdf (RSS 1.0),
-// /atom (Atom), /many (60 stories)
+// /atom (Atom), /many (60 stories), /content (the whole text in the feed), /1 (an article's page)
 static void news(conn_t *c, const char *path)
 {
     host_esp_web_requests++;
@@ -408,6 +408,32 @@ static void news(conn_t *c, const char *path)
     {
         const char *x = "<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><title>Atom</title>"
             "<entry><title type=\"html\">Atom story</title><link href=\"x\"/><summary>Atom text</summary><updated>2026-10-29T17:00:00Z</updated></entry></feed>";
+        bq_put(&b, x, strlen(x));
+    }
+    else if (!strcmp(path, "/content"))
+    {
+        const char *h = "<rss xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><channel><item><title>Long one</title>"
+                        "<link>http://news.test/2</link><description>Short summary.</description><content:encoded><![CDATA[";
+        bq_put(&b, h, strlen(h));
+        for (int i = 0; i < 12; i++)
+        {
+            int n = snprintf(t, sizeof t, "<p>Paragraph %d of the whole story in the feed, with enough words to make a line or two.</p>", i + 1);
+            bq_put(&b, t, (size_t)n);
+        }
+        const char *e = "]]></content:encoded><pubDate>Thu, 29 Oct 2026 20:00:00 GMT</pubDate></item></channel></rss>";
+        bq_put(&b, e, strlen(e));
+    }
+    else if (!strcmp(path, "/1"))
+    {
+        const char *x = "<!DOCTYPE html><html><head><title>x</title><script>var a=\"<p>no script text</p>\";</script><style>p{}</style></head>"
+            "<body><header><p>Site menu text that is long enough to be kept if not skipped.</p></header>"
+            "<nav><p>Home News Sport Weather and more links in the navigation bar</p></nav>"
+            "<article><h1>Cafe owners meet</h1><p class=\"x\">The first paragraph of the article, long enough to be kept as text.</p>"
+            "<figure><img src=\"a.jpg\"><figcaption>A photo caption that should not appear in the text at all.</figcaption></figure>"
+            "<p>Second paragraph with <a href=\"x\">a link</a> &amp; an entity, caf&eacute; and &#8220;quotes&#8221; &mdash; done.</p>"
+            "<p>Share</p><!-- a comment <p>no comment text here at all, really not</p> -->"
+            "<p>Third paragraph: the end of the article\ntext, again long enough \xe2\x80\x93 really.</p></article>"
+            "<footer><p>Copyright footer text that is long enough but must be skipped.</p></footer></body></html>";
         bq_put(&b, x, strlen(x));
     }
     else if (!strcmp(path, "/many"))
@@ -537,6 +563,7 @@ static void gen(conn_t *c, uint32_t ms)
                 c->until_meta = c->metaint;
                 continue;
             }
+            if (!src_len) { c->closed = true; break; }      // (no sound loaded)
             tmp[o++] = src[c->src_pos];
             c->src_pos = (c->src_pos + 1) % src_len;
             c->body_sent++;
