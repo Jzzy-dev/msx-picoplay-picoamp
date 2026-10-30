@@ -144,7 +144,7 @@ static uint8_t  after;              // what follows S_CLOSE
 static uint8_t  redirects;
 static uint32_t wait_until;
 static uint32_t retry_delay_ms;
-static bool     lend;               // a web request needs the ESP's one TLS connection
+static uint8_t  lend;               // web/directory requests that need the ESP's one TLS connection
 static uint32_t t_start;            // start of the current request phase
 static uint32_t last_data_ms;
 static bool     ever_streamed;
@@ -1010,7 +1010,7 @@ const char *pva_net_host(void) { return host; }
 
 uint8_t pva_net_conn(void) { return conn; }
 // a web request borrows the stream's TLS connection (on), or gives it back
-void pva_net_lend_tls(bool on) { lend = on; }
+void pva_net_lend_tls(bool on) { if (on) lend++; else if (lend) lend--; }
 // the stream holds no TLS connection now
 bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAILED); }
 

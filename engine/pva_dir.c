@@ -14,7 +14,9 @@
 //   a click     /json/url/<stationuuid>   (asked for by Radio Browser when a station starts)
 //
 // The mirrors are tried in turn. HTTP first (TLS is one connection only on the
-// ESP, and a station may be using it); a redirect to HTTPS is followed.
+// ESP, and a station may be using it); a redirect to HTTPS is followed. A
+// mirror that does not answer over HTTP is asked again over HTTPS before the
+// next one (borrowing the station's TLS connection when it has it).
 //
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
@@ -35,7 +37,9 @@
 #define T_SEND_MS       3000u
 #define T_RCV_MS        2000u
 #define T_CLOSE_MS      1000u
-#define T_QUERY_MS      30000u      // a whole list
+#define T_QUERY_MS      90000u      // a whole list (all the mirrors, HTTP and HTTPS)
+#define T_SILENT_MS     8000u       // connected, and no answer this long
+#define T_LEND_MS       6000u
 #define IDLE_POLL_MS    4u
 #define QUIET_MS        400u        // no data this long: ask the ESP whether the server closed
 #define CACHE_SIZE      6144u       // the engine keeps the country list here
@@ -280,8 +284,9 @@ static void json_byte(char c)
 }
 
 // ---------------------------------------------------------------- HTTP client
-enum { D_IDLE, D_DNS, D_OPEN, D_SEND, D_HEAD, D_BODY, D_CLOSE, D_DONE, D_FAILED };
-enum { A_DONE, A_FAIL, A_NEXT_MIRROR, A_REDIRECT };
+enum { D_IDLE, D_DNS, D_OPEN, D_SEND, D_HEAD, D_BODY, D_CLOSE, D_DONE, D_FAILED, D_LEND };
+enum { A_DONE, A_FAIL, A_NEXT_MIRROR, A_REDIRECT, A_TLS };
+static bool d_lending, d_lent_once;
 
 static pva_esp_slot_t *DS;
 static uint8_t  d = D_IDLE;
@@ -335,6 +340,7 @@ static void d_close_then(uint8_t what)
 
 static void d_release(void)
 {
+    if (d_lending) { pva_net_lend_tls(false); d_lending = false; }
     pva_esp_clear(DS);
     conn = 0;
     if (held) { pva_esp_release(); held = false; }
@@ -427,6 +433,7 @@ static void d_connect(void)
 
 static void d_start_mirror(void)
 {
+    d_lent_once = false;
     d_tls = false;
     d_port = 80;
     snprintf(d_host, sizeof d_host, "%s", mirrors[mirror]);
@@ -466,7 +473,10 @@ static void d_trouble(uint8_t err)
 {
     d_fail(err);
     pva_log("radio: %.36s failed (%u)", d_host, (unsigned)err);
-    if (mirror + 1u < N_MIRRORS && !discard_body && pva_hal_millis() - t_query < T_QUERY_MS)
+    bool time_left = pva_hal_millis() - t_query < T_QUERY_MS;
+    if (!d_tls && !discard_body && time_left && (err == PVA_NERR_TIMEOUT || err == PVA_NERR_CLOSED || err == PVA_NERR_CONNECT))
+        d_close_then(A_TLS);            // the same mirror over HTTPS
+    else if (mirror + 1u < N_MIRRORS && !discard_body && time_left)
         d_close_then(A_NEXT_MIRROR);
     else
         d_close_then(A_FAIL);
@@ -511,7 +521,7 @@ void pva_dir_poll(void)
     }
     if (d == D_DONE || d == D_FAILED) return;
     pva_esp_io();
-    if (!pva_esp_finished(DS) && d != D_HEAD && d != D_BODY) return;
+    if (!pva_esp_finished(DS) && d != D_HEAD && d != D_BODY && d != D_LEND) return;
     uint32_t now = pva_hal_millis();
     if (cancel_req && d != D_CLOSE)
     {
@@ -525,6 +535,10 @@ void pva_dir_poll(void)
     }
     switch (d)
     {
+        case D_LEND:                    // the station closes its TLS connection, then this one opens
+            if (pva_net_tls_free()) { pva_log("radio: TLS lent by the stream"); d_connect(); return; }
+            if (now - t_phase > T_LEND_MS) d_trouble(PVA_NERR_CONNECT);
+            return;
         case D_DNS:
             if (DS->rsp_timeout || DS->rc != 0 || DS->pgot < 4) { pva_esp_clear(DS); d_trouble(PVA_NERR_DNS); return; }
             {
@@ -542,6 +556,16 @@ void pva_dir_poll(void)
             if (DS->rsp_timeout || DS->rc != 0 || DS->pgot < 1)
             {
                 pva_log("radio: %s open failed (rc %u)", d_tls ? "TLS" : "TCP", (unsigned)DS->rc);
+                if (d_tls && !DS->rsp_timeout && DS->rc == 9 && !d_lent_once && !pva_net_tls_free())
+                {
+                    // the ESP-01's one TLS connection is the station's: it lends it
+                    pva_esp_clear(DS);
+                    d_lent_once = true;
+                    if (!d_lending) { d_lending = true; pva_net_lend_tls(true); }
+                    t_phase = now;
+                    d = D_LEND;
+                    return;
+                }
                 pva_esp_clear(DS);
                 d_trouble(PVA_NERR_CONNECT);
                 return;
@@ -626,7 +650,7 @@ void pva_dir_poll(void)
                 pva_esp_request(DS, PVA_FN_TCPSTATE, &a, 1, NULL, 0, T_RCV_MS);
                 return;
             }
-            if (now - t_phase > 10000u || now - t_query > T_QUERY_MS) { d_trouble(PVA_NERR_TIMEOUT); return; }
+            if (now - t_phase > T_SILENT_MS || now - t_query > T_QUERY_MS) { d_trouble(PVA_NERR_TIMEOUT); return; }
             if (!DS->want_fn && (int32_t)(now - wait_until) >= 0) ask_rcv();
             return;
         case D_CLOSE:
@@ -636,9 +660,18 @@ void pva_dir_poll(void)
             switch (after)
             {
                 case A_NEXT_MIRROR:
+                    if (d_lending) { pva_net_lend_tls(false); d_lending = false; }
                     mirror++;
                     reset_results();
                     d_start_mirror();
+                    return;
+                case A_TLS:
+                    pva_log("radio: %.36s over HTTPS", d_host);
+                    if (d_lending) { pva_net_lend_tls(false); d_lending = false; }
+                    d_tls = true;
+                    d_port = 443;
+                    reset_results();
+                    d_connect();
                     return;
                 case A_REDIRECT:
                     if (!parse_target(location)) { d_fail(PVA_NERR_URL); d_close_then(A_FAIL); return; }
@@ -647,11 +680,13 @@ void pva_dir_poll(void)
                     d_connect();
                     return;
                 case A_FAIL:
+                    if (d_lending) { pva_net_lend_tls(false); d_lending = false; }
                     d = D_IDLE;
                     if (!discard_body) { reset_results(); qstate = PVA_DIRS_FAILED; pva_log("radio: list failed (%u, HTTP %u)", (unsigned)qerr, (unsigned)qhttp); }
                     if (!q_pending && !click_pending) d_release();
                     return;
                 default:
+                    if (d_lending) { pva_net_lend_tls(false); d_lending = false; }
                     d = D_IDLE;
                     if (!discard_body) d_finish();
                     if (!q_pending && !click_pending) d_release();

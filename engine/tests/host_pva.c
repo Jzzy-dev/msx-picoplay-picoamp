@@ -1419,6 +1419,32 @@ int main(int argc, char **argv)
         CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_FAILED && st[PVA_ST_DIR_ERR] == PVA_NERR_CONNECT, "FAILED, error %u", st[PVA_ST_DIR_ERR]);
         CHECK(cmd_str(PVA_C_DIR_OPEN, "") == PVA_OK && !strcmp((char *)reply + 2, "/Internet radio"), "still at home");
         host_esp_api_all_down = false;
+        {
+            // the servers take HTTP but do not answer: the same server over HTTPS
+            extern bool host_esp_api_http_silent;
+            host_esp_api_http_silent = true;
+            uint32_t tl0 = host_esp_tls_opens;
+            CHECK(cmd_u16(PVA_C_DIR_ENTER, 3) == PVA_E_BUSY, "Most voted, the servers silent over HTTP");
+            WAIT_LIST(40000);
+            CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE && host_esp_tls_opens > tl0 && strstr(host_esp_last_get, "Host: all.api.radio-browser.info"),
+                  "it came over HTTPS from the first server (state %u, error %u)", st[PVA_ST_DIR_STATE], st[PVA_ST_DIR_ERR]);
+            cmd_u16(PVA_C_DIR_ENTER, 0);            // home
+            static const char sx[] = "https://secure.test/stream.mp3\0";
+            cmd(PVA_C_PLAY_URL, sx, sizeof sx);
+            run_ms(30000);
+            uint32_t tlsms = host_esp_tls_ms;
+            host_esp_tls_ms = 800;
+            CHECK(cmd_u16(PVA_C_DIR_ENTER, 3) == PVA_E_BUSY, "again, while an https station plays");
+            WAIT_LIST(40000);
+            run_ms(5000);
+            read_status();
+            CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE && st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM,
+                  "the station lent its TLS connection and plays on (list state %u, net state %u)", st[PVA_ST_DIR_STATE], st[PVA_ST_NET_STATE]);
+            host_esp_tls_ms = tlsms;
+            cmd(PVA_C_STOP, NULL, 0);
+            host_esp_api_http_silent = false;
+            cmd_u16(PVA_C_DIR_ENTER, 0);            // home
+        }
         host_esp_api_bps = 500;                     // slow server: go back while it loads
         CHECK(cmd_u16(PVA_C_DIR_ENTER, 2) == PVA_E_BUSY, "Top stations from a slow server");
         run_ms(1500);

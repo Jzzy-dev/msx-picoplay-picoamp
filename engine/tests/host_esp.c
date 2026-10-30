@@ -53,6 +53,7 @@ bool     host_esp_close_silent = true;      // as the real ESP: TCP_RCV of a clo
                                             // answers "no data", only TCP_STATE tells the close
 uint32_t host_esp_state_asks;
 uint32_t host_esp_delay_next_rcv;           // > 0: the next TCP_RCV answer comes this late (once)
+bool     host_esp_api_http_silent = false;  // the API takes HTTP connections and never answers (HTTPS works)
 bool     host_esp_api_down = false;         // 10.0.0.4 refuses connections (a mirror must be used)
 bool     host_esp_api_all_down = false;     // all API servers refuse
 uint32_t host_esp_api_bps = 20000;          // API reply speed
@@ -479,6 +480,7 @@ static void serve(conn_t *c)
     if (c->ip[3] == 9) { news(c, path); return; }
     if (c->ip[3] == 4 || c->ip[3] == 5)
     {
+        if (host_esp_api_http_silent && !c->tls) return;
         if (!strstr(r, "User-Agent: ")) { http_reply(c, "HTTP/1.1 403 Forbidden\r\n\r\n", NULL); return; }
         api(c, path);
         return;
