@@ -48,6 +48,7 @@ static uint8_t mem[65536];
 static unsigned long prof[65536], prof_next;       // PC samples (PICOAMP_PROF)
 static int prof_on;
 static unsigned long rd_ram, wr_ram, busy_cyc;
+static unsigned long pass_hist[16];         // loop passes by their length in frames
 static uint16_t cnt_addr[16]; static unsigned long cnt_n[16]; static int cnt_k;   // PICOAMP_COUNT                // the Z80's RAM traffic
 static uint8_t vram[0x4000];
 static uint16_t vaddr;
@@ -432,6 +433,7 @@ static int run(unsigned long max_cyc)
         {
             unsigned long gap = frames - last_halt_frame;
             if (halts > 10 && gap > worst_gap) worst_gap = gap;
+            if (halts > 10) pass_hist[gap < 15 ? gap : 15]++;
             last_halt_frame = frames;
             halts++;
             if (!answered)
@@ -508,6 +510,7 @@ int main(int argc, char **argv)
            rd_ram / (cpu.cyc / (double)HZ), wr_ram / (cpu.cyc / (double)HZ), 100.0 - 100.0 * busy_cyc / cpu.cyc);
     if (trace > 0) printf("[engine arena: %zu bytes free]\n", pva_arena_free());
     for (int k = 0; k < cnt_k; k++) printf("[%04X entered %lu times]\n", cnt_addr[k], cnt_n[k]);
+    if (getenv("PICOAMP_HIST")) { printf("[passes by frames:"); for (int i = 0; i < 16; i++) if (pass_hist[i]) printf(" %d:%lu", i, pass_hist[i]); printf("]\n"); }
     if (prof_on)
     {
         FILE *pf = fopen(getenv("PICOAMP_PROF"), "w");

@@ -3237,6 +3237,9 @@ ticker_run:
         rr l
         srl h
         rr l
+        ld a,(fs_on)            ; a page, the full screen: at most 2 pixels a step (a
+        or a                    ; slow pass then holds it back a little, no jump)
+        call nz,tk_limit
         push hl
         call tk_cycle
         ex de,hl
@@ -3292,6 +3295,51 @@ ticker_run:
 .find:  ld ix,tk_list           ; nobody's turn: look from the title on
         jr .next
 
+; tk_limit: HL = the offset by the time -> at most the one shown + 2; then the
+; ticker's start time follows, so the speed stays the same afterwards
+tk_limit:
+        ld e,(ix+T_LAST)
+        ld d,(ix+T_LAST+1)
+        inc de
+        inc de
+        push hl
+        or a
+        sbc hl,de
+        pop hl
+        ret c
+        ret z
+        ex de,hl                ; HL = shown + 2
+        push hl
+        ld d,h                  ; frames = HL * 4 / 3 (about: + /4 + /16 + /64)
+        ld e,l
+        srl d
+        rr e
+        srl d
+        rr e
+        add hl,de
+        srl d
+        rr e
+        srl d
+        rr e
+        add hl,de
+        srl d
+        rr e
+        srl d
+        rr e
+        add hl,de
+        ld a,(hold)
+        ld e,a
+        ld d,0
+        add hl,de
+        ex de,hl
+        ld hl,(JIFFY)           ; T_START = now - hold - frames
+        or a
+        sbc hl,de
+        ld (ix+T_START),l
+        ld (ix+T_START+1),h
+        pop hl
+        ret
+
 ; tk_cycle: IX = ticker -> HL = (len + GAP) * 6, the pixels of one round
 tk_cycle:
         ld a,(ix+T_LEN)
@@ -3320,6 +3368,14 @@ tk_render:
         pop hl
         jp z,tk_strip_out
 .nostrip:
+        push hl                 ; a page, the full screen: row 0 in its own buffer
+        ld hl,t6buf
+        ld a,(fs_on)
+        or a
+        jr z,.b
+        ld hl,t6tk
+.b:     ld (t6_base),hl
+        pop hl
         ld (t6_off),hl
         ; the row buffer still holds this ticker a few pixels back: shift it
         push hl
@@ -3496,8 +3552,14 @@ text6s: push hl
         pop hl
         ; fall through
 text6:  push hl                 ; the buffer no longer holds a ticker
+        ld hl,t6buf             ; (other text: the shared buffer; a page's or the
+        ld (t6_base),hl         ; full screen's row 0 ticker has its own)
+        ld a,(fs_on)
+        or a
+        jr nz,.own
         ld hl,0
         ld (t6_owner),hl
+.own:
         pop hl
 text6_keep:
 ; text6: HL = text, DE = cell, B = width (1-32 cells), C = colour or 0 (only
@@ -3519,7 +3581,7 @@ text6_keep:
         add hl,hl
         ld b,h
         ld c,l
-        ld hl,t6buf
+        ld hl,(t6_base)
         xor a
         call memset
         ; the right edge, in buffer pixels: (width + 1) * 8
@@ -3550,7 +3612,9 @@ t6_out: ld de,(t6_cell)
         call cell_addr
         push hl
         call vwrite
-        ld hl,t6buf+8
+        ld hl,(t6_base)
+        ld bc,8
+        add hl,bc
         ld a,(t6_w)
         add a,a
         add a,a
@@ -3597,7 +3661,7 @@ text6_shift:
         ld a,(t6_w)
         inc a
         ld (t6_n),a             ; cells that take bits from the next one
-        ld de,t6buf
+        ld de,(t6_base)
         ld c,8                  ; lines
 .ln:    push de
         ld a,(t6_n)
@@ -6467,7 +6531,8 @@ fav_url         equ tkstrip + 8*82*8
 fav_name        equ fav_url + 256
 modext          equ fav_name + 64           ; (more room for a page module)
 ckb             equ modext + 1600           ; the engine's clock block (pages)
-bss_end         equ ckb + 48
+t6tk            equ ckb + 48                ; row 0's ticker on a page / the full screen: 34 cells
+bss_end         equ t6tk + 34*8
 MOD_MAX         equ ckb - MODBASE
         assert mod_clock_end - mod_clock <= MOD_MAX
         assert mod_wx_end - mod_wx <= MOD_MAX
