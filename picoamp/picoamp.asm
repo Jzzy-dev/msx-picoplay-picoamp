@@ -2794,7 +2794,9 @@ draw_list:
         ld (args),hl
         ld a,LIST_N
         ld (args+2),a
-        ld bc,3
+        ld a,#A5                ; (a station's https flag in its size)
+        ld (args+3),a
+        ld bc,4
         ld a,C_DREAD
         call cmd
         ld a,0
@@ -2828,6 +2830,15 @@ draw_list:
         ld hl,(ent_p)
         ld a,(hl)
         ld (ent_type),a
+        push hl
+        inc hl                  ; size bit 31: a station over https
+        inc hl
+        inc hl
+        inc hl
+        ld a,(hl)
+        and #80
+        ld (ent_tls),a
+        pop hl
         ld de,5
         add hl,de
         ld c,(hl)
@@ -2865,24 +2876,51 @@ draw_list:
         inc de
 .z:     xor a
         ld (de),a
+        ld a,(ent_type)         ; a station: 25 cells, then "http" / "https"
+        cp 6
+        ld a,30
+        jr nz,.w
+        ld a,25
+.w:     ld (ent_w),a
         ld hl,(row_idx)
         ld de,(sel)
         or a
         sbc hl,de
+        ld c,A_NORM
+        jr nz,.nc
+        ld c,A_SEL
+.nc:    ld a,c
+        ld (ent_col),a
         jr z,.chosen
         ld de,(row_cell)
         ld hl,linebuf
-        ld b,30
-        ld c,A_NORM
+        ld a,(ent_w)
+        ld b,a
         call text6s
-        jr .next
+        jr .mark
 .chosen:
         ld de,(row_cell)
         ld hl,linebuf
-        ld b,30
-        ld c,A_SEL
+        ld a,(ent_w)
+        ld b,a
         ld ix,tk_list
         call ticker_text
+.mark:  ld a,(ent_type)
+        cp 6
+        jr nz,.next
+        ld hl,txt_m_http
+        ld a,(ent_tls)
+        or a
+        jr z,.m
+        ld hl,txt_m_https
+.m:     ld de,(row_cell)
+        ld a,e
+        add a,25
+        ld e,a
+        ld b,5
+        ld a,(ent_col)
+        ld c,a
+        call text6s
         jr .next
 .blank: ld de,(row_cell)
         ld b,30
@@ -6077,6 +6115,8 @@ txt_rep:        db "REP",0
 txt_vol:        db "VOL",0
 txt_notrack:    db "NO TRACK",0
 txt_dash:       db " - ",0
+txt_m_http:     db "  http",0
+txt_m_https:    db " https",0
 txt_dot:        db "  | ",0
 txt_playing:    db "PLAYING",0
 txt_paused:     db "PAUSED",0
@@ -6264,6 +6304,9 @@ have_list:      db 0
 ent_p:          dw 0
 row_no:         db 0
 ent_type:       db 0
+ent_tls:        db 0
+ent_w:          db 30
+ent_col:        db 0
 tmp16:          dw 0
 colfn:          dw scope_colrow
 plot_inv:       db 0
