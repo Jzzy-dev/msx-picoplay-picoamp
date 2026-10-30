@@ -69,11 +69,7 @@ entry), so the rest of the screen stays smooth. Moving through the list gives
 the turn to the entry you are on.
 
 The internet radio folders (countries, genres, decades, favourites) work as in
-PicoPlay. A station shows at the right of its line, in turn every 1.5 s,
-whether it streams over `http` or `https`, its bitrate (`128k`) and a word for
-that (`low` below 96k, `good`, `high` above 160k); favourites have no bitrate
-from the directory and show only http/https. An http station leaves the
-ESP-01's one secure connection to the news (see News). While the engine fetches a list from the Radio Browser directory,
+PicoPlay. While the engine fetches a list from the Radio Browser directory,
 PICOAMP shows "LOADING THE LIST...".
 
 ## Keys
