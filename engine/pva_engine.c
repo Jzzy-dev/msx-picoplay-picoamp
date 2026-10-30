@@ -678,6 +678,7 @@ static int cmd_dir_read(void)
     if (!dir_open) return PVA_E_STATE;
     uint16_t first = (uint16_t)(args[0] | (args[1] << 8));
     uint8_t max = args[2];
+    bool flags = args[3] == PVA_DR_FLAGS;      // (a 4th byte A5h: a station's size has PVA_DR_TLS)
     for (uint16_t i = first; i < dir_count && max; i++, max--)
     {
         const dent_t *e = &dir_ent[i];
@@ -685,11 +686,18 @@ static int cmd_dir_read(void)
         pva_copy_ascii(shown, sizeof shown, dir_pool + e->name, 255);
         uint8_t l = (uint8_t)strlen(shown);
         if (reply_len + 6u + l > PVA_REPLY_SIZE) break;
+        uint32_t size = e->size;
+        if (flags && e->type == PVA_DE_URL)
+        {
+            const char *u = vlevel == V_STATIONS && i ? pva_dir_url((uint16_t)(i - 1u)) :
+                            vlevel == V_FAVS ? dir_pool + e->name + strlen(dir_pool + e->name) + 1 : "";
+            if (u && !strncmp(u, "https:", 6)) size |= PVA_DR_TLS;
+        }
         set_reply_byte(e->type);
-        set_reply_byte((uint8_t)e->size);
-        set_reply_byte((uint8_t)(e->size >> 8));
-        set_reply_byte((uint8_t)(e->size >> 16));
-        set_reply_byte((uint8_t)(e->size >> 24));
+        set_reply_byte((uint8_t)size);
+        set_reply_byte((uint8_t)(size >> 8));
+        set_reply_byte((uint8_t)(size >> 16));
+        set_reply_byte((uint8_t)(size >> 24));
         set_reply_byte(l);
         memcpy(reply + reply_len, shown, l);
         reply_len += l;

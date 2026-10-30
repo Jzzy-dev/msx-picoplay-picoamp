@@ -80,7 +80,10 @@
 #define PVA_C_DIAG          0x04    // reply: diagnostics text
 #define PVA_C_DIR_OPEN      0x10    // args: path (0-terminated, "/" = root, "" = reopen the
                                     // current folder); reply: u16 count, path (0-terminated)
-#define PVA_C_DIR_READ      0x11    // args: u16 first, u8 max; reply: entries (PVA_DE_xxx)
+#define PVA_C_DIR_READ      0x11    // args: u16 first, u8 max[, u8 A5h]; reply: entries (PVA_DE_xxx). With
+                                    // A5h a station's (URL's) size, its bitrate, has PVA_DR_TLS for https
+#define PVA_DR_FLAGS        0xA5
+#define PVA_DR_TLS          0x80000000u
 #define PVA_C_DIR_ENTER     0x12    // args: u16 index of a folder or ".." entry; reply as DIR_OPEN
 #define PVA_C_ENTRY_INFO    0x13    // args: u16 index of a station (0xFFFF = the stream that plays);
                                     // reply: address (0-terminated), name (0-terminated)

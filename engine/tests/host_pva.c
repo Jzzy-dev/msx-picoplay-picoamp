@@ -1021,6 +1021,14 @@ int main(int argc, char **argv)
         n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
         int fj = find(n, "Secure Jazz");
         CHECK(n == 2 && fj == 1, "the favourite is in the folder (%d)", n - 1);
+        {
+            uint8_t dr[4] = { 1, 0, 1, PVA_DR_FLAGS };
+            cmd(PVA_C_DIR_READ, dr, 4);
+            bool tls = reply[0] == PVA_DE_URL && (reply[4] & 0x80);
+            dr[3] = 0;
+            cmd(PVA_C_DIR_READ, dr, 4);
+            CHECK(tls && !(reply[4] & 0x80), "DIR_READ with A5h: the https station is flagged (not without it)");
+        }
         CHECK(cmd_u16(PVA_C_FAV_DEL, (uint16_t)fj) == PVA_OK, "FAV_DEL");
         cmd_str(PVA_C_DIR_OPEN, "");
         n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));

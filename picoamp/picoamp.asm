@@ -313,6 +313,7 @@ mainloop:
         or a
         call nz,check_loading
         call ticker_run
+        call li_tick
         ld a,(pg_on)
         or a
         call nz,M_TICK
@@ -2794,7 +2795,9 @@ draw_list:
         ld (args),hl
         ld a,LIST_N
         ld (args+2),a
-        ld bc,3
+        ld a,#A5                ; (a station's https flag in its size)
+        ld (args+3),a
+        ld bc,4
         ld a,C_DREAD
         call cmd
         ld a,0
@@ -2828,6 +2831,18 @@ draw_list:
         ld hl,(ent_p)
         ld a,(hl)
         ld (ent_type),a
+        push hl
+        inc hl                  ; a station: its bitrate, and https (bit 31)
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        inc hl
+        ld a,(hl)
+        ld (ent_kbps),de
+        and #80
+        ld (ent_tls),a
+        pop hl
         ld de,5
         add hl,de
         ld c,(hl)
@@ -2865,6 +2880,7 @@ draw_list:
         inc de
 .z:     xor a
         ld (de),a
+        call li_store           ; (the station info at the right)
         ld hl,(row_idx)
         ld de,(sel)
         or a
@@ -2872,27 +2888,198 @@ draw_list:
         jr z,.chosen
         ld de,(row_cell)
         ld hl,linebuf
-        ld b,30
+        ld a,(li_w)
+        ld b,a
         ld c,A_NORM
         call text6s
-        jr .next
+        jr .info
 .chosen:
         ld de,(row_cell)
         ld hl,linebuf
-        ld b,30
+        ld a,(li_w)
+        ld b,a
         ld c,A_SEL
         ld ix,tk_list
         call ticker_text
+.info:  ld a,(row_no)
+        call li_draw
         jr .next
 .blank: ld de,(row_cell)
         ld b,30
         ld c,A_NORM
         call fill_row
+        xor a
+        ld (ent_type),a
+        call li_store
 .next:  ld a,(row_no)
         inc a
         ld (row_no),a
         cp LIST_N
         jp c,.r
+        ret
+
+; A station in the list shows at its right, turn about, every 1.5 s: "https" (or
+; "http"), its bitrate ("128k") and a word for it (low < 96k, good, high > 160k)
+LI_W    equ 5                   ; cells for it (the name has 25)
+
+li_store:                       ; the row (row_no): ent_type, ent_kbps, ent_tls -> li_tab; li_w
+        ld a,(row_no)
+        add a,a
+        add a,a
+        ld hl,li_tab
+        call idx
+        ld a,(ent_type)
+        cp 6                    ; PVA_DE_URL
+        ld a,0
+        jr nz,.n
+        inc a
+.n:     ld (hl),a
+        inc hl
+        ld a,(ent_tls)
+        ld (hl),a
+        inc hl
+        ld de,(ent_kbps)
+        ld (hl),e
+        inc hl
+        ld (hl),d
+        dec hl
+        dec hl
+        dec hl
+        ld a,(hl)
+        or a
+        ld a,30
+        jr z,.w
+        ld a,30-LI_W
+.w:     ld (li_w),a
+        ret
+
+; li_draw: A = row: its station info (nothing for other entries)
+li_draw:
+        ld (li_row),a
+        add a,a
+        add a,a
+        ld hl,li_tab
+        call idx
+        ld a,(hl)
+        or a
+        ret z
+        inc hl
+        ld b,(hl)               ; https
+        inc hl
+        ld e,(hl)
+        inc hl
+        ld d,(hl)               ; kbps
+        push de
+        ld de,numbuf            ; the text, then right-aligned in 6 characters
+        ld a,(li_phase)
+        or a
+        jr z,.proto
+        pop hl
+        push hl
+        ld a,h
+        or l
+        jr z,.proto             ; (no bitrate: a favourite)
+        ld a,(li_phase)
+        cp 2
+        jr z,.word
+        call fmt_u16
+        ld a,'k'
+        ld (de),a
+        inc de
+        jr .e
+.word:  ld bc,96
+        or a
+        sbc hl,bc
+        ld hl,txt_li_low
+        jr c,.wd
+        pop hl
+        push hl
+        ld bc,161
+        or a
+        sbc hl,bc
+        ld hl,txt_li_good
+        jr c,.wd
+        ld hl,txt_li_high
+.wd:    call strcpy
+        jr .e
+.proto: ld hl,txt_li_http
+        call strcpy
+        ld a,b
+        or a
+        jr z,.e
+        ld a,'s'
+        ld (de),a
+        inc de
+.e:     pop hl
+        xor a
+        ld (de),a
+        ld hl,numbuf            ; right-aligned: spaces before it
+        ld de,linebuf
+        ld b,0
+.l:     ld a,(hl)
+        or a
+        jr z,.le
+        inc hl
+        inc b
+        jr .l
+.le:    ld a,6
+        sub b
+        jr c,.cp
+        jr z,.cp
+        ld b,a
+        ld a,' '
+.sp:    ld (de),a
+        inc de
+        djnz .sp
+.cp:    ld hl,numbuf
+        call strcpy
+        ld a,(li_row)           ; in the chosen line's colours?
+        add a,LIST_ROW
+        ld d,a
+        ld e,1+30-LI_W
+        ld hl,(top)
+        ld a,(li_row)
+        ld c,a
+        ld b,0
+        add hl,bc
+        ld bc,(sel)
+        or a
+        sbc hl,bc
+        ld c,A_NORM
+        jr nz,.c
+        ld c,A_SEL
+.c:     ld hl,linebuf
+        ld b,LI_W
+        jp text6s
+
+; each pass: the next of the three every 1.5 s (not over a page, the help, the full screen)
+li_tick:
+        ld a,(fs_on)
+        ld hl,help_on
+        or (hl)
+        ret nz
+        ld hl,(JIFFY)
+        ld de,(li_t)
+        or a
+        sbc hl,de
+        ld de,90
+        sbc hl,de
+        ret c
+        ld hl,(JIFFY)
+        ld (li_t),hl
+        ld a,(li_phase)
+        inc a
+        cp 3
+        jr c,.p
+        xor a
+.p:     ld (li_phase),a
+        xor a
+.r:     push af
+        call li_draw
+        pop af
+        inc a
+        cp LIST_N
+        jr c,.r
         ret
 
 ; the type of entry 'sel' (reads it again)
@@ -6077,6 +6264,10 @@ txt_rep:        db "REP",0
 txt_vol:        db "VOL",0
 txt_notrack:    db "NO TRACK",0
 txt_dash:       db " - ",0
+txt_li_http:    db "http",0
+txt_li_low:     db "low",0
+txt_li_good:    db "good",0
+txt_li_high:    db "high",0
 txt_dot:        db "  | ",0
 txt_playing:    db "PLAYING",0
 txt_paused:     db "PAUSED",0
@@ -6264,6 +6455,13 @@ have_list:      db 0
 ent_p:          dw 0
 row_no:         db 0
 ent_type:       db 0
+ent_kbps:       dw 0
+ent_tls:        db 0
+li_tab:         ds LIST_N*4     ; a station?, https, kbps (the rows shown)
+li_w:           db 30
+li_row:         db 0
+li_phase:       db 0
+li_t:           dw 0
 tmp16:          dw 0
 colfn:          dw scope_colrow
 plot_inv:       db 0
