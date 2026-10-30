@@ -57,6 +57,7 @@ uint8_t  pva_web_error(void) { return werr; }
 uint16_t pva_web_http(void) { return whttp; }
 bool     pva_web_busy(void) { return w != W_IDLE; }
 uint8_t  pva_web_result(void) { return result; }
+uint32_t pva_web_length(void) { return content_len; }     // the body's size (0: not said)
 
 static void w_close_then(uint8_t what)
 {

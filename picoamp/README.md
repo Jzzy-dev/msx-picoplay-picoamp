@@ -204,7 +204,8 @@ time; a bar under it says what you see.
   the engine takes the whole text from the feed when the feed has it, else
   from the story's web page (only its paragraphs: menus, scripts, captions,
   headers and footers are left out). It shows while it comes in ("Fetching
-  the full article... 34 KB"), so a long page can be read from its start;
+  the full article... 34 KB (45%)", the share when the site says the page's
+  size), so a long page can be read from its start;
   Enter again goes back to the summary. Sites that build their pages with
   JavaScript or keep them for subscribers give no text: then the summary
   stays ("No full article from the site"). N/P: the next or previous story,
@@ -217,6 +218,10 @@ time; a bar under it says what you see.
   the side; on the right Enter opens a topic and adds the chosen feed (a `*`
   marks the ones in My feeds), BS goes back to the topics; on the left Enter
   reads the feed, D or DEL removes it, U/J move it up or down. Up to 20 feeds.
+
+I shows what the engine says about the news: the feed's state and error, its
+memory, and the engine's last log lines (the web requests and their
+answers), for finding out why a feed does not come.
 
 C goes to the clock, W to the weather, T (or ESC in the headlines) back to
 the player; the other playback keys keep working (N and P are the stories in

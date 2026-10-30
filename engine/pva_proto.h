@@ -148,6 +148,8 @@
                                     // is in, else the summary, 2 the title), u16 first line, u8 count,
                                     // u8 width: reply: u16 lines in all, u8 PVA_TXF_xxx, the lines
                                     // (0-terminated each; an empty one between paragraphs)
+#define PVA_C_NEWS_INFO     0x43    // reply: lines (0-terminated each): the news' memory and state, then the
+                                    // engine's newest log lines (for finding out why a feed does not come)
 #define PVA_TXF_LOADING     0x01    // the article is still coming in
 #define PVA_TXF_ARTICLE     0x02    // these are the article's lines (else the summary's)
 #define PVA_TXF_FAILED      0x04    // there is no article (the summary instead)
@@ -290,6 +292,7 @@
 #define PVA_CK_ART_STORY    37      // u8  its story
 #define PVA_CK_ART_LEN      38      // u16 bytes of its text so far
 #define PVA_CK_ART_KB       40      // u16 KB read from the web for it
+#define PVA_CK_ART_PCT      42      // u8  % of the page read (FF: its size is not known)
 #define PVA_ART_IDLE        0
 #define PVA_ART_LOADING     1
 #define PVA_ART_DONE        2

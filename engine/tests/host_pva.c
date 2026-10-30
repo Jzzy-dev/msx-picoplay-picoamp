@@ -1348,6 +1348,8 @@ int main(int argc, char **argv)
             snprintf(e1, sizeof e1, "Story %02u", (unsigned)(nn - 2u)); snprintf(e2, sizeof e2, "Story %02u", (unsigned)(nn - 1u));
             CHECK(!strcmp(nth_str((char *)reply, 1), e1) && !strcmp(nth_str((char *)reply, 3), e2) && !nth_str((char *)reply, 4)[0], "the last ones: %s, %s", nth_str((char *)reply, 1), nth_str((char *)reply, 3));
             CHECK(cmd_u8(PVA_C_NEWS_FETCH, 7) == PVA_E_RANGE, "no favourite 8");
+            CHECK(cmd(PVA_C_NEWS_INFO, NULL, 0) == PVA_OK && !strncmp((char *)reply, "Feed 4: in, ", 12) && strstr(nth_str((char *)reply, 1), "Memory: stories") &&
+                  reply_len < 1024, "NEWS_INFO: '%s' / '%s' (%u bytes)", reply, nth_str((char *)reply, 1), reply_len);
             uint8_t kb[] = "news.feed1\0Down|http://down.test/rss";
             cmd(PVA_C_CFG_SET, kb, sizeof kb);
             cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();

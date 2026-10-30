@@ -1674,7 +1674,7 @@ static int execute(uint8_t code)
         case PVA_C_ALARM:     return cmd_alarm();
         case PVA_C_NEWS_FEEDS: case PVA_C_NEWS_FETCH: case PVA_C_NEWS_LIST: case PVA_C_NEWS_ITEM:
         case PVA_C_NEWS_TOPICS: case PVA_C_NEWS_CAT: case PVA_C_NEWS_ADD: case PVA_C_NEWS_DEL:
-        case PVA_C_NEWS_MOVE: case PVA_C_NEWS_FULL: case PVA_C_NEWS_TEXT:
+        case PVA_C_NEWS_MOVE: case PVA_C_NEWS_FULL: case PVA_C_NEWS_TEXT: case PVA_C_NEWS_INFO:
             return pva_news_cmd(code, args);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();

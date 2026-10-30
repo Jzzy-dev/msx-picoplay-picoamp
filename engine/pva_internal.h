@@ -263,7 +263,7 @@ int  pva_news_cmd(uint8_t code, const uint8_t *args);   // PVA_C_NEWS_xxx
 #define PVA_NEWS_KEEP (24u * 1024u)    // the news' memory from the stream RAM (Nextor modes)
 void pva_news_init(size_t keep);       // takes 'keep' bytes of the stream RAM (before the directory does)
 void pva_news_poll(void);
-void pva_news_state(uint8_t *out);      // PVA_CK_NEWS_STATE.. (10 bytes)
+void pva_news_state(uint8_t *out);      // PVA_CK_NEWS_STATE.. (11 bytes)
 typedef struct { const char *name; } pva_news_topic_t;
 typedef struct { uint8_t topic; const char *code, *name, *url; } pva_news_feed_t;
 extern const pva_news_topic_t pva_news_topics[];   // ends with a NULL name
@@ -277,6 +277,8 @@ bool    pva_clock_utc(int64_t *now, int32_t *offset);   // false: no time yet (o
 // replies (pva_engine.c)
 void pva_reply_byte(uint8_t b);
 void pva_reply_str(const char *s);
+size_t pva_log_tail(char *out, size_t size);     // the newest log lines, 0-terminated each
+uint32_t pva_web_length(void);                   // the body's Content-Length (0: none)
 void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the reply (little-endian)
 
 // helpers

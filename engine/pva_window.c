@@ -99,6 +99,30 @@ size_t pva_log_dump(char *out, size_t size)
 
 uint16_t pva_log_count(void) { return log_total; }
 
+// the newest log lines that fit in 'size' (oldest of them first), each 0-terminated
+size_t pva_log_tail(char *out, size_t size)
+{
+    if (!log_buf || !size) return 0;
+    uint16_t first = log_total > LOG_LINES ? (uint16_t)(log_total - LOG_LINES) : 0, from = log_total;
+    size_t need = 0;
+    while (from > first)
+    {
+        size_t l = strlen(log_buf[(from - 1u) % LOG_LINES]) + 1u;
+        if (need + l > size) break;
+        need += l;
+        from--;
+    }
+    size_t pos = 0;
+    for (uint16_t i = from; i < log_total; i++)
+    {
+        const char *line = log_buf[i % LOG_LINES];
+        size_t l = strlen(line) + 1u;
+        memcpy(out + pos, line, l);
+        pos += l;
+    }
+    return pos;
+}
+
 void pva_init(uint8_t *arena, size_t size)
 {
     arena_base = arena;

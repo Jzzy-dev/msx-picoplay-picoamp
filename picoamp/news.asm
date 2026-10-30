@@ -20,6 +20,7 @@
 V_LIST   equ 0
 V_STORY  equ 1
 V_FEEDS  equ 2
+V_INFO   equ 3
 NL_ROWS  equ 17                 ; headlines (rows 2-18)
 NS_ROWS  equ 18                 ; story lines (rows 5-22)
 NF_ROWS  equ 20                 ; My feeds / the catalogue (rows 3-22)
@@ -350,7 +351,7 @@ nw_info:
         xor a
         ld (nw_toff),a
         ld hl,(JIFFY)
-        ld de,60                ; a second still
+        ld de,52                ; a second still (8 more for the first step)
         add hl,de
         ld (nw_tdue),hl
         ; fall through
@@ -408,7 +409,7 @@ nw_clock:                       ; "Fri 30 Oct 09:53" at the right
         ld a,(ckb+CK_FLAGS)
         and CKF_TIME
         ret z
-        ld de,linebuf
+        ld de,nw_lb
         ld a,(ckb+CK_SEC+3)
         cp 7
         jr c,.w
@@ -444,7 +445,7 @@ nw_clock:                       ; "Fri 30 Oct 09:53" at the right
         call put2
         xor a
         ld (de),a
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#0040
         ld b,16
         jp tx_text
@@ -464,15 +465,14 @@ nw_tick:
 .tk:    ld a,(nw_tlen)          ; the ticker: a character every 8 interrupts
         cp 61
         jr c,.ms
-        ld hl,(JIFFY)
+        ld hl,(JIFFY)           ; (the time since the last step: never stuck)
         ld de,(nw_tdue)
         or a
         sbc hl,de
-        bit 7,h
-        jr nz,.ms
-        ld hl,(JIFFY)
         ld de,8
-        add hl,de
+        sbc hl,de
+        jr c,.ms
+        ld hl,(JIFFY)
         ld (nw_tdue),hl
         ld a,(nw_tlen)
         add a,3
@@ -514,8 +514,9 @@ nw_tick:
         ld (nw_sel),a
         ld (nw_first),a
         jp nw_list
-.fail:  ld hl,txt_nw_fail
-        jp nw_say
+.fail:  ld hl,txt_nw_fail      ; "... (error 2)": PVA_NERR_xxx
+        ld a,(ckb+CK_NERR)
+        jp nw_err
 .art:   ld a,(nw_view)          ; the article coming in: more of it shown
         cp V_STORY
         ret nz
@@ -525,15 +526,14 @@ nw_tick:
         ld a,(nw_aflags)
         and PVA_TXF_LOADING
         ret z
-        ld hl,(JIFFY)           ; (twice a second at most)
+        ld hl,(JIFFY)           ; (twice a second at most: the time since the last look)
         ld de,(nw_adue)
         or a
         sbc hl,de
-        bit 7,h
-        ret nz
-        ld hl,(JIFFY)
         ld de,30
-        add hl,de
+        sbc hl,de
+        ret c
+        ld hl,(JIFFY)
         ld (nw_adue),hl
         ld hl,(ckb+CK_ALEN)
         ld de,(nw_alen)
@@ -551,6 +551,20 @@ PVA_TXF_LOADING equ 1
 PVA_TXF_ARTICLE equ 2
 PVA_TXF_FAILED  equ 4
 
+; nw_err: HL = a message, A = a number to put after it ("(error 5, I: more)")
+nw_err: push af
+        ld de,nw_lb
+        call strcpy
+        ld hl,txt_nw_errn
+        call strcpy
+        pop af
+        ld l,a
+        ld h,0
+        call fmt_u16
+        ld hl,txt_nw_errm
+        call strcpy
+        ld hl,nw_lb
+        ; fall through
 ; nw_say: HL = a message in the middle of the list
 nw_say: ld de,#0A02
         ld b,76
@@ -651,25 +665,33 @@ nw_fetch:
         pop af
         ld hl,txt_nw_fetch
         jp z,nw_say
+        push af
         xor a
         ld (nw_wait),a
+        pop af
         ld hl,txt_nw_nowifi
-        jp nw_say
+        cp #0A                  ; PVA_E_NOWIFI
+        jp z,nw_say
+        ld hl,txt_nw_nomem2
+        cp #0E                  ; PVA_E_FULL: no memory
+        jp z,nw_say
+        ld hl,txt_nw_err
+        jp nw_err
 
 ; the bar of the headlines: " BBC News, World ....  Headlines 1-17 of 38"
 nw_lhead:
         ld a,(nw_feed)
         call nw_name
-        ld de,linebuf
+        ld de,nw_lb
         ld a,' '
         ld (de),a
         inc de
         call strcpy
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#0100
         ld b,52
         call tx_text
-        ld de,linebuf
+        ld de,nw_lb
         ld a,(nw_wait)
         or a
         jr nz,.e
@@ -703,7 +725,7 @@ nw_lhead:
         call fmt_u16
 .e:     xor a
         ld (de),a
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#0134
         ld b,28
         call tx_text
@@ -768,7 +790,7 @@ nw_heads:
         cp c
         jr c,.clr
         push de
-        ld de,linebuf
+        ld de,nw_lb
         ld a,' '
         ld (de),a
         inc de
@@ -796,7 +818,7 @@ nw_heads:
         call strcpy0
         pop de
         push hl
-        ld hl,linebuf
+        ld hl,nw_lb
         ld e,0
         ld b,80
         call tx_text
@@ -917,7 +939,7 @@ nw_story2:
         call nw_keyline
         ld a,(nw_feed)          ; " BBC News, World | story 3 of 38"
         call nw_name
-        ld de,linebuf
+        ld de,nw_lb
         ld a,' '
         ld (de),a
         inc de
@@ -937,7 +959,7 @@ nw_story2:
         call fmt_u16
         xor a
         ld (de),a
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#0100
         ld b,56
         call tx_text
@@ -1034,7 +1056,7 @@ nw_stext:
         ; fall through
 ; the bar under the text: what it is, the lines shown
 nw_status:
-        ld de,linebuf
+        ld de,nw_lb
         ld a,(nw_aflags)
         ld hl,txt_nw_sload
         bit 0,a
@@ -1053,13 +1075,33 @@ nw_status:
         call fmt_u16
         ld hl,txt_nw_kb
         call strcpy
+        ld a,(ckb+CK_APCT)      ; "(45%)" when the size is known
+        cp 101
+        jr nc,.r
+        push af
+        ld a,' '
+        ld (de),a
+        inc de
+        ld a,'('
+        ld (de),a
+        inc de
+        pop af
+        ld l,a
+        ld h,0
+        call fmt_u16
+        ld a,'%'
+        ld (de),a
+        inc de
+        ld a,')'
+        ld (de),a
+        inc de
 .r:     xor a
         ld (de),a
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#1700
         ld b,58
         call tx_text
-        ld de,linebuf           ; "lines 1-18 of 26"
+        ld de,nw_lb           ; "lines 1-18 of 26"
         ld hl,(nw_total)
         ld a,h
         or l
@@ -1089,7 +1131,7 @@ nw_status:
         call fmt_u16
 .e:     xor a
         ld (de),a
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#173A
         ld b,22
         call tx_text
@@ -1166,7 +1208,7 @@ nw_feeds2:
         jp nw_fright
 
 nw_fleft:                       ; My feeds
-        ld de,linebuf
+        ld de,nw_lb
         ld hl,txt_nw_my
         call strcpy
         ld a,(nw_nf)
@@ -1175,7 +1217,7 @@ nw_fleft:                       ; My feeds
         call fmt_u16
         ld hl,txt_nw_of20
         call strcpy
-        ld hl,linebuf
+        ld hl,nw_lb
         ld de,#0100
         ld b,39
         call tx_text
@@ -1192,7 +1234,7 @@ nw_fleft:                       ; My feeds
         inc a
         ld l,a
         ld h,0
-        ld de,linebuf
+        ld de,nw_lb
         cp 10
         jr nc,.w
         ld a,' '
@@ -1207,7 +1249,7 @@ nw_fleft:                       ; My feeds
         call nw_name
         pop de
         call strcpy
-        ld hl,linebuf
+        ld hl,nw_lb
 .t:     pop de
         push de
         ld e,1
@@ -1239,7 +1281,7 @@ nw_fright:                      ; the topics, or a topic's feeds
         ret c
         ret nz
         ld hl,txt_nw_add
-        ld de,linebuf
+        ld de,nw_lb
         call strcpy
         ld a,(nw_topic)         ; its name: from the topics
         push af
@@ -1257,7 +1299,7 @@ nw_fright:                      ; the topics, or a topic's feeds
         ld a,C_NCAT
         call cmd_u8
         pop de
-        ld hl,linebuf
+        ld hl,nw_lb
 .h:     push hl
         ld hl,reply
         ld a,(hl)
@@ -1591,7 +1633,17 @@ nw_keys:
         ld a,c
         jp c,nw_kcommon
         ld a,(nw_view)
-        cp V_FEEDS
+        cp V_INFO
+        jr nz,.ni
+        ld a,c                  ; the info: any key back to the headlines (or My feeds)
+        cp 27
+        jp z,nw_fback
+        cp 8
+        jp z,nw_fback
+        cp 13
+        jp z,nw_fback
+        jp nw_kcommon
+.ni:    cp V_FEEDS
         ld a,c
         jp z,nw_fkeys
         ld a,(nw_view)
@@ -1738,10 +1790,60 @@ nw_skeys:
         ld (nw_sel),a
         jp nw_story
 
+; I: what the engine says about the news (memory, state, its last log lines)
+nw_infov:
+        ld a,V_INFO
+        ld (nw_view),a
+        call tx_cls
+        ld a,#FF
+        ld (nw_smin),a
+        call nw_info.new
+        ld hl,txt_nw_ihead
+        ld de,#0100
+        ld b,80
+        call tx_text
+        ld de,#0100
+        ld b,80
+        call tx_bar
+        ld hl,txt_nw_kinfo
+        ld de,#1800
+        ld b,80
+        call tx_text
+        ld hl,txt_nw_kall
+        ld de,#1900
+        ld b,80
+        call tx_text
+        ld a,C_NINFO
+        call cmd0
+        ret c
+        ret nz
+        ld hl,reply
+        ld d,2
+        ld b,21
+.l:     ld a,(hl)
+        or a
+        ret z
+        push bc
+        push de
+        ld e,1
+        ld b,79
+        call tx_text
+.sk:    ld a,(hl)
+        inc hl
+        or a
+        jr nz,.sk
+        pop de
+        pop bc
+        inc d
+        djnz .l
+        ret
+
 ; the keys of every view: the pages, the playback keys (B = the key)
 nw_kcommon:
         ld a,b
         and #DF
+        cp 'I'
+        jp z,nw_infov
         cp 'T'
         jp z,fs_close
         cp 'C'
@@ -1761,15 +1863,21 @@ nw_kcommon:
 
 ;------------------------------------------------------------------------------
 txt_nw_old:     db "The news needs engine 0.12 or newer",0
-txt_nw_klist:   db " Enter read   Up/Down choose   Left/Right page   1-9 a feed   F My feeds",0
+txt_nw_klist:   db " Enter read  Up/Down choose  Left/Right page  1-9 a feed  F My feeds  I info",0
 txt_nw_kstory:  db " Up/Down scroll  Left/Right page  Enter full article/summary  N/P next/prev  ESC",0
 txt_nw_kfeeds:  db " Left/Right side  Enter read/add  D remove  U/J move  BS back  ESC headlines",0
 txt_nw_kall:    db " C clock   W weather   T the player",0
 txt_nw_fetch:   db "Fetching the stories...",0
-txt_nw_fail:    db "The feed did not come (no internet, or the site does not answer)",0
+txt_nw_fail:    db "The feed did not come (no internet, or no answer)",0
 txt_nw_nowifi:  db "The news needs the cartridge's WiFi",0
 txt_nw_none:    db "No stories in this feed",0
 txt_nw_nomem:   db "No room for the full article here",0
+txt_nw_nomem2:  db "No memory for the news in the engine (I: more)",0
+txt_nw_err:     db "The feed could not be asked for",0
+txt_nw_errn:    db " (error ",0
+txt_nw_errm:    db ", I: more)",0
+txt_nw_ihead:   db " The news in the engine",0
+txt_nw_kinfo:   db " ESC, Enter or BS: back",0
 txt_nw_heads:   db "Headlines ",0
 txt_nw_of:      db " of ",0
 txt_nw_story:   db "  ",TX_VL,"  story ",0
@@ -1823,4 +1931,5 @@ nw_toff:        db 0
 nw_tdue:        dw 0
 nw_bl:          ds 10
 nw_t0:          ds 64
+nw_lb:          ds 100          ; a line being put together (linebuf has 64)
 mod_news_end:

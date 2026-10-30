@@ -458,6 +458,11 @@ int main(int argc, char **argv)
     if (host_disk_open(argv[2], 0)) { printf("no image\n"); return 2; }
     static uint8_t arena[200 * 1024];
     host_audio_unlimited = false;
+    if (getenv("PICOAMP_JIFFY"))      // the interrupt count to start with (as after minutes of running)
+    {
+        unsigned j = (unsigned)strtoul(getenv("PICOAMP_JIFFY"), NULL, 0);
+        mem[0xFC9E] = (uint8_t)j; mem[0xFC9F] = (uint8_t)(j >> 8);
+    }
     {   // the simulated radio stations' sound (PICOAMP_MP3, else assets/cbr128_v23.mp3)
         const char *mp3 = getenv("PICOAMP_MP3");
         host_esp_load_audio(mp3 ? mp3 : "assets/cbr128_v23.mp3");

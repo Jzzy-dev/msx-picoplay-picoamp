@@ -143,6 +143,7 @@ C_NDEL   equ #3F
 C_NMOVE  equ #40
 C_NFULL  equ #41
 C_NTEXT  equ #42
+C_NINFO  equ #43
 W_CLOCK  equ #4D00
 
 ; status block offsets
@@ -2432,6 +2433,9 @@ find_eq:
         ret
 
 draw_eq_name:                   ; "EQ ROCK" between the area's and the LEVEL labels
+        ld a,(fs_on)            ; (not over a page or the full screen: drawn when the screen comes back)
+        or a
+        ret nz
         ld a,(eq_preset)
         ld hl,eq_shown
         cp (hl)
@@ -3170,15 +3174,14 @@ ticker_run:
         ld a,(ix+T_ACT)
         or a
         jr z,.next
-        ld hl,(JIFFY)           ; at most every other interrupt
-        ld de,(tk_due)
+        ld hl,(JIFFY)           ; at most every other interrupt (the time since the last
+        ld de,(tk_due)          ; step, so a ticker that was still for long moves at once)
         or a
         sbc hl,de
-        bit 7,h
-        ret nz
+        ld de,2
+        sbc hl,de
+        ret c
         ld hl,(JIFFY)
-        inc hl
-        inc hl
         ld (tk_due),hl
         ld hl,(JIFFY)
         ld e,(ix+T_START)
@@ -5754,7 +5757,7 @@ tog_mode:
         ld a,C_MODE
         call cmd_u8
         call fetch_status
-        jp draw_info
+        jp info_any             ; (a page shows its own)
 
 eq_toggle:
         ld a,(eq_open)

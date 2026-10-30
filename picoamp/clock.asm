@@ -36,6 +36,7 @@ CK_ASTATE equ 36
 CK_ASTORY equ 37
 CK_ALEN  equ 38
 CK_AKB   equ 40
+CK_APCT  equ 42
 CKF_TIME equ 1
 CKF_ZONE equ 2
 CKF_WX   equ 4

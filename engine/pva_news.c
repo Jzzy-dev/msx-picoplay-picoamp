@@ -1012,6 +1012,27 @@ static int news_item(uint8_t i)
     return PVA_OK;
 }
 
+// INFO: the news' state and memory, then the engine's last log lines
+static int news_info(void)
+{
+    char t[120];
+    static const char *const sts[] = { "idle", "loading", "in", "failed", "no memory" };
+    snprintf(t, sizeof t, "Feed %u: %s, %u stories, error %u (web error %u, HTTP %u)", (unsigned)(feed_no + 1u),
+             st < 5 ? sts[st] : "?", (unsigned)nitems, (unsigned)err, (unsigned)pva_web_error(), (unsigned)pva_web_http());
+    pva_reply_str(t);
+    snprintf(t, sizeof t, "Memory: stories %u (%u used), article %u, engine free %u",
+             (unsigned)pool_size, (unsigned)pool_used, (unsigned)art_size, (unsigned)pva_arena_free());
+    pva_reply_str(t);
+    snprintf(t, sizeof t, "Article: state %u, story %u, %u bytes of text, %u KB read",
+             (unsigned)a_st, (unsigned)(a_story == 0xFF ? 0u : a_story + 1u), (unsigned)a_len, (unsigned)(a_got / 1024u));
+    pva_reply_str(t);
+    pva_reply_str("The engine's last log lines:");
+    static char lt[620];                // (the MSX reads 1 KB)
+    size_t n = pva_log_tail(lt, sizeof lt);
+    for (size_t i = 0; i < n; i += strlen(lt + i) + 1u) pva_reply_str(lt + i);
+    return PVA_OK;
+}
+
 // ---------------------------------------------------------------- commands
 static int news_fetch(uint8_t f)
 {
@@ -1045,6 +1066,7 @@ int pva_news_cmd(uint8_t c, const uint8_t *a)
         case PVA_C_NEWS_MOVE:   return favs_edit(a[0], a[1] ? 1 : -1);
         case PVA_C_NEWS_FULL:   return news_full(a[0]);
         case PVA_C_NEWS_TEXT:   return news_text(a);
+        case PVA_C_NEWS_INFO:   return news_info();
     }
     return PVA_E_UNKNOWN;
 }
@@ -1097,4 +1119,6 @@ void pva_news_state(uint8_t *o)
     o[7] = (uint8_t)(l >> 8);
     o[8] = (uint8_t)k;
     o[9] = (uint8_t)(k >> 8);
+    uint32_t len = pva_web_length();    // (the page or feed being read for the article)
+    o[10] = a_st == PVA_ART_LOADING && len && a_got <= len ? (uint8_t)((uint64_t)a_got * 100u / len) : 0xFF;
 }
