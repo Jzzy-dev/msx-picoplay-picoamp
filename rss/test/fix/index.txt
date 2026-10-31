@@ -1,0 +1,12 @@
+# URL file [status [Location]]
+http://feeds.bbci.co.uk/news/world/rss.xml bbc.xml
+https://www.bbc.com/news/articles/c000x bbc1.html
+https://www.bbc.com/news/articles/c001x - 301 https://www.bbc.com/news/articles/c000x
+https://www.aljazeera.com/xml/rss/all.xml alj.xml
+http://www.aljazeera.com/xml/rss/all.xml - 301 https://www.aljazeera.com/xml/rss/all.xml
+https://rss.dw.com/xml/rss-en-all - 302 /rdf/rss-en-all
+https://rss.dw.com/rdf/rss-en-all dw.rdf
+http://rss.dw.com/xml/rss-en-all - 302 /rdf/rss-en-all
+http://rss.dw.com/rdf/rss-en-all dw.rdf
+https://www.theguardian.com/world/rss guard.xml
+https://feeds.nos.nl/nosnieuwsalgemeen nos.xml
