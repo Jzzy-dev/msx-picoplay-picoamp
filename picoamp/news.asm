@@ -1680,6 +1680,8 @@ nw_keys:
         and #DF
         cp 'F'
         jp z,nw_feeds
+        cp 'S'
+        jp z,nw_sort
         jp nw_kcommon
 .list:  ld a,(nw_wait)
         or a
@@ -1722,6 +1724,32 @@ nw_keys:
 .enter: call .list
         ret z
         jp nw_story
+
+; S: newest first / the feed's order (the engine sorts; kept in PICOAMP.INI)
+nw_sort:
+        ld a,(nw_wait)
+        or a
+        ret nz
+        ld e,2
+        ld a,C_NSORT
+        call cmd_u8
+        ret c
+        ld hl,txt_nw_sold
+        jp nz,nw_msg
+        ld a,1
+        ld (nw_dirty),a
+        xor a
+        ld (nw_sel),a
+        ld (nw_first),a
+        ld a,(nw_n)
+        or a
+        call nz,nw_list
+        ld a,(reply)
+        or a
+        ld hl,txt_nw_sfeed
+        jr z,.m
+        ld hl,txt_nw_snew
+.m:     jp nw_msg
 
 ; a story's keys
 nw_skeys:
@@ -1885,10 +1913,13 @@ nw_kcommon:
 
 ;------------------------------------------------------------------------------
 txt_nw_old:     db "The news needs engine 0.12 or newer",0
-txt_nw_klist:   db " Enter read  Up/Down choose  Left/Right page  1-9 a feed  F My feeds  I info",0
+txt_nw_klist:   db " Enter read  Up/Down choose  Left/Right page  1-9 a feed  F My feeds  S sort",0
 txt_nw_kstory:  db " Up/Down scroll  Left/Right page  Enter full article/summary  N/P next/prev  ESC",0
 txt_nw_kfeeds:  db " Left/Right side  Enter read/add  D remove  U/J move  BS back  ESC headlines",0
-txt_nw_kall:    db " C clock   W weather   T the player",0
+txt_nw_kall:    db " C clock   W weather   T the player   I info",0
+txt_nw_snew:    db " Sorted: newest first",0
+txt_nw_sfeed:   db " Sorted: as the feed has them",0
+txt_nw_sold:    db " Sorting needs a newer engine",0
 txt_nw_fetch:   db "Fetching the stories...",0
 txt_nw_fail:    db "The feed did not come (no internet, or no answer)",0
 txt_nw_nowifi:  db "The news needs the cartridge's WiFi",0

@@ -11,6 +11,11 @@
 // stories are kept in memory taken from the arena when the first feed is
 // asked for.
 //
+// The stories are shown newest first ([news] sort=date, the default) or in the
+// feed's order (sort=feed); stories without a date keep their place after the
+// dated ones. When there is no more room the oldest story goes for a newer one
+// (a feed with the oldest first still shows its newest), so all of a feed is read.
+//
 // The full article: the item's <content:encoded> when the feed has it, else
 // the page at its link, whose <p> paragraphs are taken (scripts, menus,
 // headers and footers left out). It comes in while the MSX reads; the MSX
@@ -37,9 +42,10 @@
 #define DATE_MAX        40u
 #define FIELD_MAX       2400u           // a field as it comes (with HTML), before it is cleaned
 #define PAGE_MAX        (768u * 1024u)  // an article page: at most this much is read
+#define FEED_MAX        (512u * 1024u)  // a feed: at most this much is read
 #define FAVS_TEXT       320u
 
-typedef struct { uint16_t title, text, link, raw; int64_t t; bool content; } item_t;
+typedef struct { uint16_t title, text, link, raw; int64_t t; bool content; uint8_t pos; } item_t;   // pos: its place in the feed
 static item_t   items[MAX_ITEMS];
 static uint8_t  nitems;
 static bool     full;                   // no more room: the rest of the feed is left
@@ -51,7 +57,8 @@ static bool     pending;
 static uint8_t  want_feed;
 
 // the full article
-static uint8_t  a_st = PVA_ART_IDLE, a_story = 0xFF, a_phase;
+static uint8_t  a_st = PVA_ART_IDLE, a_story = 0xFF, a_phase, a_pos;
+static uint32_t f_got;                  // the feed's bytes read
 static bool     a_pending, a_stop, a_part, a_force;
 static size_t   a_len;
 static uint32_t a_got;
@@ -603,28 +610,110 @@ static void item_start(void)
     clen = 0;
 }
 
+// the story ending at the pool's next one (or the pool's end) out: the stories after it move down
+static void item_drop(uint8_t k)
+{
+    size_t b = items[k].title;
+    size_t e = k + 1u < nitems ? items[k + 1u].title : pool_used;
+    size_t n = e - b;
+    memmove(pool + b, pool + e, pool_used - e);
+    pool_used -= n;
+    for (uint8_t j = (uint8_t)(k + 1u); j < nitems; j++)
+    {
+        items[j].title -= (uint16_t)n;
+        items[j].text -= (uint16_t)n;
+        items[j].link -= (uint16_t)n;
+        if (items[j].raw != 0xFFFF) items[j].raw -= (uint16_t)n;
+        items[j - 1u] = items[j];
+    }
+    nitems--;
+}
+
+// the oldest story with a date (-1: none)
+static int item_oldest(void)
+{
+    int o = -1;
+    for (uint8_t i = 0; i < nitems; i++)
+        if (items[i].t && (o < 0 || items[i].t < items[o].t)) o = i;
+    return o;
+}
+
 static void item_end(void)
 {
     in_item = false;
+    uint8_t pos = xitem;
+    if (xitem < 255) xitem++;
     if (xmode == M_ART)
     {
-        if (xitem++ == a_story) a_stop = true;      // its content is in
+        if (pos == a_pos) a_stop = true;    // its content is in
         return;
     }
-    if (full || !f_title[0]) return;
-    size_t used = pool_used;
+    if (!f_title[0]) return;
+    size_t need = strlen(f_title) + strlen(f_text) + strlen(f_link) + 3u + (!f_t && f_raw[0] ? strlen(f_raw) + 1u : 0u);
+    if (need > pool_size) return;
+    // no room: the oldest goes, when this one is newer (else this one is left out)
+    while (nitems >= MAX_ITEMS || pool_used + need > pool_size)
+    {
+        int o = item_oldest();
+        if (o < 0 || !f_t || f_t <= items[o].t) { full = true; return; }
+        item_drop((uint8_t)o);
+    }
     item_t it;
     it.title = pool_add(f_title);
     it.text = pool_add(f_text);
     it.link = pool_add(f_link);
     it.t = f_t;
-    it.raw = 0xFFFF;
-    bool raw_ok = true;
-    if (!f_t && f_raw[0]) { it.raw = pool_add(f_raw); raw_ok = it.raw != 0xFFFF; }
+    it.raw = !f_t && f_raw[0] ? pool_add(f_raw) : 0xFFFF;
     it.content = clen > strlen(f_text) + 400u;
-    if (it.title == 0xFFFF || it.text == 0xFFFF || it.link == 0xFFFF || !raw_ok) { pool_used = used; full = true; return; }
+    it.pos = pos;
     items[nitems++] = it;
-    if (nitems >= MAX_ITEMS) full = true;
+}
+
+// the order: newest first (stories without a date after them, as in the feed), or the feed's
+static bool sort_by_date(void)
+{
+    char v[8];
+    return !(pva_cfg_get("news.sort", v, sizeof v) && !strcmp(v, "feed"));
+}
+
+static bool item_before(const item_t *a, const item_t *b, bool by_date)
+{
+    if (by_date && (a->t || b->t))
+    {
+        if (!a->t) return false;
+        if (!b->t) return true;
+        if (a->t != b->t) return a->t > b->t;
+    }
+    return a->pos < b->pos;
+}
+
+static void items_sort(void)
+{
+    bool d = sort_by_date();
+    uint8_t ap = a_story < nitems ? items[a_story].pos : 0xFF;
+    for (uint8_t i = 1; i < nitems; i++)
+    {
+        item_t x = items[i];
+        uint8_t j = i;
+        while (j && item_before(&x, &items[j - 1u], d)) { items[j] = items[j - 1u]; j--; }
+        items[j] = x;
+    }
+    if (ap != 0xFF)                     // (the article's story: where it is now)
+        for (uint8_t i = 0; i < nitems; i++) if (items[i].pos == ap) { a_story = i; break; }
+}
+
+static int news_sort(uint8_t how)
+{
+    bool d = sort_by_date();
+    if (how != 0xFF)
+    {
+        bool want = how == 2 ? !d : how != 0;
+        if (!pva_cfg_set("news.sort", want ? "date" : "feed")) return PVA_E_FULL;
+        if (st == PVA_NEWS_DONE) items_sort();
+        d = want;
+    }
+    pva_reply_byte(d ? 1 : 0);
+    return PVA_OK;
 }
 
 static void field_end(void)
@@ -737,7 +826,7 @@ static void tag_done(void)
                         (!strcmp(t, "link") && !ns) ? F_LINK :
                         (!strcmp(t, "encoded") || (!strcmp(t, "content") && !ns)) ? F_CONTENT : F_NONE;
             if (f == F_DATE && f_t) f = F_NONE;
-            if (f == F_CONTENT && xmode == M_ART && xitem != a_story) f = F_NONE;
+            if (f == F_CONTENT && xmode == M_ART && xitem != a_pos) f = F_NONE;
             if (f) { field = f; flen = 0; in_ent = false; }
             if (f == F_LINK) { tag_link = true; alen = 0; }
         }
@@ -820,13 +909,15 @@ static void xml_reset(uint8_t mode)
 static bool body(const uint8_t *p, size_t n)
 {
     for (size_t i = 0; i < n; i++) xml_byte((char)p[i]);
-    return full;                        // enough
+    f_got += (uint32_t)n;
+    return f_got >= FEED_MAX;           // (all of it, else)
 }
 
 static void fetch_done(bool ok)
 {
     if (ok || nitems)
     {
+        items_sort();
         st = PVA_NEWS_DONE;
         err = 0;
     }
@@ -902,6 +993,7 @@ static int news_full(uint8_t story)
     a_part = false;
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
     a_story = story;
+    a_pos = items[story].pos;
     a_len = 0;
     a_got = 0;
     art[0] = 0;
@@ -1084,6 +1176,7 @@ int pva_news_cmd(uint8_t c, const uint8_t *a)
         case PVA_C_NEWS_FULL:   return news_full(a[0]);
         case PVA_C_NEWS_TEXT:   return news_text(a);
         case PVA_C_NEWS_INFO:   return news_info();
+        case PVA_C_NEWS_SORT:   return news_sort(a[0]);
     }
     return PVA_E_UNKNOWN;
 }
@@ -1099,6 +1192,7 @@ void pva_news_poll(void)
         nitems = 0;
         pool_used = 0;
         full = false;
+        f_got = 0;
         xml_reset(M_LIST);
         if (pva_web_get(url, body, fetch_done) != PVA_OK) { st = PVA_NEWS_FAILED; err = PVA_NERR_NOWIFI; }
         return;

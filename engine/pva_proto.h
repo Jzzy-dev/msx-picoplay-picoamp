@@ -153,6 +153,9 @@
                                     // (0-terminated each; an empty one between paragraphs)
 #define PVA_C_NEWS_INFO     0x43    // reply: lines (0-terminated each): the news' memory and state, then the
                                     // engine's newest log lines (for finding out why a feed does not come)
+#define PVA_C_NEWS_SORT     0x44    // args: u8 0 the feed's order, 1 newest first, 2 the other one, FFh ask:
+                                    // reply: u8 the order now (kept in [news] sort=feed|date; the stories
+                                    // shown are sorted again at once)
 #define PVA_TXF_LOADING     0x01    // the article is still coming in
 #define PVA_TXF_ARTICLE     0x02    // these are the article's lines (else the summary's)
 #define PVA_TXF_FAILED      0x04    // there is no article (the summary instead)

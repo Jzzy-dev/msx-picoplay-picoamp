@@ -1350,11 +1350,25 @@ int main(int argc, char **argv)
             cmd_u8(PVA_C_NEWS_FETCH, 3); WAIT_NEWS();
             uint8_t nn = ck[PVA_CK_NEWS_COUNT];
             CHECK(ck[PVA_CK_NEWS_STATE] == PVA_NEWS_DONE && nn >= 8 && nn <= 40, "a long feed: %u stories kept (as many as fit, at most 40)", nn);
-            uint8_t l2[3] = { (uint8_t)(nn - 2u), 5, 70 };
+            // the feed has the oldest first: the newest are kept (the oldest made room), newest first
+            uint8_t l2[3] = { 0, 2, 70 };
             cmd(PVA_C_NEWS_LIST, l2, 3);
-            char e1[16], e2[16];
-            snprintf(e1, sizeof e1, "Story %02u", (unsigned)(nn - 2u)); snprintf(e2, sizeof e2, "Story %02u", (unsigned)(nn - 1u));
-            CHECK(!strcmp(nth_str((char *)reply, 1), e1) && !strcmp(nth_str((char *)reply, 3), e2) && !nth_str((char *)reply, 4)[0], "the last ones: %s, %s", nth_str((char *)reply, 1), nth_str((char *)reply, 3));
+            CHECK(!strcmp(nth_str((char *)reply, 1), "Story 59") && !strcmp(nth_str((char *)reply, 3), "Story 58"), "newest first: %s, %s", nth_str((char *)reply, 1), nth_str((char *)reply, 3));
+            uint8_t l3[3] = { (uint8_t)(nn - 1u), 2, 70 };
+            char e1[16];
+            snprintf(e1, sizeof e1, "Story %02u", (unsigned)(60u - nn));
+            cmd(PVA_C_NEWS_LIST, l3, 3);
+            CHECK(!strcmp(nth_str((char *)reply, 1), e1) && !nth_str((char *)reply, 2)[0], "the oldest kept: %s (of %u)", nth_str((char *)reply, 1), nn);
+            // S: the feed's order, then newest first again (kept in [news] sort=)
+            CHECK(cmd_u8(PVA_C_NEWS_SORT, 0xFF) == PVA_OK && reply[0] == 1, "NEWS_SORT ask: newest first (%u)", reply[0]);
+            CHECK(cmd_u8(PVA_C_NEWS_SORT, 2) == PVA_OK && reply[0] == 0, "NEWS_SORT toggle: the feed's order");
+            cmd(PVA_C_NEWS_LIST, l2, 3);
+            snprintf(e1, sizeof e1, "Story %02u", (unsigned)(60u - nn));
+            CHECK(!strcmp(nth_str((char *)reply, 1), e1), "the feed's order: %s first", nth_str((char *)reply, 1));
+            CHECK(cmd_str(PVA_C_CFG_GET, "news.sort") == PVA_OK && !strcmp((char *)reply, "feed"), "news.sort=%s", reply);
+            CHECK(cmd_u8(PVA_C_NEWS_SORT, 1) == PVA_OK && reply[0] == 1, "NEWS_SORT 1: newest first");
+            cmd(PVA_C_NEWS_LIST, l2, 3);
+            CHECK(!strcmp(nth_str((char *)reply, 1), "Story 59"), "newest first again: %s", nth_str((char *)reply, 1));
             CHECK(cmd_u8(PVA_C_NEWS_FETCH, 7) == PVA_E_RANGE, "no favourite 8");
             CHECK(cmd(PVA_C_NEWS_INFO, NULL, 0) == PVA_OK && !strncmp((char *)reply, "Feed 4: in, ", 12) && strstr(nth_str((char *)reply, 1), "Memory: stories") &&
                   reply_len < 1024, "NEWS_INFO: '%s' / '%s' (%u bytes)", reply, nth_str((char *)reply, 1), reply_len);

@@ -144,6 +144,7 @@ C_NMOVE  equ #40
 C_NFULL  equ #41
 C_NTEXT  equ #42
 C_NINFO  equ #43
+C_NSORT  equ #44
 W_CLOCK  equ #4D00
 
 ; status block offsets

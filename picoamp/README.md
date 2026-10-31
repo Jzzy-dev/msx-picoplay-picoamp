@@ -198,6 +198,10 @@ time; a bar under it says what you see.
 
 * **The headlines** of a feed, newest first, with their time ("20:15" today,
   else "29 Oct"), 17 at a time; the chosen one's summary is under the list.
+  Stories without a date follow the dated ones in the feed's order. S switches
+  to the feed's own order (for example BBC News' editorial order) and back.
+  When there is no more room, the oldest story makes room for a newer one, so
+  a long feed with the oldest first still shows its newest.
   Up/Down choose, Left/Right turn a page, Enter reads the story, 1-9 open the
   first nine feeds of My feeds, F (or BS) My feeds.
 * **A story:** its title, the feed and the date in the bar, and its text,
@@ -289,7 +293,8 @@ The engine reads the file when PICOAMP starts (and starts the clock with it);
 (in `engine/pva_news_cat.c`) and `#n` for a feed of your own, given as
 `feedN=Name|URL` (http or https, n 1-9). Without `feeds` My feeds are BBC
 News World, Al Jazeera, DW, The Guardian World and NOS, and your own feeds
-after them. `clock.colours` is `music`, `cyan`, `green`, `amber`, `red`,
+after them. `[news] sort` is `date` (newest first, the default) or `feed`
+(the feed's order), set with S. `clock.colours` is `music`, `cyan`, `green`, `amber`, `red`,
 `purple` or `white`.
 A changed setting is saved when the page closes (or PICOAMP quits): by the
 engine in the ROM version, by PICOAMP through MSX-DOS in the COM version, on
