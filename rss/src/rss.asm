@@ -202,11 +202,10 @@ vars_clear:
 main:   call sys_init
         call mem_init
         call scr_open
-        ld hl,txt_start
-        ld de,#0A02
-        ld b,40
-        call tx_text
+        call ui_splash
         call net_init
+        ld a,1
+        ld (net_tried),a
         call ini_load
         call ui_start
 .loop:  call clk_tick
@@ -233,7 +232,6 @@ main:   call sys_init
 .end:   call http_stop
         jp scr_close
         VAR m_data, 1
-txt_start: db "Looking for the network...",0
 
         include "sys.asm"
         include "net.asm"

@@ -44,6 +44,7 @@ V_INFO  equ 3
         VAR smin, 2
         VAR quitask, 1
         VAR quit, 1
+        VAR net_tried, 1
         VAR ldue, 2
         VAR tbuf, 164           ; a title
         VAR lb, 100             ; a line being put together
@@ -60,17 +61,42 @@ ui_start:
         ld a,#FF
         ld (topic),a
         call ui_favs
+        call nw_feeds           ; My feeds first
         ld a,(un_type)
         or a
-        jr nz,.n
-        call nw_feeds
+        ret nz
         ld hl,txt_nonet
         jp nw_msg
-.n:     ld a,(nf)
-        or a
-        jp z,nw_feeds
-        xor a
-        jp nw_fetch
+
+; ui_splash: the screen while the network is looked for
+ui_splash:
+        call tx_cls
+        call row0
+        call credits
+        ld hl,txt_look
+        jp nw_say
+
+; credits: "by JZZY & CLAUDE 2026" at the right above the key rows, the names in the bar
+credits:
+        ld a,(l_k1)
+        sub 2
+        ld d,a
+        ld (bx_row),a
+        ld a,(sw)
+        sub 22
+        ld e,a
+        add a,3
+        ld (bx_e),a
+        ld a,13
+        ld (bx_b),a
+        ld hl,txt_credits
+        ld b,21
+        push de
+        call tx_text
+        pop de
+        ld e,0
+        ld b,0
+        jp tx_bar
 
 ui_favs:
         call fv_count
@@ -265,6 +291,9 @@ row0:   ld hl,lb
         ld a,(sw)
         cp 80
         jr nz,.s
+        ld a,(net_tried)
+        or a
+        jr z,.s
         ld hl,txt_sep
         call strcpy
         ld hl,txt_nonet0
@@ -1196,6 +1225,9 @@ nw_fright:                      ; the topics, or a topic's feeds
         ld a,(l_nf)
         cp c
         jr nz,.r
+        ld a,(sw)               ; 80 columns: the credits at the bottom right
+        cp 80
+        call z,credits
         ; fall through
 ; the bars: the headings, the chosen line of the side in use ('>' on the other)
 nw_fbars:
@@ -1295,7 +1327,22 @@ nw_fbars:
 
 ; the feeds' keys
 nw_fkeys:
-        cp 29
+        cp '1'                  ; 1-9: a feed of My feeds
+        jr c,.nd
+        cp '9'+1
+        jr nc,.nd
+        sub '1'
+        ld hl,nf
+        cp (hl)
+        ret nc
+        ld c,a
+        ld a,(un_type)
+        or a
+        ld hl,txt_nonet
+        jp z,nw_msg
+        ld a,c
+        jp nw_fetch
+.nd:    cp 29
         jr z,.side
         cp 28
         jr z,.side
@@ -1861,6 +1908,8 @@ txt_tls:    db ", TLS",0
 txt_notls:  db ", no TLS (http only)",0
 txt_prx:    db ", https by proxy",0
 txt_nonet0: db "no TCP/IP UNAPI network",0
+txt_look:   db "Looking for the network...",0
+txt_credits:db "by JZZY & CLAUDE 2026",0
 txt_k80:    db " Enter read  Up/Down choose  Left/Right page  1-9 a feed  F My feeds  R again",0
             db " I info   ESC quit",0
             db " Up/Down scroll  Left/Right page  Enter full article/summary  N/P next/prev",0

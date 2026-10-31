@@ -1,5 +1,5 @@
 // z80_rss.c - runs RSS.COM / RSS.ROM in a Z80 emulator with just enough MSX
-# z80_rss: gcc -O2 -o z80_rss z80_rss.c z80.c -I<dir of z80.h> (the z80 core: github.com/superzazu/z80)
+// build: gcc -O2 -o z80_rss z80_rss.c z80.c -I<dir of z80.h> (the z80 core: github.com/superzazu/z80)
 // around it: the BIOS calls it makes (RDSLT, CALSLT: CHSNS CHGET INITXT BEEP,
 // ENASLT), MSX-DOS / disk BASIC FCB calls (RSS.INI in a folder), the VDP
 // (V9938: 128 KB VRAM, registers, R14), the frame interrupt (JIFFY), EXTBIO
@@ -494,6 +494,8 @@ static int run(unsigned long max)
         if (un_kind == 1 && pc == 0xF100) { unapi_call(); ret(); cpu.cyc += 800; continue; }
         if (pc == 0xFFCA)           // EXTBIO
         {
+            static int slow = 1;    // RSS_SLOWNET: seconds the first call takes (the splash screen)
+            if (slow && getenv("RSS_SLOWNET")) { slow = 0; cpu.cyc += (unsigned long)(atof(getenv("RSS_SLOWNET")) * HZ); }
             uint16_t de = (uint16_t)(cpu.d << 8 | cpu.e);
             if (de == 0x2222)
             {

@@ -56,6 +56,9 @@ TX_DOT  equ 4                   ; a dot
         VAR old_click, 1
         VAR lbb, 100            ; a row read back (MSX1 bars)
         VAR blb, 10             ; a row's blink bits
+        VAR bx_row, 1           ; a row with a second bar (the credits; FFh: none),
+        VAR bx_e, 1             ; its first cell,
+        VAR bx_b, 1             ; its cells
 
 ; A = a byte of the main ROM at HL
 rd_main:
@@ -402,7 +405,9 @@ tx_clrrow:                      ; row D: empty
         ld a,' '
         jr tx_fill
 
-tx_cls: ld hl,0                 ; all of it, and no bars
+tx_cls: ld a,#FF                ; all of it, and no bars
+        ld (bx_row),a
+        ld hl,0
         ld bc,80*27
         ld a,(msx2)
         or a
@@ -432,9 +437,35 @@ tx_bar: ld a,(msx2)
         djnz .z
         pop bc
         pop de
+        call bar_set
+        ld a,(bx_row)           ; the credits' row: their bar too
+        cp d
+        jr nz,.out
+        push de
+        ld a,(bx_e)
+        ld e,a
+        ld a,(bx_b)
+        ld b,a
+        call bar_set
+        pop de
+.out:   ld l,d                  ; 0A00h + row * 10
+        ld h,0
+        add hl,hl
+        ld c,l
+        ld b,h
+        add hl,hl
+        add hl,hl
+        add hl,bc
+        ld bc,#0A00
+        add hl,bc
+        ld de,blb
+        ld bc,10
+        jp vw_blk
+; bar_set: the cells E.. (B of them) in blb
+bar_set:
         ld a,b
         or a
-        jr z,.out
+        ret z
 .s:     ld a,e
         rrca
         rrca
@@ -453,19 +484,7 @@ tx_bar: ld a,(msx2)
         ld (hl),a
         inc e
         djnz .s
-.out:   ld l,d                  ; 0A00h + row * 10
-        ld h,0
-        add hl,hl
-        ld c,l
-        ld b,h
-        add hl,hl
-        add hl,hl
-        add hl,bc
-        ld bc,#0A00
-        add hl,bc
-        ld de,blb
-        ld bc,10
-        jp vw_blk
+        ret
 ; MSX1: the row read back, the bar's cells inverted (characters 128-255)
 tx_bar1:
         push de
@@ -478,35 +497,42 @@ tx_bar1:
         pop bc
         pop de
         ld hl,lbb
-        ld c,0
-.c:     ld a,(hl)
-        and #7F
-        push af
-        ld a,b
-        or a
-        jr z,.n
-        ld a,c
-        cp e
-        jr c,.n
-        sub e
-        cp b
-        jr nc,.n
-        pop af
-        or #80
-        push af
-.n:     pop af
-        ld (hl),a
+        push de
+        ld c,40
+.z:     res 7,(hl)
         inc hl
-        inc c
-        ld a,c
-        cp 40
-        jr c,.c
-        ld e,0
+        dec c
+        jr nz,.z
+        pop de
+        push de
+        call .set
+        pop de
+        ld a,(bx_row)
+        cp d
+        jr nz,.w
+        push de
+        ld a,(bx_e)
+        ld e,a
+        ld a,(bx_b)
+        ld b,a
+        call .set
+        pop de
+.w:     ld e,0
         call tx_at
         ld hl,lbb
         ld bc,40*256+VDP_D
         otir
         ei
+        ret
+.set:   ld a,b                  ; cells E.. (B of them) inverted
+        or a
+        ret z
+        ld hl,lbb
+        ld a,e
+        call add_hla
+.i:     set 7,(hl)
+        inc hl
+        djnz .i
         ret
 
 bits:   db #80,#40,#20,#10,#08,#04,#02,#01

@@ -20,6 +20,9 @@ It comes as two programs:
 
 The stories and the article are stored in VRAM (24 KB and 32 KB on an MSX2), so the ROM needs no RAM beyond page 3.
 
+It starts in My feeds (Enter or 1-9 reads a feed), after a start screen while it looks for the network.
+
+![the start screen](images/rss_start.png)
 ![headlines](images/rss_list.png)
 ![a story, the full article](images/rss_article.png)
 ![My feeds and the catalogue](images/rss_feeds.png)
@@ -49,7 +52,7 @@ Stock openMSX has no network emulation. Use openMSXnet(-tls) for that.
 |---|---|
 | Headlines | **Up/Down** choose, **Left/Right** a page, **Enter** the story, **1-9** a feed of My feeds, **F** or **BS** My feeds, **R** fetch again, **I** info, **ESC** quit |
 | A story | **Up/Down** a line, **Left/Right** a page, **Enter** the full article / back to the summary, **N/P** next/previous story, **ESC** the headlines |
-| My feeds | **Left/Right/TAB** the side, **Up/Down** choose, **Enter** read (left) / open a topic, add a feed (right), **D** or **DEL** remove, **U/J** move up/down, **BS** back, **ESC** the headlines |
+| My feeds (the start) | **1-9** read that feed, **Left/Right/TAB** the side, **Up/Down** choose, **Enter** read (left) / open a topic, add a feed (right), **D** or **DEL** remove, **U/J** move up/down, **BS** back, **ESC** the headlines |
 | Info (I) | the network, TLS, the machine, the feed's state and error, memory, RSS.INI, the time zone; **ESC** back |
 
 The full article comes in while you read it. The status bar shows the KB read, plus a percentage when the server gives a size.
@@ -98,7 +101,7 @@ The source is Z80 assembly for sjasmplus. It is assembled twice: at 0100h with v
 ## Tests
 
 - **`test/z80_rss.c`** runs RSS.COM or RSS.ROM in a Z80 emulator with a small MSX around it. It provides the BIOS calls, FCB disk calls, a V9938 or TMS9918, the RTC, and a TCP/IP UNAPI answering from the fixture feeds in `test/fix`. The implementation can sit in a ROM, in page 3 or in a mapper segment, with or without TLS, and with a proxy.
-- **`test/regress.sh`** runs 18 checks with it: every feed format, redirects, both kinds of full article, no TLS, the proxy, the three implementation kinds, the ROM, MSX1, My feeds saved, and the time zone. `test/vram2png.py` draws the screen.
+- **`test/regress.sh`** runs 20 checks with it: every feed format, redirects, both kinds of full article, no TLS, the proxy, the three implementation kinds, the ROM, MSX1, My feeds saved, and the time zone. `test/vram2png.py` draws the screen.
 - **`test/omsx/`** has a Tcl TCP/IP UNAPI implementation for openMSX (`unapi.tcl`, with `FAKEUNAPI.ROM`). It was used to test both programs on a real MSX2 BIOS with Nextor and with disk BASIC (the ROM's H.STKE start, RSS.INI saved on the disk).
 
 This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License", as PicoAmp is.
