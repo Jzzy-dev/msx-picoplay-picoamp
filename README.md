@@ -24,7 +24,7 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 | Weather (W) | News (T) |
 |---|---|
-| ![Weather](picoamp/images/picoamp_weather.png) | ![News](picoamp/images/picoamp_news_list.png) |
+| ![Weather](picoamp/images/picoamp_weather.png) | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 13 08 34" src="https://github.com/user-attachments/assets/f1b99f3c-fd99-4abc-b139-31da34824565" /> |
 
 **v1.2** (tested on a PicoVerse 2350 with an NMS 8245, as COM and ROM): engine 0.12 and three new things to
 look at while the radio plays. **W**: the weather for the clock's place, with a big picture
