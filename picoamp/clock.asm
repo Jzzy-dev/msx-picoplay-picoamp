@@ -305,12 +305,6 @@ ck_rtc: ld a,13
         ld b,(ix+4)
         call .bcd
         ld (ck_t+T_HOUR),a
-        ld a,(ix+6)             ; 0 = Sunday -> 0 = Monday
-        add a,6
-        cp 7
-        jr c,.w
-        sub 7
-.w:     ld (ck_t+T_WDAY),a
         ld a,(ix+8)
         and 3
         ld b,(ix+7)
@@ -329,6 +323,81 @@ ck_rtc: ld a,13
         ld de,1980
         add hl,de
         ld (ck_t+T_YEAR),hl
+        ; the weekday from the date: the chip's weekday register is not kept
+        ; by MSX-DOS or BASIC (setting the date leaves it as it was)
+        ld b,a                  ; B = years since 1980
+        ld l,a                  ; days = years * 365 + (years + 3) / 4
+        ld h,0
+        ld e,l
+        ld d,h
+        add hl,hl               ; * 365 = * 256 + * 64 + * 32 + * 8 + * 4 + * 1
+        add hl,hl
+        push hl                 ; * 4
+        add hl,hl
+        push hl                 ; * 8
+        add hl,hl
+        add hl,hl
+        push hl                 ; * 32
+        add hl,hl               ; * 64
+        pop bc
+        add hl,bc
+        pop bc
+        add hl,bc
+        pop bc
+        add hl,bc
+        add hl,de               ; * 365 - * 256
+        ld d,e
+        ld e,0
+        add hl,de               ; + * 256
+        ld a,(ck_t+T_YEAR)
+        sub low 1980
+        add a,3
+        srl a
+        srl a
+        ld e,a
+        ld d,0
+        add hl,de
+        ld a,(ck_t+T_MONTH)     ; + the days before the month
+        dec a
+        cp 12
+        jr c,.mo
+        xor a
+.mo:    add a,a
+        ld e,a
+        ld d,0
+        push hl
+        ld hl,ck_cum
+        add hl,de
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        pop hl
+        add hl,de
+        ld a,(ck_t+T_MONTH)     ; a leap year after February
+        cp 3
+        jr c,.nl
+        ld a,(ck_t+T_YEAR)
+        and 3
+        jr nz,.nl
+        inc hl
+.nl:    ld a,(ck_t+T_DAY)
+        dec a
+        ld e,a
+        ld d,0
+        add hl,de
+        inc hl                  ; 1980-01-01 was a Tuesday (1, Monday = 0)
+        ld de,7*256             ; HL mod 7 (by 1792 first)
+.m8:    or a
+        sbc hl,de
+        jr nc,.m8
+        add hl,de
+        ld de,7
+.m7:    or a
+        sbc hl,de
+        jr nc,.m7
+        add hl,de
+        ld a,l
+        ld (ck_t+T_WDAY),a
         ret
 .bcd:   ld c,a                  ; A * 10 + B
         add a,a
@@ -2494,6 +2563,7 @@ ck_lsel:        db 0
 ck_msgon:       db 0
 ck_msgt:        dw 0
 ck_rtcl:        dw 0
+ck_cum:         dw 0,31,59,90,120,151,181,212,243,273,304,334
 ck_gen:         db 0
 ck_ssec:        db #FF
 ck_smin:        db #FF

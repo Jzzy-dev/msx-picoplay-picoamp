@@ -134,7 +134,7 @@ static uint8_t rtc_read(void)
     time_t now = (time_t)(rtc_base + (long long)(cpu.cyc / 3579545u));
     struct tm g;
     gmtime_r(&now, &g);
-    int v[13] = { g.tm_sec % 10, g.tm_sec / 10, g.tm_min % 10, g.tm_min / 10, g.tm_hour % 10, g.tm_hour / 10, g.tm_wday,
+    int v[13] = { g.tm_sec % 10, g.tm_sec / 10, g.tm_min % 10, g.tm_min / 10, g.tm_hour % 10, g.tm_hour / 10, getenv("PICOAMP_WDAY") ? atoi(getenv("PICOAMP_WDAY")) : g.tm_wday,
                   g.tm_mday % 10, g.tm_mday / 10, (g.tm_mon + 1) % 10, (g.tm_mon + 1) / 10, (g.tm_year - 80) % 10, (g.tm_year - 80) / 10 % 10 };
     return (uint8_t)v[rtc_reg];
 }
