@@ -31,7 +31,7 @@ look at while the radio plays. **W**: the weather for the clock's place, with a 
 that moves (turning sun rays, drifting clouds, stars, falling rain and snow, thunder) and the
 next six days. **T**: a news reader in 80 columns (the MSX2's text mode): the headlines of a feed with the
 chosen one's summary, the stories scrolled, the full article fetched from the site while you
-read, and My feeds beside a catalogue of 110 feeds in 11 topics (world, Europe, Nederland,
+read, and My feeds beside a catalogue of 111 feeds in 11 topics (world, Europe, Nederland,
 Deutsch/Francais/Espanol, US, business, technology, science, sports, games, MSX and retro), to
 add and remove from the page itself. On the clock page, **O** sets a sleep timer (the music fades out and stops) and
 **A** a radio alarm (the station that plays now, at a time, daily or Monday to Friday, fading

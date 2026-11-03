@@ -223,7 +223,7 @@ time; a bar under it says what you see.
 * **My feeds** (F): your favourite feeds on the left, the catalogue on the
   right: 11 topics (World news, UK and Europe, Nederland, Deutsch/Francais/
   Espanol, US news, Business, Technology, Science and space, Sports, Games,
-  MSX and retro computing) with about 110 feeds, gathered from the lists of
+  MSX and retro computing) with about 111 feeds, gathered from the lists of
   opentweet.io, feeder.co, rssly.io and feedspot. Left/Right (or Tab) change
   the side; on the right Enter opens a topic and adds the chosen feed (a `*`
   marks the ones in My feeds), BS goes back to the topics; on the left Enter

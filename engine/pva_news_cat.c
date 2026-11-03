@@ -66,7 +66,8 @@ const pva_news_feed_t pva_news_cat[] = {
     { 2, "nuus",    "Nieuwsuur",                  "https://feeds.nos.nl/nieuwsuuralgemeen" },
     { 2, "jeugd",   "NOS Jeugdjournaal",          "https://feeds.nos.nl/jeugdjournaal" },
     { 2, "nu",      "NU.nl",                      "https://www.nu.nl/rss/Algemeen" },
-    { 2, "tweak",   "Tweakers",                   "https://feeds.feedburner.com/tweakers/mixed" },
+    { 2, "tweak",   "Tweakers",                   "https://tweakers.net/feeds/mixed.xml" },
+    { 2, "tweakn",  "Tweakers, nieuws",           "https://tweakers.net/feeds/nieuws.xml" },
     // 3 Deutsch, Francais, Espanol, Italiano
     { 3, "tages",   "tagesschau",                 "https://www.tagesschau.de/index~rss2.xml" },
     { 3, "spiegel", "Der Spiegel",                "https://www.spiegel.de/schlagzeilen/index.rss" },
