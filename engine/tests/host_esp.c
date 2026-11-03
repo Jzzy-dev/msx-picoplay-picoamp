@@ -62,6 +62,8 @@ char     host_esp_last_click[48];
 char     host_esp_last_api[300];
 long long host_esp_date_base = 1793303100LL;    // Date headers: 2026-10-29 19:45:00 UTC + the time
 bool     host_esp_web_down = false;         // 10.0.0.6..8 refuse connections
+bool     host_esp_range = true;             // news.test/big answers Range with 206
+uint32_t host_esp_ranges;                   // Range requests news.test had
 uint32_t host_esp_web_requests;
 char     host_esp_last_web[600];
 
@@ -436,6 +438,45 @@ static void news(conn_t *c, const char *path)
             "<p>Third paragraph: the end of the article\ntext, again long enough \xe2\x80\x93 really.</p></article>"
             "<footer><p>Copyright footer text that is long enough but must be skipped.</p></footer></body></html>";
         bq_put(&b, x, strlen(x));
+    }
+    else if (!strcmp(path, "/bigfeed"))
+    {
+        const char *f = "<rss><channel><item><title>A long read</title><link>https://news.test/big</link>"
+                        "<description>Its summary.</description><pubDate>Thu, 29 Oct 2026 20:00:00 GMT</pubDate></item></channel></rss>";
+        bq_put(&b, f, strlen(f));
+    }
+    else if (!strcmp(path, "/big"))
+    {
+        // a page of about 150 KB: scripts first, then 40 paragraphs
+        bq_put(&b, "<html><head><script>", 20);
+        for (int i = 0; i < 1500; i++) bq_put(&b, "var x=1234567890+abcdefghij-klmnopqrstuvwxyz*ABCDEFGHIJKLMNOPQRSTUVWXY;\n", 72);
+        bq_put(&b, "</script></head><body><article>", 31);
+        for (int i = 0; i < 40; i++)
+        {
+            int n = snprintf(t, sizeof t, "<p>Paragraph %d of the long read, with enough words in it to be kept as text. "
+                             "<span class=\"some-long-class-name another-class\">More</span> words follow here.</p>", i + 1);
+            bq_put(&b, t, (size_t)n);
+        }
+        bq_put(&b, "</article></body></html>", 24);
+        unsigned long from = 0;
+        const char *rg = strstr((char *)c->reqbuf.b, "Range: bytes=");
+        if (rg) { from = strtoul(rg + 13, NULL, 10); host_esp_ranges++; }
+        char hd[300], dt[64];
+        date_hdr(dt, sizeof dt);
+        if (rg && host_esp_range && from < b.len)
+            snprintf(hd, sizeof hd, "HTTP/1.1 206 Partial Content\r\nContent-Type: text/html\r\n%sContent-Range: bytes %lu-%lu/%lu\r\n"
+                     "Content-Length: %lu\r\n\r\n", dt, from, (unsigned long)b.len - 1, (unsigned long)b.len, (unsigned long)b.len - from);
+        else
+        {
+            from = 0;
+            snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n%sContent-Length: %lu\r\n\r\n", dt, (unsigned long)b.len);
+        }
+        bq_put(&c->out, hd, strlen(hd));
+        bq_put(&c->pend, b.b + from, b.len - from);
+        free(b.b);
+        c->kind = 4;
+        c->credit = 0;
+        return;
     }
     else if (!strcmp(path, "/many"))
     {

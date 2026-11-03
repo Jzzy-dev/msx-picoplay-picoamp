@@ -47,6 +47,7 @@ static char      pl_m3u_dir[PATH_MAX_LEN + 1];
 static uint8_t  state = PVA_STATE_STOPPED;
 static uint8_t  mode;
 static uint8_t  volume = 80;
+static bool     muted;
 static uint8_t  balance = 50;
 static uint8_t  play_error;
 static uint16_t track_id;
@@ -1403,12 +1404,12 @@ static uint8_t  fade_vol = 0xFF;    // the volume a fade has set (FF: none)
 
 static void fade_to(uint8_t v)
 {
-    if (v != fade_vol) { fade_vol = v; pva_dec_set_volume(v); }
+    if (v != fade_vol) { fade_vol = v; pva_dec_set_volume(muted ? 0 : v); }
 }
 
 static void fade_end(void)
 {
-    if (fade_vol != 0xFF) { fade_vol = 0xFF; pva_dec_set_volume(volume); }
+    if (fade_vol != 0xFF) { fade_vol = 0xFF; pva_dec_set_volume(muted ? 0 : volume); }
 }
 
 // the [alarm] settings
@@ -1714,8 +1715,14 @@ static int execute(uint8_t code)
         }
         case PVA_C_VOLUME:
             volume = args[0] > 100 ? 100 : args[0];
-            pva_dec_set_volume(volume);
+            pva_dec_set_volume(muted ? 0 : volume);
             if (fade_vol != 0xFF) fade_vol = 0xFE;     // (the fade sets it again)
+            return PVA_OK;
+        case PVA_C_MUTE:
+            muted = args[0] == 2 ? !muted : args[0] != 0;
+            pva_dec_set_volume(muted ? 0 : (fade_vol < 0xFE ? fade_vol : volume));
+            status_dirty = true;
+            set_reply_byte(muted);
             return PVA_OK;
         case PVA_C_MODE:
             return cmd_mode();
@@ -1788,7 +1795,8 @@ static void publish_status(void)
     st8(PVA_ST_STATE, state);
     st8(PVA_ST_FLAGS, (uint8_t)((mounted ? PVA_F_MOUNTED : 0) | (info.tagged && active ? PVA_F_TAGS : 0) |
                                 (info.seekable && active ? PVA_F_SEEKABLE : 0) | (dir_open ? PVA_F_DIR_OPEN : 0) |
-                                (strm ? PVA_F_STREAM : 0) | (strm && buffering ? PVA_F_BUFFERING : 0)));
+                                (strm ? PVA_F_STREAM : 0) | (strm && buffering ? PVA_F_BUFFERING : 0) |
+                                (strm && pva_net_is_tls() ? PVA_F_TLS : 0) | (muted ? PVA_F_MUTED : 0)));
     st8(PVA_ST_VOLUME, volume);
     st16(PVA_ST_ELAPSED, active ? (uint16_t)pva_dec_elapsed() : 0);
     st16(PVA_ST_TOTAL, active ? (uint16_t)info.total_seconds : 0);

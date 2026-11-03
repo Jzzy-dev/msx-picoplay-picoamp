@@ -156,6 +156,8 @@
 #define PVA_C_NEWS_SORT     0x44    // args: u8 0 the feed's order, 1 newest first, 2 the other one, FFh ask:
                                     // reply: u8 the order now (kept in [news] sort=feed|date; the stories
                                     // shown are sorted again at once)
+#define PVA_C_MUTE          0x45    // args: u8 0 sound on, 1 muted, 2 the other one: reply: u8 muted now. The
+                                    // volume stays as it is (PVA_F_MUTED in the status)
 #define PVA_TXF_LOADING     0x01    // the article is still coming in
 #define PVA_TXF_ARTICLE     0x02    // these are the article's lines (else the summary's)
 #define PVA_TXF_FAILED      0x04    // there is no article (the summary instead)
@@ -300,6 +302,8 @@
 #define PVA_CK_ART_LEN      38      // u16 bytes of its text so far
 #define PVA_CK_ART_KB       40      // u16 KB read from the web for it
 #define PVA_CK_ART_PCT      42      // u8  % of the page read (FF: its size is not known)
+#define PVA_CK_ART_WAIT     43      // u8  1: between two pieces, the radio fills its buffer; 2: the reading waits
+                                    // for the radio (0: reading)
 #define PVA_ART_IDLE        0
 #define PVA_ART_LOADING     1
 #define PVA_ART_DONE        2
@@ -350,6 +354,8 @@
 #define PVA_F_DIR_OPEN      0x08
 #define PVA_F_STREAM        0x10    // a stream plays (title = stream title, album = station)
 #define PVA_F_BUFFERING     0x20    // the stream is filling its buffer (no audio yet)
+#define PVA_F_TLS           0x40    // the stream comes over https
+#define PVA_F_MUTED         0x80    // the sound is muted (PVA_CMD_MUTE)
 
 #define PVA_NET_IDLE        0
 #define PVA_NET_LOOKUP      1       // DNS

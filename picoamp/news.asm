@@ -103,12 +103,10 @@ nw_open:
         ld (nw_sel),a
         ld (nw_first),a
         ld (nw_wait),a
-        jp nw_list
-.f:     ld a,(nw_nf)            ; else the first feed, or My feeds
-        or a
-        jp z,nw_feeds
-        xor a
-        jp nw_fetch
+        jp nw_feeds             ; (ESC there: these headlines)
+.f:     xor a                   ; no headlines yet
+        ld (nw_n),a
+        jp nw_feeds             ; T always opens My feeds
 
 ; leaving: SCREEN 4 again (and the settings to the card)
 nw_leave:
@@ -1073,7 +1071,11 @@ nw_status:
         ld hl,txt_nw_ssum
 .s:     call strcpy
         jr .r
-.ld:    call strcpy
+.ld:    ld a,(ckb+CK_AWAIT)     ; (1, 2: the radio fills its buffer first)
+        or a
+        jr z,.ld2
+        ld hl,txt_nw_sradio
+.ld2:   call strcpy
         ld hl,(ckb+CK_AKB)
         call fmt_u16
         ld hl,txt_nw_kb
@@ -1452,7 +1454,7 @@ nw_fkeys:
         cp 8
         jr z,.bs
         cp 27
-        jp z,nw_fback
+        jp z,nw_fesc
         cp 127
         jp z,.del
         and #DF
@@ -1601,24 +1603,44 @@ nw_changed:                     ; My feeds changed: the names again, saved on le
         jp nw_favs
 
 ; out of My feeds: the headlines there are, else the first feed, else the player
-nw_fback:
-        ld a,(nw_n)
-        or a
-        jr z,.f
-        ld a,(ckb+CK_NST)
-        cp 2
-        jr nz,.f
-        ld a,(ckb+CK_NFEED)
-        ld hl,nw_nf
-        cp (hl)
-        jr nc,.f
-        ld (nw_feed),a
+nw_fesc:                        ; ESC in My feeds: the headlines there are, else leave
+        call nw_fhave
+        jp nz,fs_close
         jp nw_list
-.f:     ld a,(nw_nf)
+nw_fback:
+        call nw_fhave
+        jp z,nw_list
+        ld a,(nw_nf)
         or a
         jp z,fs_close
         xor a
         jp nw_fetch
+
+nw_sesc:                        ; out of a story: an article still coming in stops there
+        ld a,(ckb+CK_ASTATE)
+        cp 1                    ; PVA_ART_LOADING
+        jp nz,nw_list
+        ld e,#FF
+        ld a,C_NFULL
+        call cmd_u8
+        jp nw_list
+
+nw_fhave:                       ; Z: there are headlines (nw_feed set to their feed)
+        ld a,(nw_n)
+        or a
+        jr z,.no
+        ld a,(ckb+CK_NST)
+        cp 2
+        jr nz,.no
+        ld a,(ckb+CK_NFEED)
+        ld hl,nw_nf
+        cp (hl)
+        jr nc,.no
+        ld (nw_feed),a
+        xor a
+        ret
+.no:    or 1
+        ret
 
 ;------------------------------------------------------------------------------
 nw_keys:
@@ -1764,9 +1786,9 @@ nw_skeys:
         cp 13
         jr z,.full
         cp 27
-        jp z,nw_list
+        jp z,nw_sesc
         cp 8
-        jp z,nw_list
+        jp z,nw_sesc
         and #DF
         cp 'F'
         jr z,.full
@@ -1937,7 +1959,8 @@ txt_nw_story:   db "  ",TX_VL,"  story ",0
 txt_nw_lines:   db "lines ",0
 txt_nw_ssum:    db " Summary   (Enter: the full article)",0
 txt_nw_sart:    db " The full article",0
-txt_nw_spart:   db " Part of it: the radio needed the line (Enter: all)",0
+txt_nw_spart:   db " Part of it (Enter: the rest)",0
+txt_nw_sradio:  db " Article, the radio's turn... ",0
 txt_nw_snone:   db " No full article from the site: the summary",0
 txt_nw_sload:   db " Fetching the full article... ",0
 txt_nw_kb:      db " KB",0

@@ -53,7 +53,7 @@ The engine is found by itself in any slot, as PVTEST and PicoPlay do.
 |------|---------------|
 | Title bar | State (PLAYING / PAUSED / STOPPED), position in the playlist, a close box for the mouse |
 | Big digits | Elapsed time |
-| Info lines | Title, artist (the station for radio), then bit rate, sample rate and mono/stereo (or "BUFFERING 40%") |
+| Info lines | Title, artist (the station for radio), then bit rate, sample rate and mono/stereo, and for a station HTTP or HTTPS ("128K 44.1KHZ ST HTTPS"; or "BUFFERING 40%"). The volume bar turns red while muted (M) |
 | Seek bar | Position in the track; for radio, how full the buffer is |
 | Picture | Spectrum: 24 bars from 60 Hz to 16 kHz on a log scale, 2 dB a step, with falling peak dots. Or the oscilloscope, or the equalizer |
 | Level | VU meters, left and right |
@@ -85,6 +85,7 @@ PICOAMP shows "LOADING THE LIST...".
 | S | Stop |
 | N / P | Next / previous track |
 | + or = / - | Volume |
+| M | Mute on/off (the volume stays; its bar turns red) |
 | , / . | 10 seconds back / forward (files that can seek) |
 | H | Shuffle on/off |
 | R | Repeat on/off |
@@ -127,7 +128,7 @@ the radio playing:
   alarm.
 * **Colours:** the digits, the dial and the small spectrum are four colours
   that turn round a colour wheel while music plays, faster when it is louder,
-  brighter with the bass; or one colour of your choice (M: music, cyan,
+  brighter with the bass; or one colour of your choice (X: music, cyan,
   green, amber, red, purple, white, kept in `PICOAMP.INI`).
 * **The small spectrum:** 24 bars of 4 cells at the bottom (B: on/off).
 * **Row 0:** what plays: the title, the artist and, for a radio station, its
@@ -140,7 +141,7 @@ the radio playing:
 | Left / Right, V, a click | Digital / analog |
 | I | The time: internet / the MSX's clock chip |
 | L | The place: type a name and Enter (a list to choose from), or Enter alone for the place of the internet connection |
-| M | The colours: music, then cyan, green, amber, red, purple, white |
+| X | The colours: music, then cyan, green, amber, red, purple, white |
 | B | The small spectrum on / off |
 | K | Set the MSX's clock chip to the internet time |
 | O | The sleep timer: 15, 30, 45, 60, 90 minutes, off |
@@ -193,7 +194,8 @@ button back to the player.
 ### News
 
 T opens a news reader (engine 0.12, WiFi) in the MSX2's 80-column text mode,
-26 rows, one line a headline, as an RSS reader. Row 0 has what plays and the
+26 rows, one line a headline, as an RSS reader. It opens in My feeds; ESC
+there goes to the headlines read last, or back to the player. Row 0 has what plays and the
 time; a bar under it says what you see.
 
 * **The headlines** of a feed, newest first, with their time ("20:15" today,
@@ -215,7 +217,8 @@ time; a bar under it says what you see.
   Enter again goes back to the summary. Sites that build their pages with
   JavaScript or keep them for subscribers give no text: then the summary
   stays ("No full article from the site"). N/P: the next or previous story,
-  ESC or BS: the headlines.
+  ESC or BS: the headlines (an article still coming in stops there; what came
+  in stays, and Enter on it later fetches the rest).
 * **My feeds** (F): your favourite feeds on the left, the catalogue on the
   right: 11 topics (World news, UK and Europe, Nederland, Deutsch/Francais/
   Espanol, US news, Business, Technology, Science and space, Sports, Games,
@@ -230,10 +233,18 @@ connection at a time. When a radio station plays over https and a feed or an
 article is https too (most are, and the BBC's http feeds move to https), the
 station lends its connection: it closes it while its buffer plays on, the
 engine reads the feed, and the station connects again, usually without a
-gap. A long article page would take longer than the buffer lasts: then the
-reading stops when the radio's buffer is down to a third ("Part of it: the
-radio needed the line"), and Enter reads all of it, with the radio waiting
-(it pauses when its buffer is empty and goes on after).
+gap. A long article page would take longer than the buffer lasts, so it comes
+in pieces: a piece ends while the radio's buffer still holds enough for the
+station to connect again (its last TLS open time plus 1.5 s, from its bit
+rate), the station fills its buffer again ("Article, the radio's turn..."),
+and the next piece asks the site for the rest (an HTTP Range request from
+where the last piece ended), until the article is in or you press ESC. The
+text shows as it comes. A site that does not answer Range requests sends the
+whole page again; then the article stays a part ("Part of it (Enter: the
+rest)"), and Enter reads the rest with the radio waiting (it pauses when its
+buffer is empty and goes on after). With an http station there is no
+lending; the article's reading then waits while the radio's buffer is below
+half (until it is at 3/4 again, at most 8 s at a time).
 
 I shows what the engine says about the news: the feed's state and error, its
 memory, and the engine's last log lines (the web requests and their

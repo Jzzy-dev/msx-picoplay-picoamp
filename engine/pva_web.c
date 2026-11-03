@@ -49,7 +49,8 @@ static char    *location;           // LOC_MAX + 1
 static char     line[160];
 static size_t   line_len;
 static bool     status_seen, body_end;
-static uint32_t content_len, body_got;
+static uint32_t content_len, body_got, w_from, range_total;
+static bool     w_hold;              // the body waits (the radio's buffer first)
 static uint32_t t_query, t_phase, wait_until, state_asked;
 static pva_web_body_fn body_fn;
 static pva_web_done_fn done_fn;
@@ -59,7 +60,8 @@ uint8_t  pva_web_error(void) { return werr; }
 uint16_t pva_web_http(void) { return whttp; }
 bool     pva_web_busy(void) { return w != W_IDLE; }
 uint8_t  pva_web_result(void) { return result; }
-uint32_t pva_web_length(void) { return content_len; }     // the body's size (0: not said)
+uint32_t pva_web_length(void) { return whttp == 206 && range_total ? range_total : content_len + (whttp == 206 ? w_from : 0); }   // the whole body's size (0: not said)
+void     pva_web_hold(bool on) { w_hold = on; }
 bool     pva_web_lending(void) { return lending; }        // the stream's TLS connection is borrowed
 
 static void w_close_then(uint8_t what)
@@ -96,6 +98,7 @@ static void http_line(void)
     for (char *k = line; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);
     if (!strcmp(line, "location")) snprintf(location, LOC_MAX + 1, "%s", v);
     else if (!strcmp(line, "content-length")) content_len = (uint32_t)atol(v);
+    else if (!strcmp(line, "content-range")) { const char *t = strchr(v, '/'); range_total = t && t[1] != '*' ? (uint32_t)atol(t + 1) : 0; }
     else if (!strcmp(line, "date")) pva_clock_http_date(v);
 }
 
@@ -120,7 +123,7 @@ static void w_feed(const uint8_t *p, size_t n)
         size_t k = n - i;
         if (content_len && body_got + k > content_len) k = content_len - body_got;
         body_got += (uint32_t)k;
-        if (whttp == 200 && body_fn && !body_end && k)
+        if ((whttp == 200 || whttp == 206) && body_fn && !body_end && k)
         {
             if (body_fn(p + i, k)) body_end = true;     // the caller has what it wants
         }
@@ -155,6 +158,7 @@ static void w_connect(void)
     line_len = 0;
     location[0] = 0;
     content_len = 0;
+    range_total = 0;
     whttp = 0;
     conn = 0;
     uint8_t f = 0;
@@ -198,7 +202,7 @@ static void w_complete(void)
 {
     if (w != W_BODY) { w_trouble(PVA_NERR_CLOSED); return; }
     if (whttp >= 300 && whttp < 400 && location[0] && redirects < MAX_REDIRECTS) { redirects++; w_close_then(A_REDIRECT); return; }
-    if (whttp != 200) { w_trouble(PVA_NERR_HTTP); return; }
+    if (whttp != 200 && !(whttp == 206 && w_from)) { w_trouble(PVA_NERR_HTTP); return; }
     w_close_then(A_DONE);
 }
 
@@ -246,9 +250,11 @@ void pva_web_poll(void)
             conn = WS->pfirst[0];
             pva_esp_clear(WS);
             {
+                char range[32] = "";
+                if (w_from) snprintf(range, sizeof range, "Range: bytes=%lu-\r\n", (unsigned long)w_from);
                 int n = snprintf(req, 640,
                     "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: PicoAmp/1.1 (MSX PicoVerse 2350)\r\n"
-                    "Accept: */*\r\nConnection: close\r\n\r\n", w_path, w_host);
+                    "Accept: */*\r\n%sConnection: close\r\n\r\n", w_path, w_host, range);
                 req_len = (n > 0 && n < 640) ? (size_t)n : 0;
                 req_pos = 0;
             }
@@ -298,6 +304,14 @@ void pva_web_poll(void)
                 pva_esp_request(WS, PVA_FN_TCPSTATE, &a, 1, NULL, 0, T_RCV_MS);
                 return;
             }
+            if (w_hold && w == W_BODY && !body_end && !WS->want_fn)
+            {
+                // the radio's buffer first: the connection stays, the ESP keeps what comes meanwhile
+                t_phase = now;
+                state_asked = now;
+                if (now - t_query > T_QUERY_MS / 2u) t_query = now - T_QUERY_MS / 2u;
+                return;
+            }
             if (now - t_phase > 10000u || now - t_query > T_QUERY_MS) { w_trouble(PVA_NERR_TIMEOUT); return; }
             if (!WS->want_fn && (int32_t)(now - wait_until) >= 0) ask_rcv();
             return;
@@ -341,6 +355,13 @@ bool pva_web_init(void)
 // 'done' the outcome. PVA_E_BUSY while another GET runs.
 int pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done)
 {
+    return pva_web_get_from(url, 0, body, done);
+}
+
+// the same from byte 'from' on (Range); a server that does not do that sends all
+// of it (pva_web_http() 200, not 206)
+int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_web_done_fn done)
+{
     if (!available) return PVA_E_NOWIFI;
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
     if (w != W_IDLE) return PVA_E_BUSY;
@@ -352,6 +373,8 @@ int pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done)
     redirects = 0;
     werr = 0;
     lent_once = false;
+    w_from = from;
+    w_hold = false;
     result = PVA_WEB_BUSY;
     t_query = pva_hal_millis();
     pva_log("web: %.48s", url);

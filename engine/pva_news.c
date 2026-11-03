@@ -61,7 +61,12 @@ static uint8_t  a_st = PVA_ART_IDLE, a_story = 0xFF, a_phase, a_pos;
 static uint32_t f_got;                  // the feed's bytes read
 static bool     a_pending, a_stop, a_part, a_force;
 static size_t   a_len;
-static uint32_t a_got;
+static uint32_t a_got;                  // the bytes of the feed or page handled (where the next piece starts)
+// pieces: with the radio's TLS connection lent, a piece ends before the radio's buffer runs
+// out; the radio fills it again, then the next piece comes from where this one ended (Range)
+static bool     a_inweb, a_cut, a_wait, a_first, a_hold, a_esc;
+static uint8_t  a_gen, a_wgen, a_empty, a_pieces;
+static uint32_t a_new, a_skip, a_twait, a_thold;
 static char     a_url[LINK_MAX + 1];
 static uint8_t  a_feed;
 
@@ -930,68 +935,182 @@ static void fetch_done(bool ok)
 }
 
 // ---------------------------------------------------------------- the article
-// the radio lent its TLS connection and its buffer runs low: it gets it back
-// (the article stays a part; asked for again, all of it comes, the radio waiting)
-static bool radio_needs_line(void)
+#define PIECE_MIN       2048u           // a piece reads at least this much
+#define RADIO_WAIT_MS   15000u          // the longest wait for the radio's buffer between pieces
+
+static uint32_t radio_bps(void)         // the stream's bytes per second
 {
-    if (a_force || !pva_web_lending() || !pva_net_capacity() || pva_net_buffered() * 3u >= pva_net_capacity()) return false;
-    a_part = true;
-    pva_log("news: the radio needs its connection back");
+    pva_track_info_t i;
+    memset(&i, 0, sizeof i);
+    if (pva_dec_is_stream()) pva_dec_frame_info(&i);
+    return i.bitrate_kbps ? (uint32_t)i.bitrate_kbps * 125u : 16000u;
+}
+
+// what the radio's buffer must keep for its reconnect (DNS cached, TLS open, HTTP head)
+static size_t radio_reserve(void)
+{
+    size_t cap = pva_net_capacity();
+    uint32_t open = pva_net_stats()->open_ms;
+    uint32_t ms = (open && open < 8000u ? open : 2500u) + 1500u;
+    size_t need = (size_t)(radio_bps() * ms / 1000u);
+    if (need < cap / 4u) need = cap / 4u;
+    if (need > cap * 3u / 4u) need = cap * 3u / 4u;
+    return need;
+}
+
+// the radio lent its TLS connection and its buffer gets low: this piece ends
+static bool radio_cut(void)
+{
+    if (a_force || !pva_web_lending() || !pva_net_capacity()) return false;
+    if (a_new < PIECE_MIN && !a_skip) return false;
+    if (pva_net_buffered() >= radio_reserve()) return false;
+    a_cut = true;
+    return true;
+}
+
+// the start of each piece of the body: p, n past what was read before. false: stop
+static bool art_take(const uint8_t **p, size_t *n)
+{
+    if (a_wgen != a_gen) return false;              // (an article no longer wanted)
+    if (a_first)
+    {
+        a_first = false;
+        if (a_got && pva_web_http() == 200)         // the server sends all of it again
+        {
+            a_skip = a_got;
+            if (!a_force)
+            {
+                // pieces cannot work here: a part (Enter: the rest, the radio waiting)
+                pva_log("news: the server does not do Range");
+                a_cut = true;
+                a_empty = 0xF0;
+                return false;
+            }
+            pva_log("news: no Range here, %lu bytes skipped", (unsigned long)a_skip);
+        }
+    }
+    if (radio_cut()) return false;
+    if (a_skip)
+    {
+        size_t k = *n < a_skip ? *n : (size_t)a_skip;
+        a_skip -= (uint32_t)k;
+        *p += k;
+        *n -= k;
+    }
+    a_got += (uint32_t)*n;
+    a_new += (uint32_t)*n;
     return true;
 }
 
 static bool art_feed_body(const uint8_t *p, size_t n)
 {
-    if (radio_needs_line()) return true;
-    a_got += (uint32_t)n;
+    if (!art_take(&p, &n)) return true;
     for (size_t i = 0; i < n && !a_stop; i++) xml_byte((char)p[i]);
     return a_stop || H.full;
 }
 
 static bool art_page_body(const uint8_t *p, size_t n)
 {
-    if (radio_needs_line()) return true;
-    a_got += (uint32_t)n;
+    if (!art_take(&p, &n)) return true;
     for (size_t i = 0; i < n && !H.done && !H.full; i++) h_byte(p[i]);
     return H.done || H.full || a_got >= PAGE_MAX;
 }
 
 static void art_end(bool ok)
 {
-    while (a_len && (art[a_len - 1] == '\n' || art[a_len - 1] == ' ')) a_len--;
+    if (!a_part) while (a_len && (art[a_len - 1] == '\n' || art[a_len - 1] == ' ')) a_len--;
     art[a_len] = 0;
     a_st = ok ? PVA_ART_DONE : PVA_ART_FAILED;
+    a_wait = false;
     if (!ok) { a_len = 0; a_part = false; }
-    pva_log("news: article %s, %u bytes of text from %u", ok ? "in" : "failed", (unsigned)a_len, (unsigned)a_got);
+    pva_log("news: article %s%s, %u bytes of text from %u in %u piece(s)", ok ? "in" : "failed", a_part ? " (a part)" : "",
+            (unsigned)a_len, (unsigned)a_got, (unsigned)a_pieces);
+}
+
+// a piece ended: true when the next one follows (once the radio has its buffer back)
+static bool piece_end(bool ok)
+{
+    if (!a_cut) return false;
+    a_cut = false;
+    pva_log("news: piece %u, %lu bytes, the radio %u%% full", (unsigned)a_pieces, (unsigned long)a_new,
+            (unsigned)(pva_net_capacity() ? pva_net_buffered() * 100u / pva_net_capacity() : 0));
+    a_empty = a_new < 512u && ok ? (uint8_t)(a_empty + 1u) : 0;
+    if (!ok || a_empty >= 3u)
+    {
+        a_part = true;                  // no headway: a part (Enter: the rest, the radio waiting)
+        a_esc = false;
+        art_end(a_len > 0 || a_got > 0);
+        return true;
+    }
+    a_wait = true;
+    a_twait = pva_hal_millis();
+    return true;
 }
 
 static void art_feed_done(bool ok)
 {
-    (void)ok;
+    if (a_wgen != a_gen) return;
+    a_inweb = false;
+    if (piece_end(ok || a_new)) return;
     h_para();
     size_t want = strlen(pool + items[a_story].text) + 200u;
     if (a_len >= want || (a_len >= 300 && H.full)) { art_end(true); return; }
-    if (a_part) { art_end(a_len >= 200); return; }
-    if (a_url[0]) { a_phase = 2; a_pending = true; return; }   // the page then
+    if (a_url[0]) { a_phase = 2; a_got = 0; a_empty = 0; a_pending = true; return; }   // the page then
     art_end(false);
 }
 
 static void art_page_done(bool ok)
 {
-    (void)ok;
+    if (a_wgen != a_gen) return;
+    a_inweb = false;
+    if (piece_end(ok || a_new)) return;
     h_para();
     art_end(a_len >= 200);
 }
 
+static void art_cancel(void)            // ESC: what came in stays, as a part
+{
+    if (a_st != PVA_ART_LOADING) return;
+    a_gen++;
+    a_pending = false;
+    a_inweb = false;
+    a_cut = false;
+    a_part = true;
+    a_esc = true;
+    pva_log("news: article stopped");
+    art_end(a_len > 0 || a_got > 0);
+}
+
 static int news_full(uint8_t story)
 {
+    if (story == 0xFF) { art_cancel(); return PVA_OK; }
     if (st != PVA_NEWS_DONE || story >= nitems) return PVA_E_RANGE;
     if (!art) return PVA_E_FULL;
-    bool again = a_story == story && a_st == PVA_ART_DONE && a_part;   // a part: now all of it
-    if (a_story == story && a_st != PVA_ART_IDLE && a_st != PVA_ART_FAILED && !again) return PVA_OK;   // (coming in, or in)
-    a_force = again;
-    a_part = false;
+    bool mine = a_story == story && a_feed == feed_no;
+    if (mine && a_st == PVA_ART_DONE && a_part && a_got)
+    {
+        // a part: the rest now, from where it ended; after no headway the radio waits
+        // for it (after ESC: in pieces again)
+        if (!pva_hal_net_present()) return PVA_E_NOWIFI;
+        a_force = !a_esc;
+        a_esc = false;
+        a_part = false;
+        a_empty = 0;
+        a_gen++;
+        a_st = PVA_ART_LOADING;
+        a_pending = true;
+        return PVA_OK;
+    }
+    if (mine && a_st != PVA_ART_IDLE && a_st != PVA_ART_FAILED && !(a_st == PVA_ART_DONE && a_part)) return PVA_OK;   // (coming in, or in)
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
+    a_gen++;
+    a_force = false;
+    a_esc = false;
+    a_part = false;
+    a_wait = false;
+    a_cut = false;
+    a_empty = 0;
+    a_pieces = 0;
     a_story = story;
     a_pos = items[story].pos;
     a_len = 0;
@@ -1004,6 +1123,22 @@ static int news_full(uint8_t story)
     a_st = PVA_ART_LOADING;
     a_pending = true;
     return PVA_OK;
+}
+
+// the radio plays without a lent connection: the article's reading waits while the
+// radio's buffer is below half (until 3/4, at most 8 s at a time)
+static void art_pace(void)
+{
+    bool want = false;
+    if (a_inweb && !a_force && !pva_web_lending() && pva_net_active() && pva_net_capacity())
+    {
+        size_t b = pva_net_buffered(), cap = pva_net_capacity();
+        uint32_t now = pva_hal_millis();
+        if (a_hold) want = b < cap * 3u / 4u && now - a_thold < 8000u;
+        else if (b < cap / 2u && now - a_thold > 2000u) { want = true; a_thold = now; }
+    }
+    if (want != a_hold) { a_hold = want; if (!want) a_thold = pva_hal_millis(); }
+    pva_web_hold(a_hold);
 }
 
 // ---------------------------------------------------------------- lines
@@ -1183,7 +1318,18 @@ int pva_news_cmd(uint8_t c, const uint8_t *a)
 
 void pva_news_poll(void)
 {
+    art_pace();
     if (pva_web_busy()) return;
+    if (a_wait && a_st == PVA_ART_LOADING)
+    {
+        // between pieces: the radio's buffer full again (or no radio)
+        uint32_t now = pva_hal_millis();
+        size_t cap = pva_net_capacity();
+        bool ready = !pva_net_active() || !cap || pva_net_buffered() >= cap * 9u / 10u;
+        if (now - a_twait < 500u || (!ready && now - a_twait < RADIO_WAIT_MS)) return;
+        a_wait = false;
+        a_pending = true;
+    }
     if (pending)
     {
         pending = false;
@@ -1201,19 +1347,28 @@ void pva_news_poll(void)
     {
         a_pending = false;
         a_stop = false;
+        bool resume = a_got > 0;        // the next piece: the parser goes on where it was
+        a_wgen = a_gen;
+        a_first = true;
+        a_skip = 0;
+        a_new = 0;
+        a_cut = false;
+        a_pieces++;
+        int r;
         if (a_phase == 1)
         {
             char name[40], url[LINK_MAX + 1];
             if (!fav(a_feed, name, sizeof name, url, sizeof url)) { art_end(false); return; }
-            xml_reset(M_ART);
-            h_start(art, &a_len, art_size, false);
-            if (pva_web_get(url, art_feed_body, art_feed_done) != PVA_OK) art_end(false);
+            if (!resume) { xml_reset(M_ART); h_start(art, &a_len, art_size, false); }
+            r = pva_web_get_from(url, a_got, art_feed_body, art_feed_done);
         }
         else
         {
-            h_start(art, &a_len, art_size, true);
-            if (pva_web_get(a_url, art_page_body, art_page_done) != PVA_OK) art_end(false);
+            if (!resume) h_start(art, &a_len, art_size, true);
+            r = pva_web_get_from(a_url, a_got, art_page_body, art_page_done);
         }
+        if (r != PVA_OK) { a_part = a_len > 0; art_end(a_len > 0); return; }
+        a_inweb = true;
     }
 }
 
@@ -1232,4 +1387,5 @@ void pva_news_state(uint8_t *o)
     o[9] = (uint8_t)(k >> 8);
     uint32_t len = pva_web_length();    // (the page or feed being read for the article)
     o[10] = a_st == PVA_ART_LOADING && len && a_got <= len ? (uint8_t)((uint64_t)a_got * 100u / len) : 0xFF;
+    o[11] = a_st == PVA_ART_LOADING && a_wait ? 1u : a_st == PVA_ART_LOADING && a_hold ? 2u : 0u;
 }

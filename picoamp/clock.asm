@@ -9,7 +9,7 @@
 ; engine 0.11: PVA_R_CLOCK) or from the MSX's clock chip; the date, the place,
 ; the weather now; colours that turn with the music; a small spectrum.
 ; Keys: Left/Right or V the other face, T internet time / MSX clock, L the
-; place, M music colours on/off, B the small spectrum on/off, K set the MSX's
+; place, X music colours on/off, B the small spectrum on/off, K set the MSX's
 ; clock from the internet time; C, Z, ESC, Enter, BS back. The playback keys
 ; keep working. Settings: PICOAMP.INI [clock] face, time, colours, spectrum.
 ;==============================================================================
@@ -37,6 +37,7 @@ CK_ASTORY equ 37
 CK_ALEN  equ 38
 CK_AKB   equ 40
 CK_APCT  equ 42
+CK_AWAIT equ 43
 CKF_TIME equ 1
 CKF_ZONE equ 2
 CKF_WX   equ 4
@@ -953,7 +954,7 @@ ck_keys:
         jp z,ck_sleep
         cp 'A'
         jp z,ck_alarm_open
-        cp 'M'
+        cp 'X'
         jp z,ck_toggle_col
         cp 'B'
         jp z,ck_toggle_bars

@@ -1012,6 +1012,7 @@ uint8_t pva_net_conn(void) { return conn; }
 // a web request borrows the stream's TLS connection (on), or gives it back
 void pva_net_lend_tls(bool on) { if (on) lend++; else if (lend) lend--; }
 // the stream holds no TLS connection now
+bool pva_net_is_tls(void) { return tls; }
 bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAILED); }
 
 uint8_t *pva_net_spare(size_t *size) { *size = spare_size; return spare; }

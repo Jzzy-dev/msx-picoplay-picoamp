@@ -45,6 +45,8 @@ extern long long host_esp_date_base;
 extern bool host_esp_web_down;
 extern uint32_t host_esp_web_requests;
 extern char host_esp_last_web[600];
+extern bool host_esp_range;
+extern uint32_t host_esp_ranges;
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } else if (verbose) { printf("  ok: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -374,6 +376,20 @@ int main(int argc, char **argv)
     double low = sink_level();
     CHECK(low < full * 0.1 && low > full * 0.01, "volume 40 is about 30 dB down (%.0f -> %.0f)", full, low);
     cmd_u8(PVA_C_VOLUME, 80);
+    CHECK(cmd_u8(PVA_C_MUTE, 2) == PVA_OK, "mute");
+    run_ms(500);
+    sink_level();
+    run_ms(500);
+    double mut = sink_level();
+    read_status();
+    CHECK(mut < full * 0.001 && (st[PVA_ST_FLAGS] & PVA_F_MUTED) && st[PVA_ST_VOLUME] == 80, "muted: silent, the volume stays 80 (%.0f)", mut);
+    CHECK(cmd_u8(PVA_C_MUTE, 2) == PVA_OK, "sound on again");
+    run_ms(500);
+    sink_level();
+    run_ms(500);
+    double back = sink_level();
+    read_status();
+    CHECK(back > full * 0.5 && !(st[PVA_ST_FLAGS] & PVA_F_MUTED), "the sound is back (%.0f)", back);
     CHECK(cmd_u16(PVA_C_SEEK, 15) == PVA_OK, "seek to 15 s");
     run_ms(300);
     read_status();
@@ -630,7 +646,7 @@ int main(int argc, char **argv)
     CHECK(cmd_str(PVA_C_PLAY_PATH, "http://radio.test/list.pls") == PVA_OK, "PLAY_PATH takes a URL too");
     run_ms(3000);
     read_status();
-    CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM && !strcmp(ststr(PVA_ST_ALBUM), "Test FM"), ".pls play list opened ('%s')", ststr(PVA_ST_ALBUM));
+    CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM && !strcmp(ststr(PVA_ST_ALBUM), "Test FM") && !(st[PVA_ST_FLAGS] & PVA_F_TLS), ".pls play list opened ('%s'), not TLS", ststr(PVA_ST_ALBUM));
     uint32_t tls0 = host_esp_tls_opens;
     {
         static const char a7[] = "https://secure.test/stream.mp3\0";
@@ -639,7 +655,7 @@ int main(int argc, char **argv)
     run_ms(5000);
     read_status();
     CHECK(host_esp_tls_opens == tls0 + 1 && !strcmp(host_esp_last_sni, "secure.test"), "TLS open with the host name for SNI ('%s')", host_esp_last_sni);
-    CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_ALBUM), "Secure Radio"), "HTTPS stream plays");
+    CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_ALBUM), "Secure Radio") && (st[PVA_ST_FLAGS] & PVA_F_TLS), "HTTPS stream plays, flagged TLS");
     CHECK(cmd(PVA_C_DIAG, NULL, 0) == PVA_OK && strstr((char *)reply, "(TLS)"), "DIAG shows TLS and the open time");
     cmd(PVA_C_STOP, NULL, 0);
 
@@ -1403,6 +1419,71 @@ int main(int argc, char **argv)
                 run_ms(6000);
                 read_status();
                 CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "the station plays on after it");
+
+                // a big page over https while the https station plays: pieces, the radio filling
+                // its buffer between them, each next piece from where the last one ended (Range)
+                uint8_t kb[] = "news.feed1\0Big|https://news.test/bigfeed";
+                cmd(PVA_C_CFG_SET, kb, sizeof kb);
+                cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+                run_ms(8000);
+                read_status();
+                uint16_t un1 = st16(PVA_ST_UNDERRUNS);
+                uint32_t rg0 = host_esp_ranges;
+                cmd_u8(PVA_C_NEWS_FULL, 0);
+                bool waited = false, holdseen = false;
+                for (int w_ = 0; w_ < 3600 && ck[PVA_CK_ART_STATE] != PVA_ART_DONE && ck[PVA_CK_ART_STATE] != PVA_ART_FAILED; w_++)
+                {
+                    run_ms(50); read_clock();
+                    if (ck[PVA_CK_ART_WAIT] == 1) waited = true;
+                    if (ck[PVA_CK_ART_WAIT] == 2) holdseen = true;
+                }
+                (void)holdseen;
+                cmd(PVA_C_NEWS_TEXT, tq, 6);
+                read_status();
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && !(reply[2] & PVA_TXF_PART) && host_esp_ranges >= rg0 + 2 && waited,
+                      "a big page in pieces (%u Range requests, flags %u, state %u)", host_esp_ranges - rg0, reply[2], ck[PVA_CK_ART_STATE]);
+                {
+                    uint8_t ta[6] = { 0, 1, 0, 0, 4, 78 };
+                    cmd(PVA_C_NEWS_TEXT, ta, 6);
+                    uint16_t nl = (uint16_t)(reply[0] | (reply[1] << 8));
+                    bool first = false, last = false;
+                    for (uint32_t i = 3; i + 14 < reply_len; i++) if (!memcmp(reply + i, "Paragraph 1 ", 12)) first = true;
+                    ta[2] = (uint8_t)(nl - 4u); ta[3] = (uint8_t)((nl - 4u) >> 8);
+                    cmd(PVA_C_NEWS_TEXT, ta, 6);
+                    for (uint32_t i = 3; i + 14 < reply_len; i++) if (!memcmp(reply + i, "Paragraph 40 ", 13)) last = true;
+                    CHECK(last && first && nl > 100, "all of it: paragraphs 1 to 40 (%u lines)", nl);
+                }
+                CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st16(PVA_ST_UNDERRUNS) == un1, "the radio played on without a gap (underruns %u -> %u)", un1, st16(PVA_ST_UNDERRUNS));
+                // ESC while it comes in: what is there stays, as a part; Enter: the rest
+                run_ms(8000);
+                cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+                run_ms(8000);
+                cmd_u8(PVA_C_NEWS_FULL, 0);
+                WAIT_CLOCK(ck[PVA_CK_ART_WAIT] == 1, 20000);
+                CHECK(cmd_u8(PVA_C_NEWS_FULL, 0xFF) == PVA_OK, "NEWS_FULL FFh stops it");
+                read_clock();
+                cmd(PVA_C_NEWS_TEXT, tq, 6);
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && (reply[2] & PVA_TXF_PART), "stopped: a part (flags %u, state %u)", reply[2], ck[PVA_CK_ART_STATE]);
+                cmd_u8(PVA_C_NEWS_FULL, 0);
+                read_clock();
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_LOADING, "Enter: the rest comes");
+                WAIT_CLOCK(ck[PVA_CK_ART_STATE] != PVA_ART_LOADING, 180000);
+                cmd(PVA_C_NEWS_TEXT, tq, 6);
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && !(reply[2] & PVA_TXF_PART), "then all of it (flags %u)", reply[2]);
+                // a server without Range: it sends all of it again, the part read is skipped
+                host_esp_range = false;
+                run_ms(8000);
+                cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+                run_ms(8000);
+                cmd_u8(PVA_C_NEWS_FULL, 0);
+                WAIT_CLOCK(ck[PVA_CK_ART_STATE] != PVA_ART_LOADING, 180000);
+                cmd(PVA_C_NEWS_TEXT, tq, 6);
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && (reply[2] & PVA_TXF_PART), "no Range: a part (flags %u, KB %u)", reply[2], ck[PVA_CK_ART_KB] | (ck[PVA_CK_ART_KB + 1] << 8));
+                cmd_u8(PVA_C_NEWS_FULL, 0);
+                WAIT_CLOCK(ck[PVA_CK_ART_STATE] != PVA_ART_LOADING, 180000);
+                cmd(PVA_C_NEWS_TEXT, tq, 6);
+                CHECK(ck[PVA_CK_ART_STATE] == PVA_ART_DONE && !(reply[2] & PVA_TXF_PART), "Enter: all of it, the radio waiting (flags %u)", reply[2]);
+                host_esp_range = true;
                 host_esp_tls_ms = tls_ms;
                 CHECK(st16(PVA_ST_UNDERRUNS) == un0 && host_audio_underruns == 0, "and played on from its buffer meanwhile (underruns %u)", st16(PVA_ST_UNDERRUNS) - un0);
                 cmd(PVA_C_STOP, NULL, 0);

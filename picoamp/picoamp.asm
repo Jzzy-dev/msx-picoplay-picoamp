@@ -10,7 +10,7 @@
 ; and draws what changed.
 ;
 ; Keys: Up/Down select, Left/Right page, Enter open/play, BS parent folder,
-;       Space pause/play, S stop, N next, P previous, + (or =) / - volume,
+;       Space pause/play, S stop, N next, P previous, + (or =) / - volume, M mute,
 ;       , / . 10 seconds back / on, H shuffle, R repeat,
 ;       V spectrum / oscilloscope, G equalizer screen, E next preset,
 ;       Z full screen pictures, F / D (DEL) add / remove a favourite,
@@ -145,6 +145,7 @@ C_NFULL  equ #41
 C_NTEXT  equ #42
 C_NINFO  equ #43
 C_NSORT  equ #44
+C_MUTE   equ #45
 W_CLOCK  equ #4D00
 
 ; status block offsets
@@ -172,6 +173,8 @@ ST_BAL   equ 184
 F_SEEK   equ #04
 F_STREAM equ #10
 F_BUFFER equ #20
+F_TLS   equ #40
+F_MUTED equ #80
 
 ; visualisation block offsets
 V_SEQ    equ #00
@@ -2553,7 +2556,7 @@ draw_modes:
         ld b,3
         jp put_str
 
-; "128K 44.1KHZ ST" or "BUFFERING 40%"
+; "128K 44.1KHZ ST" (a stream: "128K 44.1KHZ ST HTTPS") or "BUFFERING 40%"
 fmt_format:
         ld de,linebuf
         ld a,(st+ST_FLAGS)
@@ -2566,7 +2569,7 @@ fmt_format:
         ld h,0
         call fmt_u16
         ld a,'%'
-        ld (de),a
+.pc:    ld (de),a
         inc de
         xor a
         ld (de),a
@@ -2604,10 +2607,20 @@ fmt_format:
         call strcpy
         ld a,(st+ST_CHAN)
         cp 1
-        ld hl,txt_mono
-        jr z,.ch
         ld hl,txt_stereo
-.ch:    jp strcpy
+        jr nz,.ch
+        ld hl,txt_mono
+.ch:    call strcpy
+        ld a,(st+ST_FLAGS)
+        bit 4,a                 ; F_STREAM: " HTTP" or " HTTPS"
+        ret z
+        ld hl,txt_http
+        call strcpy
+        ld a,(st+ST_FLAGS)
+        and F_TLS
+        ret z
+        ld a,'S'
+        jr .pc
 
 draw_seek:
         ; knob position 0..29 = elapsed * 29 / total (streams: the buffer fill)
@@ -2696,8 +2709,12 @@ draw_state:
         ld c,A_TITLE
         jp put_str
 
-draw_volume:
+draw_volume:                    ; (muted: the cells in red)
+        ld a,(st+ST_FLAGS)
+        and F_MUTED             ; (80h)
+        ld c,a
         ld a,(st+ST_VOL)
+        or c
         ld hl,vol_shown
         cp (hl)
         ret z
@@ -2710,10 +2727,17 @@ draw_volume:
         ld e,a
         add a,a
         add a,e
-        cp c
-        jr nc,.off
+        ld e,a
+        ld a,c
+        and #7F
+        cp e
+        jr c,.off
+        jr z,.off
         ld ix,pat_vol_on
         ld a,GREEN*16+BLUE_D
+        bit 7,c
+        jr z,.put
+        ld a,RED*16+BLUE_D
         jr .put
 .off:   ld ix,pat_vol_off
         ld a,GREY*16+BLUE_D
@@ -5787,7 +5811,14 @@ keys_common:
         jp z,toggle_view
         cp 'Z'
         jp z,fs_open
+        cp 'M'
+        jp z,do_mute
         ret
+
+do_mute:                        ; the sound off / on again (the volume stays)
+        ld e,2
+        ld a,C_MUTE
+        jp cmd_u8
 
 vol_up: ld a,(st+ST_VOL)
         add a,5
@@ -6190,8 +6221,9 @@ txt_loading:    db "LOADING THE LIST...",0
 txt_buffering:  db "BUFFERING ",0
 txt_kbps:       db "K ",0
 txt_khz:        db "KHZ ",0
-txt_mono:       db "MONO",0
+txt_mono:       db "MO",0
 txt_stereo:     db "ST",0
+txt_http:       db " HTTP",0
 txt_nofolder:   db "FOLDER NOT FOUND",0
 txt_listfail:   db "THE STATION LIST DID NOT LOAD",0
 txt_p12:        db "+12",0
@@ -6214,7 +6246,7 @@ help_text:
         db #5E,"Left/Right page       BS     parent",0
         db #5E,"Space      pause      S      stop",0
         db #5E,"N / P      next/prev  , / .  -10s/+10s",0
-        db #5E,"+ = / -    volume     H / R  shuffle/rep",0
+        db #5E,"+ = / - M  vol/mute   H / R  shuffle/rep",0
         db #5E,"V          scope      G      equalizer",0
         db #5E,"E          EQ preset  Z      full screen",0
         db #5E,"F          favourite+ D, DEL favourite-",0
