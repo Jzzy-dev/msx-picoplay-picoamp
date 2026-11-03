@@ -164,6 +164,7 @@ typedef struct
     uint16_t reconnects;
     uint16_t rcv_max;               // TCP_RCV request size in use
     uint32_t dns_ms, open_ms;       // time of the last DNS lookup and TCP/TLS open
+    uint32_t back_ms;               // after the last lend: its reconnect, until audio comes again
     uint32_t gaps;                  // receive pauses longer than 500 ms
     uint32_t longest_gap_ms;
     uint32_t esp_errors;            // ESP answers with an error code

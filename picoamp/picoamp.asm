@@ -317,6 +317,7 @@ mainloop:
         or a
         call nz,check_loading
         call ticker_run
+        call state_cycle
         ld a,(pg_on)
         or a
         call nz,M_TICK
@@ -2672,7 +2673,27 @@ draw_seek:
         ld a,WHITE*16+NAVY
         jp put_cell
 
+; a station that plays: its name about 3 s, then "PLAYING 1/38" about 1 s
+state_cycle:
+        ld a,(pg_on)
+        ld hl,help_on
+        or (hl)
+        ld hl,fs_on
+        or (hl)
+        ld hl,eq_open
+        or (hl)
+        ret nz
+        call st_kind
+        ld hl,st_kind_shown
+        cp (hl)
+        ret z
+        ; fall through
 draw_state:
+        call st_kind
+        ld (st_kind_shown),a
+        or a
+        ld hl,st+ST_ALBUM
+        jr nz,.p2
         ld de,linebuf
         ld a,(loading)
         or a
@@ -2703,11 +2724,32 @@ draw_state:
         inc de
         ld hl,(st+ST_PLCNT)
         call fmt_u16
-.put:   ld de,#000B
-        ld hl,linebuf
+.put:   ld hl,linebuf
+.p2:    ld de,#000B
         ld b,20
         ld c,A_TITLE
         jp put_str
+
+st_kind:                        ; A = 1: the station's name now, else 0
+        ld a,(loading)
+        or a
+        jr nz,.no
+        ld a,(st+ST_STATE)
+        dec a
+        jr nz,.no
+        ld a,(st+ST_FLAGS)
+        and F_STREAM
+        jr z,.no
+        ld a,(st+ST_ALBUM)
+        or a
+        jr z,.no
+        ld a,(JIFFY)            ; 4 steps of 64 interrupts: 3 the name, 1 PLAYING
+        and #C0
+        cp #C0
+        ld a,1
+        ret nz
+.no:    xor a
+        ret
 
 draw_volume:                    ; (muted: the cells in red)
         ld a,(st+ST_FLAGS)
@@ -6359,6 +6401,7 @@ vol_shown:      db #FF
 eq_preset:      db 0
 eq_shown:       db #FF
 eq_open:        db 0
+st_kind_shown:  db 0
 eq_sel:         db 0
 eq_drag:        db #FF
 eqbal:          db 50
@@ -6563,7 +6606,7 @@ MODBASE         equ tkstrip                 ; (shared: a page module while it sh
 fav_url         equ tkstrip + 8*82*8
 fav_name        equ fav_url + 256
 modext          equ fav_name + 64           ; (more room for a page module)
-ckb             equ modext + 1600           ; the engine's clock block (pages)
+ckb             equ modext + 1344           ; the engine's clock block (pages)
 t6tk            equ ckb + 48                ; row 0's ticker on a page / the full screen: 34 cells
 bss_end         equ t6tk + 34*8
 MOD_MAX         equ ckb - MODBASE

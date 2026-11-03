@@ -46,7 +46,7 @@ extern bool host_esp_web_down;
 extern uint32_t host_esp_web_requests;
 extern char host_esp_last_web[600];
 extern bool host_esp_range;
-extern uint32_t host_esp_ranges;
+extern uint32_t host_esp_ranges, host_esp_redirs;
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } else if (verbose) { printf("  ok: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -1420,6 +1420,19 @@ int main(int argc, char **argv)
                 read_status();
                 CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "the station plays on after it");
 
+                // after a lend the station connects again to the URL it ended at (its redirects
+                // were followed once), not to its first URL
+                {
+                    static const char sg[] = "https://secure.test/go\0";
+                    cmd(PVA_C_PLAY_URL, sg, sizeof sg);
+                    run_ms(30000);
+                    uint32_t r0 = host_esp_redirs;
+                    cmd_u8(PVA_C_NEWS_FETCH, 0); WAIT_NEWS();
+                    run_ms(6000);
+                    read_status();
+                    CHECK(r0 >= 1 && host_esp_redirs == r0 && st[PVA_ST_STATE] == PVA_STATE_PLAYING && pva_net_stats()->back_ms > 0 && pva_net_stats()->back_ms < 3000,
+                          "after a lend: straight to the URL in use (redirects %u -> %u, back in %lu ms)", r0, host_esp_redirs, (unsigned long)pva_net_stats()->back_ms);
+                }
                 // a big page over https while the https station plays: pieces, the radio filling
                 // its buffer between them, each next piece from where the last one ended (Range)
                 uint8_t kb[] = "news.feed1\0Big|https://news.test/bigfeed";

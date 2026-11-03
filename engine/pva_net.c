@@ -145,6 +145,13 @@ static uint8_t  redirects;
 static uint32_t wait_until;
 static uint32_t retry_delay_ms;
 static uint8_t  lend;               // web/directory requests that need the ESP's one TLS connection
+static uint32_t lend_t0;            // when the first of them asked
+static bool     lend_back;          // closed for a lend: connect again to the URL in use (after its
+                                    // redirects), with its address, not the station's first URL
+static uint32_t t_lent;             // when the stream closed for a lend (0: not)
+static uint32_t t_back;             // when it began to connect again after it
+static char     dns_host[HOST_MAX + 1];
+static uint8_t  dns_ip[4];
 static uint32_t t_start;            // start of the current request phase
 static uint32_t last_data_ms;
 static bool     ever_streamed;
@@ -454,11 +461,18 @@ static void headers_done(void)
     if (st.http != 200)
     {
         set_failed(PVA_NERR_HTTP);
+        t_lent = 0;                 // (the URL in use is old: the station's own URL next)
         decide(ever_streamed ? AFTER_RETRY : AFTER_FAIL);
         return;
     }
     if (bad_format) { set_failed(PVA_NERR_FORMAT); decide(AFTER_FAIL); return; }
     s = S_BODY;
+    if (t_lent)
+    {
+        st.back_ms = pva_hal_millis() - t_back;
+        pva_log("stream: back after %lu ms", (unsigned long)st.back_ms);
+        t_lent = 0;
+    }
     meta_left_audio = metaint;
     meta_len = 0;
     pls_len = 0;
@@ -515,6 +529,7 @@ static void start_open(void)
 static void begin_connect(void)
 {
     if (!parse_url(cur)) { set_failed(PVA_NERR_URL); close_then(AFTER_FAIL); return; }
+    if (!have_ip && t_lent && dns_host[0] && !strcmp(host, dns_host)) { memcpy(ip, dns_ip, 4); have_ip = true; }
     st.tls = tls;
     status_seen = false;
     line_len = 0;
@@ -668,12 +683,16 @@ static void poll_receive(uint32_t now)
         if (gap > st.longest_gap_ms) st.longest_gap_ms = gap;
         if (gap > T_NODATA_MS) { lost_connection(PVA_NERR_TIMEOUT); return; }
     }
-    if (!want_fn && lend && tls && s == S_BODY && !body_playlist)
+    if (!want_fn && lend && tls && s == S_BODY && !body_playlist &&
+        (pva_net_buffered() >= ring_size - ring_size / 10u || now - lend_t0 > 4000u))
     {
+        // (with its buffer full first, or after 4 s)
         // the ESP-01 has one TLS connection: the stream lends it (the buffer plays on) and
         // connects again when the web request is done
         pva_log("stream: lends its TLS connection");
         retry_delay_ms = 100u;
+        lend_back = true;
+        t_lent = now;
         close_then(AFTER_RETRY);
         return;
     }
@@ -725,6 +744,8 @@ void pva_net_poll(void)
             }
             memcpy(ip, pfirst, 4);
             have_ip = true;
+            snprintf(dns_host, sizeof dns_host, "%s", host);
+            memcpy(dns_ip, ip, 4);
             st.dns_ms = now - t_start;
             pva_log("stream: %.32s is %u.%u.%u.%u (%lu ms)", host, ip[0], ip[1], ip[2], ip[3], (unsigned long)st.dns_ms);
             esp_clear();
@@ -752,6 +773,8 @@ void pva_net_poll(void)
                     s = S_CLEANUP;
                     return;
                 }
+                dns_host[0] = 0;            // (the address may be old)
+                t_lent = 0;
                 fail_or_retry(PVA_NERR_CONNECT);
                 return;
             }
@@ -801,7 +824,9 @@ void pva_net_poll(void)
                     st.reconnects++;
                     wait_until = now + retry_delay_ms;
                     retry_delay_ms = retry_delay_ms < 8000u ? retry_delay_ms * 2u : 8000u;
-                    snprintf(cur, URL_MAX + 1, "%s", url);
+                    if (!lend_back || !t_lent) snprintf(cur, URL_MAX + 1, "%s", url);
+                    else pva_log("stream: again to %.40s", cur);
+                    lend_back = false;
                     redirects = 0;
                     s = S_WAIT;
                     return;
@@ -846,7 +871,7 @@ void pva_net_poll(void)
         case S_WAIT:
             if ((int32_t)(now - wait_until) < 0) return;
             if (lend && tls && after == AFTER_RETRY) return;   // (its TLS connection is lent)
-            if (after == AFTER_RETRY) { begin_connect(); return; }
+            if (after == AFTER_RETRY) { t_back = now; begin_connect(); return; }
             esp_request(FN_NETSTATE, NULL, 0, NULL, 0, T_NETSTATE_MS);
             s = S_NETSTATE;
             return;
@@ -921,6 +946,8 @@ int pva_net_start(const char *u)
     read_total = put_total = 0;
     redirects = 0;
     retry_delay_ms = 1000u;
+    t_lent = 0;
+    lend_back = false;
     ever_streamed = false;
     cleaned = false;
     memset(rate_slot, 0, sizeof rate_slot);
@@ -1010,7 +1037,7 @@ const char *pva_net_host(void) { return host; }
 
 uint8_t pva_net_conn(void) { return conn; }
 // a web request borrows the stream's TLS connection (on), or gives it back
-void pva_net_lend_tls(bool on) { if (on) lend++; else if (lend) lend--; }
+void pva_net_lend_tls(bool on) { if (on) { if (!lend) lend_t0 = pva_hal_millis(); lend++; } else if (lend) lend--; }
 // the stream holds no TLS connection now
 bool pva_net_is_tls(void) { return tls; }
 bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAILED); }

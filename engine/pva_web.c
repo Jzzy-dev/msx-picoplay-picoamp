@@ -26,7 +26,7 @@
 #define T_RCV_MS        2000u
 #define T_CLOSE_MS      1000u
 #define T_QUERY_MS      90000u         // (an article's page can be big)
-#define T_LEND_MS       6000u
+#define T_LEND_MS       10000u         // (the stream fills its buffer first, up to 4 s)
 #define IDLE_POLL_MS    4u
 #define QUIET_MS        400u
 

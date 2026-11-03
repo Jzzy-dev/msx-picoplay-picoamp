@@ -64,6 +64,7 @@ long long host_esp_date_base = 1793303100LL;    // Date headers: 2026-10-29 19:4
 bool     host_esp_web_down = false;         // 10.0.0.6..8 refuse connections
 bool     host_esp_range = true;             // news.test/big answers Range with 206
 uint32_t host_esp_ranges;                   // Range requests news.test had
+uint32_t host_esp_redirs;                   // requests for secure.test/go (a redirect)
 uint32_t host_esp_web_requests;
 char     host_esp_last_web[600];
 
@@ -527,6 +528,7 @@ static void serve(conn_t *c)
         return;
     }
     if (sec && !c->tls) { http_reply(c, "HTTP/1.1 400 Bad Request\r\n\r\n", NULL); return; }
+    if (sec && !strcmp(path, "/go")) { host_esp_redirs++; http_reply(c, "HTTP/1.1 302 Found\r\nLocation: https://secure.test/stream.mp3\r\n\r\n", NULL); return; }
     if ((r1 && !strcmp(path, "/stream.mp3")) || (sec && !strcmp(path, "/stream.mp3")))
     {
         char hd[300];

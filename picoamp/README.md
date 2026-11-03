@@ -53,6 +53,7 @@ The engine is found by itself in any slot, as PVTEST and PicoPlay do.
 |------|---------------|
 | Title bar | State (PLAYING / PAUSED / STOPPED), position in the playlist, a close box for the mouse |
 | Big digits | Elapsed time |
+| State | STOPPED, PAUSED, PLAYING 1/38; for a station its name about 3 s, then PLAYING 1/38 about 1 s |
 | Info lines | Title, artist (the station for radio), then bit rate, sample rate and mono/stereo, and for a station HTTP or HTTPS ("128K 44.1KHZ ST HTTPS"; or "BUFFERING 40%"). The volume bar turns red while muted (M) |
 | Seek bar | Position in the track; for radio, how full the buffer is |
 | Picture | Spectrum: 24 bars from 60 Hz to 16 kHz on a log scale, 2 dB a step, with falling peak dots. Or the oscilloscope, or the equalizer |
@@ -233,7 +234,13 @@ connection at a time. When a radio station plays over https and a feed or an
 article is https too (most are, and the BBC's http feeds move to https), the
 station lends its connection: it closes it while its buffer plays on, the
 engine reads the feed, and the station connects again, usually without a
-gap. A long article page would take longer than the buffer lasts, so it comes
+gap. It lends it only with its buffer full (or after 4 s), and it connects
+again straight to the address it ended at (after the station's redirects,
+with the address known), so it is back sooner: a station behind two
+redirects (StreamTheWorld) took 2-4 s, now about 1. The music still jumps
+by the seconds it was away. A big feed comes in pieces too, as an article
+does (below). An http version of a station needs no lending at all: the
+format line shows HTTP or HTTPS. A long article page would take longer than the buffer lasts, so it comes
 in pieces: a piece ends while the radio's buffer still holds enough for the
 station to connect again (its last TLS open time plus 1.5 s, from its bit
 rate), the station fills its buffer again ("Article, the radio's turn..."),
