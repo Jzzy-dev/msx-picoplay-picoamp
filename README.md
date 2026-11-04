@@ -6,6 +6,8 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 ![PICOAMP playing](picoamp/images/picoamp_playing.png)
 
+<video src="https://youtu.be/hVLpiqQKfts" width="320" height="240" controls></video>
+
 [![WhatsApp Image 2026 10 27 at 17.31.34 (1)](https://msx.pics/images/2026/10/27/WhatsApp-Image-2026-10-27-at-17.31.34-1.md.jpeg)](https://msx.pics/image/x5IYH) [![WhatsApp Image 2026 10 27 at 17.31.34 (2)](https://msx.pics/images/2026/10/27/WhatsApp-Image-2026-10-27-at-17.31.34-2.md.jpeg)](https://msx.pics/image/x5qvI)
 
 <img width="1892" height="1286" alt="keys" src="https://github.com/user-attachments/assets/f7f9e4c0-214f-4276-9ebf-6b83d31da987" />
