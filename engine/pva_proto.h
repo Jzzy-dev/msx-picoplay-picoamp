@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        15
+#define PVA_FW_MINOR        16
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -197,7 +197,7 @@
                                     // pattern bytes (the cells row by row, 8 each, bit 7 the left pixel), 800 colour bytes
                                     // (first << 4 | second). PVA_E_BUSY: still in the making, PVA_E_NOTFOUND: none
 #define PVA_COVER_BYTES     1632
-// (engine 0.15: a station's logo too, from Radio Browser, kept on the card in PICOAMP/LOGOS)
+// (engine 0.15: a station's logo too; 0.16: online covers for songs and files, default pictures)
 #define PVA_COVER_NONE      0       // PVA_ST_COVER_STATE
 #define PVA_COVER_MAKING    1
 #define PVA_COVER_READY     2

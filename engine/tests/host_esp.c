@@ -13,8 +13,9 @@
 //     /list.pls       audio/x-scpls body pointing at /stream.mp3
 //     /aac            content-type audio/aacp
 //     /missing        404
-//     /logo.png, /logo.jpg  the station logos (logo.png / logo.jpg in host_esp_logo_dir)
-//     /logo.txt       a "logo" that is no picture
+//   wsrv.nl (10.0.0.12): the image proxy: ?...&url=<a logo or a cover> answers logo.jpg (a
+//     station's logo) or art.jpg (a cover) from host_esp_logo_dir; a .txt: 404 (no picture)
+//   itunes.apple.com (10.0.0.13): /search?term=: "Artist One ..." has a cover, the rest none
 //   radio2.test (10.0.0.2) port 8000  /live  plain stream
 //   secure.test (10.0.0.3)            TLS only, /stream.mp3
 //   all.api.radio-browser.info, de1.api.radio-browser.info (10.0.0.4) and
@@ -43,7 +44,9 @@
 bool     host_esp_present = true;
 const char *host_esp_logo_dir = "assets";
 uint32_t host_esp_logo_gets;                // requests for a logo
-bool     host_esp_logo_stall;               // a logo's server sends its headers, then nothing
+bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
+uint32_t host_esp_itunes_asks;              // questions to the iTunes search
+char     host_esp_last_itunes[200];
 uint8_t  host_esp_wifi_state = 2;           // NET_STATE answer, 2 = connected
 uint32_t host_esp_uart_bpms = 86;           // 859372 baud / 10 bits / 1000
 uint32_t host_esp_server_bps = 24000;       // server sends this many bytes/s (128 kbit/s = 16000)
@@ -665,7 +668,7 @@ static void serve(conn_t *c)
     char *r = (char *)c->reqbuf.b;
     char path[600] = "", hosth[128] = "";
     sscanf(r, "GET %599s", path);
-    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4) && strncmp(path, "/v8/", 4) && strncmp(path, "/rss/2.0/", 9)) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }
+    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4) && strncmp(path, "/v8/", 4) && strncmp(path, "/rss/2.0/", 9) && c->ip[3] < 12) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }
    // a stream's ?query does not matter
     char *h = strstr(r, "\r\nHost: ");
     if (h) sscanf(h + 8, "%127[^\r]", hosth);
@@ -676,6 +679,55 @@ static void serve(conn_t *c)
     if (c->ip[3] >= 6 && c->ip[3] <= 8) { web(c, path); return; }
     if (c->ip[3] == 9) { news(c, path); return; }
     if (c->ip[3] == 10 || c->ip[3] == 11) { yahoo(c, path, r); return; }
+    if (c->ip[3] == 12)
+    {
+        // the image proxy
+        host_esp_logo_gets++;
+        const char *u = strstr(path, "url=");
+        char want[300] = "";
+        size_t k = 0;
+        for (const char *q = u ? u + 4 : ""; *q && *q != '&' && k + 1 < sizeof want; q++)
+        {
+            if (*q == '%' && q[1] && q[2]) { char h[3] = { q[1], q[2], 0 }; want[k++] = (char)strtol(h, NULL, 16); q += 2; }
+            else want[k++] = *q;
+        }
+        want[k] = 0;
+        if (host_esp_logo_stall)
+        {
+            static const char hd[] = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 9000\r\n\r\n\xff\xd8";
+            bq_put(&c->out, hd, sizeof hd - 1);
+            c->kind = 3;
+            c->closed = false;
+            return;
+        }
+        const char *file = strstr(want, ".txt") ? NULL : strstr(want, "art.test") ? "art.jpg" : "logo.jpg";
+        char fn[300];
+        FILE *fp = NULL;
+        if (file) { snprintf(fn, sizeof fn, "%s/%s", host_esp_logo_dir, file); fp = fopen(fn, "rb"); }
+        if (!fp) { http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n", "Error 404: Unable to parse the image"); return; }
+        static uint8_t im[65536];
+        size_t n = fread(im, 1, sizeof im, fp);
+        fclose(fp);
+        char hd[160];
+        snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", (unsigned)n);
+        bq_put(&c->out, hd, strlen(hd));
+        bq_put(&c->out, im, n);
+        c->kind = 3;
+        c->closed = true;
+        return;
+    }
+    if (c->ip[3] == 13)
+    {
+        host_esp_itunes_asks++;
+        snprintf(host_esp_last_itunes, sizeof host_esp_last_itunes, "%s", path);
+        if (strstr(path, "Artist%20One"))
+            http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n",
+                       "\n\n\n{\n \"resultCount\":1,\n \"results\": [\n{\"wrapperType\":\"track\", \"artistName\":\"Artist One\", "
+                       "\"artworkUrl60\":\"https://art.test/one/60x60bb.jpg\", \"artworkUrl100\":\"https://art.test/one/100x100bb.jpg\"}]\n}\n");
+        else
+            http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n", "\n\n\n{\n \"resultCount\":0,\n \"results\": []\n}\n");
+        return;
+    }
     if (c->ip[3] == 4 || c->ip[3] == 5)
     {
         if (host_esp_api_http_silent && !c->tls) return;
@@ -813,7 +865,8 @@ static int dns(const char *name, uint8_t *ip)
         { "nl1.api.radio-browser.info", { 10, 0, 0, 5 } }, { "ip-api.com", { 10, 0, 0, 6 } },
         { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } },
         { "news.test", { 10, 0, 0, 9 } }, { "feeds.finance.yahoo.com", { 10, 0, 0, 9 } },
-        { "query1.finance.yahoo.com", { 10, 0, 0, 10 } }, { "query2.finance.yahoo.com", { 10, 0, 0, 11 } } };
+        { "query1.finance.yahoo.com", { 10, 0, 0, 10 } }, { "query2.finance.yahoo.com", { 10, 0, 0, 11 } },
+        { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
     return -1;
 }
@@ -847,7 +900,7 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 11);
+            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 13);
             if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && a[3] <= 9 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];

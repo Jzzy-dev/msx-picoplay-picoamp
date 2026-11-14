@@ -1136,19 +1136,6 @@ static void split_stream_title(const char *t)
     }
 }
 
-static bool net_wait;               // the stream starts when the station's logo is there (or given up)
-static bool net_wait_esp;           // the ESP link is held meanwhile (not closed and opened again between them)
-static uint32_t net_wait_t0;
-#define NET_WAIT_MAX_MS 9000u       // whatever the logo does: the stream starts after this
-static char wait_url[URL_MAX_LEN + 1], wait_uuid[40];
-
-static void net_wait_end(void)
-{
-    if (net_wait) pva_art_station_cancel();
-    net_wait = false;
-    if (net_wait_esp) { net_wait_esp = false; pva_esp_release(); }
-}
-
 static int open_stream(const char *entry)
 {
     char u[URL_MAX_LEN + 1];
@@ -1168,27 +1155,12 @@ static int open_stream(const char *entry)
         given_station[k] = 0;
         if (sep2) uuid = sep2 + 1;
     }
-    // the station's logo first, when it is not known yet (the stream ring is free until the stream starts)
-    if (pva_net_active()) pva_net_stop();
-    pva_dec_close();                        // (its file: the card's logos use it while a station plays)
-    int r;
-    net_wait_end();
-    snprintf(wait_url, sizeof wait_url, "%s", u);
-    snprintf(wait_uuid, sizeof wait_uuid, "%s", uuid ? uuid : "");
-    net_wait = !pva_art_station(wait_url, wait_uuid[0] ? wait_uuid : NULL, given_station);
-    if (net_wait)
-    {
-        net_wait_t0 = pva_hal_millis();
-        net_wait_esp = pva_esp_acquire();
-    }
-    else
-    {
-        r = pva_net_start(u);
-        if (r != PVA_OK) return r;
-        if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
-    }
+    int r = pva_net_start(u);
+    if (r != PVA_OK) return r;
+    if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
+    pva_art_station(u, uuid, given_station);    // its logo (online: it comes when it comes)
     r = pva_dec_open_stream(&info);
-    if (r != PVA_OK) { net_wait = false; pva_art_station_cancel(); pva_net_stop(); return r; }
+    if (r != PVA_OK) { pva_art_none(); pva_net_stop(); return r; }
     snprintf(info.album, sizeof info.album, "%s", given_station);
     if (given_station[0]) snprintf(info.title, sizeof info.title, "%s", given_station);
     else
@@ -1213,7 +1185,6 @@ static int open_track(const char *path)
 {
     if (is_url(path)) return open_stream(path);
     buffering = false;
-    net_wait_end();
     if (pva_net_active()) pva_net_stop();
     char fp[PATH_MAX_LEN + 8];
     fatfs_path(fp, sizeof fp, path);
@@ -1229,7 +1200,7 @@ static int open_track(const char *path)
         r = pva_dec_open(alt, &info);
     }
     if (r == PVA_OK && !info.title[0]) set_title_from_path(path);
-    if (r == PVA_OK) pva_art_track(pva_dec_path(), info.pic_pos, info.pic_len);
+    if (r == PVA_OK) pva_art_track(pva_dec_path(), info.pic_pos, info.pic_len, info.artist, info.album, info.title);
     return r;
 }
 
@@ -1264,7 +1235,7 @@ static int play_pos(uint16_t pos)
 
 static void stop_playback(void)
 {
-    net_wait_end();
+    pva_art_none();
     if (pva_dec_is_stream() || pva_net_active()) pva_net_stop();
     buffering = false;
     pva_dec_close();
@@ -2008,6 +1979,7 @@ bool pva_core1_poll(void)
         {
             shown_title_gen = ns->title_gen;
             split_stream_title(pva_net_stream_title());
+            pva_art_song(info.artist, info.title);      // its cover (online)
             status_dirty = true;
         }
         if (pva_dec_is_stream() && !given_station[0] && pva_net_station()[0] && strcmp(info.album, pva_net_station()))
@@ -2019,20 +1991,7 @@ bool pva_core1_poll(void)
     }
 
     pva_win[PVA_R_WHERE] = PVA_W_DECODE;
-    if (net_wait && (!pva_art_station_busy() || now - net_wait_t0 > NET_WAIT_MAX_MS))
-    {
-        // the logo is there (or given up): now the stream
-        if (pva_art_station_busy()) { pva_log("logo: still busy, the station starts"); pva_art_station_cancel(); }
-        net_wait = false;
-        pva_dec_restart();              // (its pool held the logo's PNG reader)
-        int r = pva_net_start(wait_url);
-        if (net_wait_esp) { net_wait_esp = false; pva_esp_release(); }     // (the stream holds it now)
-        if (r != PVA_OK) { play_error = (uint8_t)r; track_ended(); }
-        else if (wait_uuid[0]) pva_dir_click(wait_uuid);
-        status_dirty = true;
-    }
-    if (net_wait) { }                   // (the stream waits for the logo)
-    else if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
+    if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
     {
         // wait until the buffer has 'prefill' bytes (or the stream gave up)
         size_t b = pva_net_buffered();

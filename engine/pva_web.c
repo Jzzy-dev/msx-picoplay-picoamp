@@ -36,7 +36,8 @@ enum { A_DONE, A_FAIL, A_REDIRECT };
 static pva_esp_slot_t *WS;
 static uint8_t  w = W_IDLE;
 static bool     held, available;
-static bool     aborting;           // pva_web_abort(): ended as soon as the ESP's answer is in
+static bool     aborting;
+static bool     next_nolend, w_nolend;  // pva_web_no_lend(): this request does not borrow the stream's TLS           // pva_web_abort(): ended as soon as the ESP's answer is in
 static uint8_t  conn, redirects, after, werr;
 static uint16_t whttp;
 static bool     w_tls;
@@ -69,6 +70,7 @@ bool     pva_web_lending(void) { return lending; }        // the stream's TLS co
 
 // the request in flight ends (failed) as soon as the ESP has answered what it was asked:
 // its connection is closed, its done callback is called
+void     pva_web_no_lend(void) { next_nolend = true; }
 void     pva_web_abort(void) { if (w != W_IDLE && w != W_CLOSE) aborting = true; }
 
 static void w_close_then(uint8_t what)
@@ -250,7 +252,7 @@ void pva_web_poll(void)
             if (WS->rsp_timeout || WS->rc != 0 || WS->pgot < 1)
             {
                 pva_log("web: %s open failed (rc %u)", w_tls ? "TLS" : "TCP", (unsigned)WS->rc);
-                if (w_tls && !WS->rsp_timeout && WS->rc == 9 && !lent_once && !pva_net_tls_free())
+                if (w_tls && !WS->rsp_timeout && WS->rc == 9 && !lent_once && !w_nolend && !pva_net_tls_free())
                 {
                     // no free connection (UNAPI ERR_NO_FREE_CONN): the ESP-01 has one for TLS,
                     // and the radio uses it; it lends it for this request
@@ -384,6 +386,8 @@ int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_w
 {
     const char *ua = next_agent;
     next_agent = NULL;
+    w_nolend = next_nolend;
+    next_nolend = false;
     if (!available) return PVA_E_NOWIFI;
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
     if (w != W_IDLE) return PVA_E_BUSY;
