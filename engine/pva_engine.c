@@ -1137,12 +1137,16 @@ static void split_stream_title(const char *t)
 }
 
 static bool net_wait;               // the stream starts when the station's logo is there (or given up)
+static bool net_wait_esp;           // the ESP link is held meanwhile (not closed and opened again between them)
+static uint32_t net_wait_t0;
+#define NET_WAIT_MAX_MS 9000u       // whatever the logo does: the stream starts after this
 static char wait_url[URL_MAX_LEN + 1], wait_uuid[40];
 
 static void net_wait_end(void)
 {
     if (net_wait) pva_art_station_cancel();
     net_wait = false;
+    if (net_wait_esp) { net_wait_esp = false; pva_esp_release(); }
 }
 
 static int open_stream(const char *entry)
@@ -1172,7 +1176,12 @@ static int open_stream(const char *entry)
     snprintf(wait_url, sizeof wait_url, "%s", u);
     snprintf(wait_uuid, sizeof wait_uuid, "%s", uuid ? uuid : "");
     net_wait = !pva_art_station(wait_url, wait_uuid[0] ? wait_uuid : NULL, given_station);
-    if (!net_wait)
+    if (net_wait)
+    {
+        net_wait_t0 = pva_hal_millis();
+        net_wait_esp = pva_esp_acquire();
+    }
+    else
     {
         r = pva_net_start(u);
         if (r != PVA_OK) return r;
@@ -2010,12 +2019,14 @@ bool pva_core1_poll(void)
     }
 
     pva_win[PVA_R_WHERE] = PVA_W_DECODE;
-    if (net_wait && !pva_art_station_busy())
+    if (net_wait && (!pva_art_station_busy() || now - net_wait_t0 > NET_WAIT_MAX_MS))
     {
         // the logo is there (or given up): now the stream
+        if (pva_art_station_busy()) { pva_log("logo: still busy, the station starts"); pva_art_station_cancel(); }
         net_wait = false;
         pva_dec_restart();              // (its pool held the logo's PNG reader)
         int r = pva_net_start(wait_url);
+        if (net_wait_esp) { net_wait_esp = false; pva_esp_release(); }     // (the stream holds it now)
         if (r != PVA_OK) { play_error = (uint8_t)r; track_ended(); }
         else if (wait_uuid[0]) pva_dir_click(wait_uuid);
         status_dirty = true;

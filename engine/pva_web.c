@@ -36,6 +36,7 @@ enum { A_DONE, A_FAIL, A_REDIRECT };
 static pva_esp_slot_t *WS;
 static uint8_t  w = W_IDLE;
 static bool     held, available;
+static bool     aborting;           // pva_web_abort(): ended as soon as the ESP's answer is in
 static uint8_t  conn, redirects, after, werr;
 static uint16_t whttp;
 static bool     w_tls;
@@ -65,6 +66,10 @@ uint8_t  pva_web_result(void) { return result; }
 uint32_t pva_web_length(void) { return whttp == 206 && range_total ? range_total : content_len + (whttp == 206 ? w_from : 0); }   // the whole body's size (0: not said)
 void     pva_web_hold(bool on) { w_hold = on; }
 bool     pva_web_lending(void) { return lending; }        // the stream's TLS connection is borrowed
+
+// the request in flight ends (failed) as soon as the ESP has answered what it was asked:
+// its connection is closed, its done callback is called
+void     pva_web_abort(void) { if (w != W_IDLE && w != W_CLOSE) aborting = true; }
 
 static void w_close_then(uint8_t what)
 {
@@ -213,6 +218,18 @@ void pva_web_poll(void)
     if (w == W_IDLE) return;
     pva_esp_io();
     if (!pva_esp_finished(WS) && w != W_HEAD && w != W_BODY && w != W_LEND) return;
+    if (aborting && w != W_CLOSE)
+    {
+        if (WS->want_fn && !pva_esp_finished(WS)) return;      // (its answer first: then it is not left over)
+        aborting = false;
+        if (w == W_OPEN && !WS->rsp_timeout && WS->rc == 0 && WS->pgot >= 1) conn = WS->pfirst[0];
+        pva_esp_clear(WS);
+        if (!werr) werr = PVA_NERR_TIMEOUT;
+        pva_log("web: %.36s given up", w_host);
+        if (w == W_LEND || w == W_DNS) { conn = 0; }
+        w_close_then(A_FAIL);
+        return;
+    }
     uint32_t now = pva_hal_millis();
     switch (w)
     {
@@ -371,6 +388,7 @@ int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_w
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
     if (w != W_IDLE) return PVA_E_BUSY;
     if (!parse_target(url) || url[0] == '/') return PVA_E_ARGS;
+    aborting = false;
     if (!held && !pva_esp_acquire()) return PVA_E_NOWIFI;
     held = true;
     body_fn = body;

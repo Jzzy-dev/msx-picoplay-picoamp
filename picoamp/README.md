@@ -445,7 +445,10 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   server: the station starts without it). The result is kept on the card
   in `PICOAMP/LOGOS` (one small file a station, also "this station has no
   logo"), so the next time the logo is there at once and nothing is asked.
-  Delete the folder to have them fetched again. Transparent parts of a logo
+  Delete the folder to have them fetched again. A logo that has not come
+  after 5 seconds is given up (its request cut off, so the station has the
+  WiFi to itself), and nothing is kept. `[cover] logos=off` in PICOAMP.INI
+  turns the lookup off. Transparent parts of a logo
   are the player's navy. With PICOAMP.COM (Nextor has the card) stations
   have no cover.
 

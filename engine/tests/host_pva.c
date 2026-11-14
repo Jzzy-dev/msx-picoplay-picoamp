@@ -50,6 +50,7 @@ extern bool host_esp_range;
 extern uint32_t host_esp_ranges, host_esp_redirs;
 extern const char *host_esp_logo_dir;
 extern uint32_t host_esp_logo_gets;
+extern bool host_esp_logo_stall;
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } else if (verbose) { printf("  ok: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -2004,6 +2005,33 @@ int main(int argc, char **argv)
             run_ms(3000);
             read_status();
             CHECK(st[PVA_ST_STATE] == PVA_STATE_STOPPED && host_esp_open_conns() == 0, "stopped at once: no stream after it");
+
+            // a logo's server that stops sending: cut off, the station starts after the wait
+            host_esp_logo_stall = true;
+            t0 = pva_hal_millis();
+            CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, its logo's server stops sending");
+            WAIT_COVER(12000);
+            CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM && st[PVA_ST_COVER_STATE] == PVA_COVER_NONE && pva_hal_millis() - t0 < 7500,
+                  "streams after %lu ms, no cover", (unsigned long)(pva_hal_millis() - t0));
+            run_ms(2000);
+            read_status();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && host_esp_open_conns() == 1 && LOGO_FILES() == 0,
+                  "plays; the logo's connection closed (%d open), nothing kept", host_esp_open_conns());
+            host_esp_logo_stall = false;
+            cmd(PVA_C_STOP, NULL, 0);
+            run_ms(300);
+
+            // [cover] logos=off
+            pva_cfg_set("cover.logos", "off");
+            g0 = host_esp_logo_gets;
+            uint32_t q1 = host_esp_requests;
+            CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, logos off");
+            run_ms(1500);
+            read_status();
+            CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM && host_esp_logo_gets == g0 && host_esp_requests == q1 + 1, "no logo asked for");
+            pva_cfg_set("cover.logos", "on");
+            cmd(PVA_C_STOP, NULL, 0);
+            run_ms(300);
 
             // only where the card may be written
             pva_allow_card_writes(false);

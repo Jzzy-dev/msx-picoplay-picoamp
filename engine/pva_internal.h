@@ -239,6 +239,7 @@ bool     pva_web_init(void);
 int      pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done);
 void     pva_web_poll(void);
 bool     pva_web_busy(void);
+void     pva_web_abort(void);
 uint8_t  pva_web_result(void);
 uint8_t  pva_web_error(void);           // PVA_NERR_xxx
 uint16_t pva_web_http(void);

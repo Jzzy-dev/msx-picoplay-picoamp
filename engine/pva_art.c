@@ -243,7 +243,7 @@ void pva_art_poll(void)
 
 // ---------------------------------------------------------------- a station's logo
 #define LGO_HEAD    12u             // "PVLG", version, kind, 0, 0, u32 the palette's hash
-#define LOGO_MS     6000u           // the stream waits for the logo this long at most
+#define LOGO_MS     5000u           // the stream waits for the logo this long at most (then its request is cut off)
 #define RB_BASE     "http://all.api.radio-browser.info/json/stations/"
 
 enum { L_IDLE, L_WAITWEB, L_LOOKUP, L_FETCH, L_CONVERT };
@@ -260,8 +260,9 @@ static bool     looked_ok;          // Radio Browser answered (no logo: kept as 
 static uint8_t  img_kind;           // 0 not yet, 1 PNG, 2 JPEG, 3 neither
 static uint32_t img_len;
 static bool     img_ok;
-static bool     l_img;
-static uint32_t logo_max;           // a JPEG logo's bytes at most              // the next request is the logo (else a question to Radio Browser)
+static bool     l_img;              // the next request is the logo (else a question to Radio Browser)
+static bool     l_inflight;         // our request is with the web client (until its done callback)
+static uint32_t logo_max;           // a JPEG logo's bytes at most
 
 bool pva_card_writes(void);
 #define card_fil (*pva_dec_fil())       // (the decoder's: no file plays when a station does)
@@ -324,6 +325,7 @@ static int card_read(void)
 
 static void logo_end(void)
 {
+    if (l_inflight) pva_web_abort();    // (its connection closed before the stream wants the ESP's)
     if (l_state == L_IDLE) return;
     l_gen++;
     if (state == PVA_COVER_MAKING) set_state(PVA_COVER_NONE);   // (half made: the ring goes to the stream)
@@ -331,7 +333,13 @@ static void logo_end(void)
     cv = NULL;
 }
 
-bool pva_art_station_busy(void) { return l_state != L_IDLE; }
+// busy until our request has left the web client too: the stream then has the ESP to itself
+// (an https logo holds the ESP-01's only TLS connection)
+bool pva_art_station_busy(void)
+{
+    if (l_inflight && !pva_web_busy()) l_inflight = false;
+    return l_state != L_IDLE || l_inflight;
+}
 void pva_art_station_cancel(void) { if (l_state != L_IDLE) pva_log("logo: given up"); logo_end(); }
 
 // the answer about the station: its "favicon"
@@ -360,6 +368,7 @@ static bool lk_body(const uint8_t *p, size_t n)
 
 static void lk_done(bool ok)
 {
+    l_inflight = false;
     if (l_state != L_LOOKUP) return;
     if (ok) looked_ok = true;
     l_state = L_WAITWEB;                    // (the next request: logo_poll)
@@ -422,6 +431,7 @@ static bool img_body(const uint8_t *p, size_t n)
 
 static void img_done(bool ok)
 {
+    l_inflight = false;
     if (l_state != L_FETCH) return;
     if (img_kind == 2 && ok)
     {
@@ -474,6 +484,7 @@ static void logo_poll(void)
         bool img = l_img;
         if (pva_web_get(l_q, img ? img_body : lk_body, img ? img_done : lk_done) == PVA_OK)
         {
+            l_inflight = true;
             l_state = img ? L_FETCH : L_LOOKUP;
             if (!img) { fav_st = 0; memset(roll, 0, sizeof roll); }
         }
@@ -493,6 +504,15 @@ bool pva_art_station(const char *url, const char *uuid, const char *name)
     key[0] = 0;
     picture = false;
     from_card = false;
+    {
+        char v[8];
+        if (pva_cfg_get("cover.logos", v, sizeof v) && (v[0] == 'o' || v[0] == 'O') && (v[1] == 'f' || v[1] == 'F'))
+        {
+            if (state != PVA_COVER_NONE) set_state(PVA_COVER_NONE);
+            cv = NULL;
+            return true;                // ([cover] logos=off in PICOAMP.INI)
+        }
+    }
     if (!on || !set_up || !pva_card_writes()) { if (state != PVA_COVER_NONE || cv) set_state(PVA_COVER_NONE); cv = NULL; return true; }
     cv = NULL;
     snprintf(card_path, sizeof card_path, "0:/PICOAMP/LOGOS/%08lX.LGO", (unsigned long)fnv(url, strlen(url), 2166136261u));

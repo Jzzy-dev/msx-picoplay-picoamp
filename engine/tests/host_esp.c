@@ -43,6 +43,7 @@
 bool     host_esp_present = true;
 const char *host_esp_logo_dir = "assets";
 uint32_t host_esp_logo_gets;                // requests for a logo
+bool     host_esp_logo_stall;               // a logo's server sends its headers, then nothing
 uint8_t  host_esp_wifi_state = 2;           // NET_STATE answer, 2 = connected
 uint32_t host_esp_uart_bpms = 86;           // 859372 baud / 10 bits / 1000
 uint32_t host_esp_server_bps = 24000;       // server sends this many bytes/s (128 kbit/s = 16000)
@@ -713,6 +714,14 @@ static void serve(conn_t *c)
     if (r1 && (!strcmp(path, "/logo.png") || !strcmp(path, "/logo.jpg")))
     {
         host_esp_logo_gets++;
+        if (host_esp_logo_stall)
+        {
+            static const char hd[] = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 90000\r\n\r\n\x89PNG\r\n\x1a\n";
+            bq_put(&c->out, hd, sizeof hd - 1);
+            c->kind = 3;
+            c->closed = false;
+            return;
+        }
         char fn[300];
         snprintf(fn, sizeof fn, "%s/%s", host_esp_logo_dir, path + 1);
         FILE *fp = fopen(fn, "rb");
