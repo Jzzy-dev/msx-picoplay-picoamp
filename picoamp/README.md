@@ -97,6 +97,7 @@ PICOAMP shows "LOADING THE LIST...".
 | C | The clock page |
 | W | The weather page |
 | T | The news page |
+| $ | The market monitor |
 | F | Add the chosen station (or the one that plays) to the favourites |
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
 | / or J | Search the station directory by name |
@@ -275,6 +276,83 @@ the PicoAmp ROM mode.
 
 ![My feeds and the catalogue](images/picoamp_news_feeds.png)
 
+### Markets
+
+$ opens a market monitor (engine 0.13, WiFi) with 80 columns in SCREEN 6
+(512 x 212 dots in four colours: navy, white, green and red; the 80-column
+text mode has only one colour pair besides its own). A list shows up to 40
+instruments in two columns of 20: name, last price, change and percent
+against the previous close; a riser's change is green, a faller's red. The
+chart's columns are green above the previous close and red under it. The line above has the region, the list and the time of the
+last update.
+
+| Key | Action |
+|-----|--------|
+| Left / Right | The previous / next list of the region |
+| Up / Down | Choose an instrument (a list of more than 40 has pages: past the last row is the next page) |
+| Enter | The chosen one's course as a line chart, with its latest headlines under it (there: Left/Right the range, Up/Down the next instrument, T the headlines in the news reader, Enter, BS or ESC back) |
+| I | On an index: its members in the list's place; BS back to the list |
+| O | The order: as the list has them, the risers first, the fallers first (by percent) |
+| 1 2 3 | The region: Europe, Americas, Asia-Pacific |
+| U | Update now |
+| C W T | The clock, weather and news pages |
+| $ or ESC | The player |
+
+Each region has four lists: Indices; Currencies, commodities, rates; and the
+shares of two markets (Europe: AEX and DAX; Americas: Dow Jones 30 and US
+technology; Asia-Pacific: Japan and Hong Kong). The catalogue is in
+`engine/pva_markets_cat.c` (every symbol checked against the service on
+13 November 2026). Commodities and crypto have their currency in the name
+("Gold USD/oz", "TTF EUR/MWh", "Bitcoin EUR").
+
+**Index members.** I on an index shows its members: AEX, AMX (with a few
+other midcaps), DAX, CAC 40, FTSE 100, Euro Stoxx 50, BEL 20, IBEX 35, Dow
+Jones 30, Nasdaq 100, the S&P 100 for the S&P 500, the larger ones of the
+Bovespa, IPC Mexico, Hang Seng and the 40 largest of the Nikkei 225. The
+lists are in the firmware (the source has no list of an index's members
+without a key), as they were in November 2026: a symbol the source no longer
+knows shows no price. A list has up to 100 rows; a hundred prices are five
+requests.
+
+**The tape.** Row 1 of the table shows the region's market headlines as a
+tape (Yahoo Finance's feed for its main indices, fetched every 15 minutes
+while the page shows), a character on every 8 interrupts.
+
+**The chart** is a line of 198 points, green above the previous close (the
+dashed line) and red under it, with a price scale at the right (round
+prices, dotted) and a time scale under it, in the time of the clock's
+place. Left and Right choose the range: 1D (the exchange's day, a point
+every 15 minutes), 5D (hours; the days' names), 1M, 6M, YTD and 1Y (days;
+weeks or months), 5Y (weeks; years) and All (months; years). For the longer
+ranges the change and the dashed line are against the close before the
+range. Under it come the
+instrument's four latest headlines from Yahoo Finance's feed for its symbol
+(often news of its sector); T opens them in the news reader, where Enter
+reads a story and fetches its article as for any feed, and ESC or BS comes
+back to the markets. Without a setting the region follows the clock's time
+zone. My list is a fifth list in every region, when `PICOAMP.INI` has one:
+
+```
+[markets]
+region=europe
+list=ASML.AS,INGA.AS,AAPL,BTC-EUR,EURUSD=X
+refresh=60
+```
+
+`list` takes up to 40 Yahoo Finance symbols (as in the address of an
+instrument's page there), `region` is `europe`, `americas` or `asia` (written
+by 1 2 3), `refresh` the seconds between updates (60, at least 20).
+
+The prices come from Yahoo Finance's chart service
+(`query1.finance.yahoo.com/v8/finance/spark`, 20 symbols a request). It is
+not an official interface: it needs no key, most exchanges are delayed by 15
+to 20 minutes, and it may change or stop. The service is https only and the
+ESP-01 has one TLS connection, so while an https station plays the station
+lends its connection for each update and connects again (it plays from its
+buffer meanwhile); the updates then come every 5 minutes. With an http
+station or a file nothing is interrupted. The engine fetches only while the
+page shows.
+
 ### Settings: PICOAMP.INI
 
 `PICOAMP.INI` in the root of the card keeps the clock's settings:
@@ -419,15 +497,18 @@ after it has reported standing still once.
 
 ### Page modules
 
-The clock, weather and news pages are modules (`clock.asm`, `weather.asm`,
-`news.asm`): each is assembled to run at the ticker strips' buffer (7 KB in
+The clock, weather, news and markets pages are modules (`clock.asm`, `weather.asm`,
+`news.asm`, `markets.asm`): each is assembled to run at the ticker strips' buffer (7 KB in
 page 2, free while a page shows) and copied there when the page opens. Each
 starts with a table of jumps (open, tick, frame, keys, info, click, leave)
 that the main program calls. In the COM file they come after the program; in
-the ROM they are banks 1, 2 and 3 (page 1 shows bank n when 6000h is
+the ROM they are banks 1, 2 and 3 (the markets page shares bank 3 with the news; page 1 shows bank n when 6000h is
 written n, as an ASCII16 mapper; the firmware does this for ROM type 23). So
 the main program stays within its limits: below 4000h in the COM file, 16 KB
-of ROM. The news page switches the VDP to TEXT 2 itself (the patterns at
+of ROM. The markets page draws its text itself in SCREEN 6 (`g6_draw` in `markets.asm`: two
+6-dot characters are 3 bytes of the picture, from a table of each glyph row's
+12 bits, and a colour byte per cell; a row of 80 takes about 30 ms) and uses no
+sprites (the mouse pointer is not drawn there). The news page switches the VDP to TEXT 2 itself (the patterns at
 1000h, the names at 0000h, the blink bits for the bars at 0A00h) and calls
 `screen_init` when it closes. The weather page draws its pictures from circles and lines into
 three layers in the scope's buffer, and puts them together for each step of

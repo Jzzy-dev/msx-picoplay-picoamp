@@ -1,5 +1,5 @@
 diff --git a/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt b/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
-index fb7b3ce..74695a9 100644
+index f47778a..9af4127 100644
 --- a/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
 +++ b/2350/software/loadrom.pio/pico/loadrom/CMakeLists.txt
 @@ -45,6 +45,11 @@ pico_sdk_init()
@@ -14,7 +14,7 @@ index fb7b3ce..74695a9 100644
  # add_compile_options(-O3)
  
  # Add executable. Default name is the project name, version 0.1
-@@ -59,6 +64,26 @@ add_executable(loadrom
+@@ -59,6 +64,28 @@ add_executable(loadrom
      storage/sunrise_sd.c
      storage/flash_sd.c
      storage/hw_config.c
@@ -37,11 +37,13 @@ index fb7b3ce..74695a9 100644
 +    pvaudio/pva_clock.c
 +    pvaudio/pva_news.c
 +    pvaudio/pva_news_cat.c
++    pvaudio/pva_markets.c
++    pvaudio/pva_markets_cat.c
 +    pvaudio/pva_hal_pico.c
      )
  
  pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
-@@ -82,10 +107,16 @@ target_link_libraries(loadrom
+@@ -82,10 +109,19 @@ target_link_libraries(loadrom
      hardware_uart
      tinyusb_board
      tinyusb_host
@@ -53,6 +55,9 @@ index fb7b3ce..74695a9 100644
 +    COMPILE_DEFINITIONS "MPDEC_ALLOCATOR=pv_mp3_alloc"
 +    COMPILE_OPTIONS "-include;${CMAKE_CURRENT_LIST_DIR}/audio/mp3_alloc_dispatch.h")
  
++# FatFs's long-file-name buffers from the engine's arena while it runs (pvaudio/pva_hal_pico.c)
++target_link_options(loadrom PRIVATE "LINKER:--wrap=ff_memalloc" "LINKER:--wrap=ff_memfree")
++
  target_compile_definitions(loadrom PRIVATE
      PICO_AUDIO_I2S_PIO=0
 +    PICO_PANIC_FUNCTION=pva_panic

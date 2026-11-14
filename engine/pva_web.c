@@ -55,7 +55,9 @@ static uint32_t t_query, t_phase, wait_until, state_asked;
 static pva_web_body_fn body_fn;
 static pva_web_done_fn done_fn;
 static uint8_t  result = PVA_WEB_IDLE;
+static const char *w_agent, *next_agent;     // another User-Agent for this request (some services want a browser's form)
 
+void     pva_web_agent(const char *ua) { next_agent = ua; }
 uint8_t  pva_web_error(void) { return werr; }
 uint16_t pva_web_http(void) { return whttp; }
 bool     pva_web_busy(void) { return w != W_IDLE; }
@@ -253,8 +255,9 @@ void pva_web_poll(void)
                 char range[32] = "";
                 if (w_from) snprintf(range, sizeof range, "Range: bytes=%lu-\r\n", (unsigned long)w_from);
                 int n = snprintf(req, 640,
-                    "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: PicoAmp/1.1 (MSX PicoVerse 2350)\r\n"
-                    "Accept: */*\r\n%sConnection: close\r\n\r\n", w_path, w_host, range);
+                    "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                    "Accept: */*\r\n%sConnection: close\r\n\r\n", w_path, w_host,
+                    w_agent ? w_agent : "PicoAmp/1.1 (MSX PicoVerse 2350)", range);
                 req_len = (n > 0 && n < 640) ? (size_t)n : 0;
                 req_pos = 0;
             }
@@ -362,6 +365,8 @@ int pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done)
 // of it (pva_web_http() 200, not 206)
 int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_web_done_fn done)
 {
+    const char *ua = next_agent;
+    next_agent = NULL;
     if (!available) return PVA_E_NOWIFI;
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
     if (w != W_IDLE) return PVA_E_BUSY;
@@ -370,6 +375,7 @@ int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_w
     held = true;
     body_fn = body;
     done_fn = done;
+    w_agent = ua;
     redirects = 0;
     werr = 0;
     lent_once = false;

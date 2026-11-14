@@ -10,7 +10,7 @@
 // buffer is queued pico_audio_i2s plays silence by itself.
 //
 // The producer buffers come from the engine arena, not from the heap: the
-// LoadROM firmware has only about 15 KB of heap, and pico_malloc halts the
+// LoadROM firmware has only about 15 KB of heap (3 KB with SDK 2.2.0 and GCC 13), and pico_malloc halts the
 // core when an allocation fails (and with it the microSD card Nextor uses).
 //
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
@@ -170,10 +170,90 @@ void __attribute__((naked)) pva_hardfault_entry(void)
         "b pva_fault_record\n");
 }
 
+// FatFs takes the buffer for long file names from the heap with every call that has a
+// path (ffconf.h: FF_USE_LFN 3; 1120 bytes with exFAT). The firmware's heap is what the
+// other parts leave of the RAM, a few KB, and less with another SDK or compiler; when
+// it is too small pico_malloc halts the core and no folder opens. So, while the engine
+// runs, these buffers come from two pieces of its arena (the linker wraps FatFs's
+// ff_memalloc/ff_memfree: -Wl,--wrap in CMakeLists.txt). Anything else goes to the heap.
+#define FF_SLOT_SIZE    1152u
+#define FF_SLOTS        2u
+static uint8_t *ff_pool;
+static bool     ff_used[FF_SLOTS];
+void *__real_ff_memalloc(unsigned msize);
+void  __real_ff_memfree(void *p);
+
+void *__wrap_ff_memalloc(unsigned msize)
+{
+    if (ff_pool && msize <= FF_SLOT_SIZE)
+    {
+        uint32_t save = save_and_disable_interrupts();
+        void *p = NULL;
+        for (unsigned i = 0; i < FF_SLOTS && !p; i++)
+            if (!ff_used[i]) { ff_used[i] = true; p = ff_pool + i * FF_SLOT_SIZE; }
+        restore_interrupts(save);
+        // none free, or a bigger one (a cluster to clear): NULL, never the heap, whose
+        // failure would halt the core; FatFs then asks for less or goes without
+        return p;
+    }
+    return __real_ff_memalloc(msize);
+}
+
+void __wrap_ff_memfree(void *p)
+{
+    uint8_t *q = p;
+    if (ff_pool && q >= ff_pool && q < ff_pool + FF_SLOTS * FF_SLOT_SIZE)
+    {
+        ff_used[(size_t)(q - ff_pool) / FF_SLOT_SIZE] = false;
+        return;
+    }
+    __real_ff_memfree(p);
+}
+
+// The heap. It is what the firmware's other parts leave of the RAM: about 15 KB with the
+// SDK and compiler the firmware was made for, 3 KB with SDK 2.2.0 and GCC 13 (bigger code
+// in RAM). newlib's malloc takes its memory in pieces of 4 KB, so with less than that the
+// first malloc() fails, pico_malloc halts the core, and the engine never answers: the
+// I2S library allocates its buffers when the engine starts. So the engine lends the heap
+// 16 KB of its arena: when the usual place is full, _sbrk() (weak in the SDK) goes on there.
+#define HEAP_EXT        (16u * 1024u)
+static char *hx_base, *hx_cur, *hx_end;
+static bool  hx_on;
+
+void *_sbrk(int incr)
+{
+    extern char end, __StackLimit;
+    static char *heap_end;
+    if (!heap_end) heap_end = &end;
+    if (!hx_on)
+    {
+        char *next = heap_end + incr;
+        if (next >= &end && next <= &__StackLimit)
+        {
+            char *prev = heap_end;
+            heap_end = next;
+            return prev;
+        }
+        if (!hx_base || incr <= 0) return (void *)-1;
+        hx_on = true;                   // from now on in the lent piece
+    }
+    char *next = hx_cur + incr;
+    if (next < hx_base || next > hx_end) return (void *)-1;
+    char *prev = hx_cur;
+    hx_cur = next;
+    return prev;
+}
+
 // The microSD library's crash handler (crash.c) halts in a breakpoint; ours
 // leaves the note first. Installed by core 1 for the shared vector table.
 void pva_hal_install_fault_handler(void)
 {
+    if (!ff_pool) ff_pool = pva_alloc(FF_SLOTS * FF_SLOT_SIZE);    // (first of the arena: before anything can fill it)
+    if (!hx_base)
+    {
+        char *h = pva_alloc(HEAP_EXT);
+        if (h) { hx_cur = h; hx_end = h + HEAP_EXT; hx_base = h; }
+    }
     // straight into the (RAM) vector table: the SDK's exception_*_handler()
     // calls assert that no handler is installed yet, and crash.c has one
     uint32_t vtor = scb_hw->vtor;

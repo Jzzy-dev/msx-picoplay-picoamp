@@ -250,6 +250,7 @@ uint8_t     pva_cfg_gen(void);
 // time, place and weather now (pva_clock.c)
 void pva_clock_http_date(const char *v);
 bool pva_clock_have_time(void);
+void pva_clock_civil(uint32_t epoch, int *year, uint8_t *mon, uint8_t *day, uint8_t *hour, uint8_t *min, uint8_t *wday);  // (wday: 0 Monday)
 void pva_clock_poll(void);
 void pva_clock_enable(void);
 void pva_clock_cfg_changed(void);
@@ -277,6 +278,23 @@ char    pva_fold_ascii(uint32_t c);     // a character to the MSX font's ASCII (
 int64_t pva_days_from_civil(int y, unsigned m, unsigned d);
 void    pva_civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d);
 bool    pva_clock_utc(int64_t *now, int32_t *offset);   // false: no time yet (offset 0 without the zone)
+
+// the market monitor (pva_markets.c, its catalogue pva_markets_cat.c)
+typedef struct { const char *sym, *name; uint8_t dec; } pva_mkt_item_t;
+typedef struct { uint8_t region; const char *name; const pva_mkt_item_t *items; uint8_t n; } pva_mkt_list_t;
+extern const char *const pva_mkt_region_codes[];    // end with NULL
+extern const char *const pva_mkt_region_names[];
+extern const pva_mkt_list_t pva_mkt_lists[];        // ends with a NULL name
+typedef struct { const char *sym, *name; const pva_mkt_item_t *items; uint8_t n; } pva_mkt_members_t;
+extern const pva_mkt_members_t pva_mkt_members[];   // an index's symbol and its members; ends with a NULL symbol
+int  pva_news_fetch_url(const char *name, const char *url);   // a feed that is not one of My feeds (PVA_NEWS_EXT)
+void pva_markets_init(void);
+void pva_markets_poll(void);
+int  pva_markets_cmd(uint8_t code, const uint8_t *args);    // PVA_C_MKT_xxx
+void pva_markets_state(uint8_t *out);               // PVA_CK_MKT_STATE.. (4 bytes)
+const char *pva_clock_zone(void);                   // "Europe/Amsterdam" ("": not known yet)
+pva_json_t *pva_clock_json(void);                   // the clock's JSON reader (one web request runs at a time)
+void pva_web_agent(const char *ua);                 // the next request's User-Agent (then the usual one again)
 
 // replies (pva_engine.c)
 void pva_reply_byte(uint8_t b);

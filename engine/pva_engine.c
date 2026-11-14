@@ -1539,6 +1539,7 @@ void pva_engine_extra(uint8_t *out)
     out[PVA_CK_AL_HOUR - PVA_CK_EXTRA] = al_hour;
     out[PVA_CK_AL_MIN - PVA_CK_EXTRA] = al_min;
     pva_news_state(&out[PVA_CK_NEWS_STATE - PVA_CK_EXTRA]);
+    pva_markets_state(&out[PVA_CK_MKT_STATE - PVA_CK_EXTRA]);
 }
 
 static int cmd_mode(void)
@@ -1686,6 +1687,10 @@ static int execute(uint8_t code)
         case PVA_C_NEWS_MOVE: case PVA_C_NEWS_FULL: case PVA_C_NEWS_TEXT: case PVA_C_NEWS_INFO:
         case PVA_C_NEWS_SORT:
             return pva_news_cmd(code, args);
+        case PVA_C_MKT_LISTS: case PVA_C_MKT_REGION: case PVA_C_MKT_OPEN: case PVA_C_MKT_ROWS:
+        case PVA_C_MKT_INFO: case PVA_C_MKT_CHART: case PVA_C_MKT_CHART_GET:
+        case PVA_C_MKT_MEMBERS: case PVA_C_MKT_NEWS: case PVA_C_MKT_SORT: case PVA_C_MKT_TAPE:
+            return pva_markets_cmd(code, args);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1908,6 +1913,7 @@ void pva_core1_init(void)
     pva_viz_init();                     // takes some of the stream RAM; before the directory
     if (net_ok && news_keep) pva_news_init(news_keep);
     if (net_ok && !pva_web_init()) pva_log("web: no memory");
+    if (net_ok) pva_markets_init();
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();
     pva_hal_audio_mute(true);
@@ -1951,6 +1957,7 @@ bool pva_core1_poll(void)
     pva_web_poll();
     pva_clock_poll();
     pva_news_poll();
+    pva_markets_poll();
     sleep_alarm_poll();
     pva_win[PVA_R_WHERE] = PVA_W_STREAM;
     if (pva_net_active())

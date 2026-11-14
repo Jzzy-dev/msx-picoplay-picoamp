@@ -50,7 +50,7 @@ static int prof_on;
 static unsigned long rd_ram, wr_ram, busy_cyc;
 static unsigned long pass_hist[16];         // loop passes by their length in frames
 static uint16_t cnt_addr[16]; static unsigned long cnt_n[16]; static int cnt_k;   // PICOAMP_COUNT                // the Z80's RAM traffic
-static uint8_t vram[0x4000];
+static uint8_t vram[0x20000];           // (the first 16 KB, and for SCREEN 6 the rest: R#14)
 static uint16_t vaddr;
 static bool vlatch;
 static uint8_t vfirst;
@@ -166,7 +166,15 @@ static void pout(z80 *z, uint8_t p, uint8_t v)
     (void)z;
     if (p == 0xB4) { rtc_reg = v & 15; return; }
     if (p == 0xB5) { if (rtc_reg == 13) rtc_mode = v & 15; return; }
-    if (p == 0x98) { vram[vaddr & 0x3FFF] = v; vaddr++; vwrites++; vlatch = false; }
+    if (p == 0x98)
+    {
+        // the address counter: 14 bits, with a carry into R#14 in the bitmap modes (G4 and up)
+        vram[((uint32_t)(vregs[14] & 7) << 14) | (vaddr & 0x3FFF)] = v;
+        vaddr++;
+        if (!(vaddr & 0x3FFF) && (vregs[0] & 0x0E) >= 0x06) vregs[14] = (vregs[14] + 1) & 7;
+        vaddr &= 0x3FFF;
+        vwrites++; vlatch = false;
+    }
     else if (p == 0x9A)
     {
         pal[pal_i * 2 + pal_hi] = v;
@@ -531,9 +539,10 @@ int main(int argc, char **argv)
         }
     }
     f = fopen(argv[6], "wb");
-    fwrite(vram, 1, sizeof vram, f);
+    fwrite(vram, 1, 0x4000, f);
     fwrite(pal, 1, sizeof pal, f);                  // the palette after VRAM, then the VDP registers
     fwrite(vregs, 1, sizeof vregs, f);
+    fwrite(vram + 0x4000, 1, 0x4000, f);            // (SCREEN 6: the rest of its 27 KB)
     fclose(f);
     return 0;
 }

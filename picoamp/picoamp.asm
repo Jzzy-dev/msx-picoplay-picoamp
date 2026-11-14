@@ -5401,6 +5401,9 @@ sext:   ld e,a                  ; DE = A, signed
         ret
 
 ms_sprite:
+        ld a,(pg_on)            ; (the markets' SCREEN 6 has its picture where the sprites' table is)
+        cp PG_MARKETS
+        ret z
         ld a,(ms_x)
         ld hl,ms_shown_x
         cp (hl)
@@ -5801,6 +5804,9 @@ keys:
         jp z,srch_open
         cp 'j'
         jp z,srch_open
+        cp '$'
+        ld c,PG_MARKETS
+        jp z,pg_enter
         and #DF
         cp 'C'
         ld c,PG_CLOCK
@@ -5976,11 +5982,12 @@ eq_keys:
         jp keys_common
 
 ;------------------------------------------------------------------------------
-; pages in modules (clock.asm, weather.asm, news.asm): the one that shows is
+; pages in modules (clock.asm, weather.asm, news.asm, markets.asm): the one that shows is
 ; copied to MODBASE; it starts with its jump table
 PG_CLOCK   equ 1
 PG_WEATHER equ 2
 PG_NEWS    equ 3
+PG_MARKETS equ 4
 M_OPEN  equ MODBASE
 M_TICK  equ MODBASE+3           ; each main loop pass
 M_FRAME equ MODBASE+6           ; a new picture from the engine
@@ -6047,6 +6054,8 @@ mod_tab:        dw mod_clock_src, mod_clock_end-mod_clock
                 db 2
                 dw mod_news_src, mod_news_end-mod_news
                 db 3
+                dw mod_mk_src, mod_mk_end-mod_mk
+                db 3            ; (in the news' bank, after it)
 
 ; ini_save: the settings to PICOAMP.INI. The engine writes the file where no
 ; one else writes the card (the ROM); under MSX-DOS this program does.
@@ -6293,7 +6302,7 @@ help_text:
         db #5E,"E          EQ preset  Z      full screen",0
         db #5E,"F          favourite+ D, DEL favourite-",0
         db #5E,"/ or J     search     ?      this page",0
-        db #5E,"C W T      pages      ESC Q  quit",0
+        db #5E,"C W T $    pages      ESC Q  quit",0
         db #5E,0
         db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
         db #4E,"           0 middle, G or ESC closes",0
@@ -6526,6 +6535,10 @@ fav_path:       db "A:\\RADIOFAV.M3U",0
 ini_path:       db "A:\\PICOAMP.INI",0
 eng_minor:      db 0
 pg_on:          db 0
+mk_last:        db 0            ; the markets' list shown last
+mk_ksub:        db #FF          ; and the index whose members were shown (FFh: none),
+mk_ksel:        db 0            ; the row chosen
+nw_ext:         db 0            ; 1: the news page opens with the markets' headlines (feed FEh)
 pg_t0:          ds 64           ; row 0 of a page
 dig_col:        db RED*16+NAVY
 spr_next:       db 216
@@ -6564,6 +6577,11 @@ mod_news_src:
         DISP MODBASE
         include "news.asm"
         ENT
+mod_mk_src:                     ; (bank 3 as well)
+        DISP MODBASE
+        include "markets.asm"
+        ENT
+mod_file_end:
     IFDEF ROMBUILD
         ds #8000-$,#FF          ; the ROM: 64 KB
     ENDIF
@@ -6574,7 +6592,8 @@ REPLY_MAX       equ 1024
     IFDEF ROMBUILD
 bss_start       equ (progend + 255) & #FF00     ; after the program, in RAM
     ELSE
-bss_start       equ #8000
+bss_start       equ #8800               ; (after the COM file and its page modules)
+        assert mod_file_end <= bss_start
     ENDIF
 font            equ bss_start           ; 96 x 8
 vizbuf          equ font + 96*8         ; the area: 10 x 192
@@ -6613,6 +6632,7 @@ MOD_MAX         equ ckb - MODBASE
         assert mod_clock_end - mod_clock <= MOD_MAX
         assert mod_wx_end - mod_wx <= MOD_MAX
         assert mod_news_end - mod_news <= MOD_MAX
+        assert mod_mk_end - mod_mk <= MOD_MAX
         assert 8*82*8 >= FAV_MAX + 1
     IFDEF ROMBUILD
         assert progend - RUN_AT <= #4000 - (rom_payload - #4000)

@@ -98,6 +98,9 @@ wx_info:  jp pg_row0             ; row 0: what plays
 wx_keys:
         cp 27
         jp z,fs_close
+        cp '$'
+        ld c,PG_MARKETS
+        jp z,pg_enter
         cp 13
         jp z,fs_close
         cp 8
@@ -1643,7 +1646,7 @@ wx_fall:
 
 ;------------------------------------------------------------------------------
 ; data
-txt_wx_keys:    db "C clock  T news  W or ESC back",0
+txt_wx_keys:    db "C clock T news $ markets W back",0
 txt_wx_src:     db "Weather: Open-Meteo.com",0
 txt_wx_old:     db "The weather needs engine 0.12 or newer",0
 txt_wx_wait:    db "Waiting for the weather (it needs WiFi)",0

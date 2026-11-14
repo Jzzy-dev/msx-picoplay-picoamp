@@ -935,6 +935,9 @@ ck_keys:
         jp z,fs_close
         cp 8
         jp z,fs_close
+        cp '$'
+        ld c,PG_MARKETS
+        jp z,pg_enter
         and #DF
         cp 'V'
         jp z,ck_toggle_face

@@ -14,6 +14,18 @@ if len(v) >= 0x4000 + 32:          # the palette the program set (the harness sa
     pv = v[0x4000:0x4020]
     PAL = [p3((pv[2 * i] >> 4) & 7, pv[2 * i + 1] & 7, pv[2 * i] & 7) for i in range(16)]
 R = list(v[0x4020:0x4060]) if len(v) >= 0x4060 else [0] * 64
+if (R[0] & 0x0E) == 0x08 and (R[1] & 0x18) == 0x00:
+    # SCREEN 6 (512 x 212, 4 colours, 2 bits a dot, 128 bytes a line from 0000h)
+    full = v[:0x4000] + v[0x4060:]
+    H = 212 if R[9] & 0x80 else 192
+    im = Image.new('RGB', (512, H))
+    px = im.load()
+    for y in range(H):
+        for x in range(512):
+            b = full[y * 128 + x // 4] if y * 128 + x // 4 < len(full) else 0
+            px[x, y] = PAL[(b >> (6 - 2 * (x % 4))) & 3]
+    im.resize((1024, H * 4), Image.NEAREST).save(sys.argv[2])
+    sys.exit(0)
 if (R[0] & 0x0E) == 0x04 and (R[1] & 0x18) == 0x10:
     # TEXT 2 (80 columns): names at R#2, the blink bits at R#3/R#10, patterns at R#4
     rows = 27 if R[9] & 0x80 else 24

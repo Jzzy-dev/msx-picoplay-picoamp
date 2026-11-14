@@ -33,3 +33,14 @@ git diff --binary <base> -- 2350/software/loadrom.pio docs/msx-picoverse-2350-lo
   ':!2350/software/loadrom.pio/pico/loadrom/pvaudio' ':!*/dist/loadrom.bin' ':!*/dist/loadrom.exe' \
   ':!*/tool/src/loadrom.h' ':!*/tool/src/picoamp_rom.h' > loadrom-picoplay-picoamp.patch
 ```
+
+## The heap
+
+The firmware's heap is what its other parts leave of the RAM: about 15 KB with the SDK and
+compiler the PicoVerse firmware is made for (SDK 2.3.1, GCC 15.2), 3 KB with SDK 2.2.0 and
+GCC 13.3. newlib's `malloc` takes memory in pieces of 4 KB and pico_malloc halts the core when
+it gets none, so with a heap under 4 KB the engine stopped when it started (the I2S library
+allocates its buffers) and PICOAMP said FOLDER NOT FOUND. Since engine 0.13 the engine does not
+depend on that: it lends the heap 16 KB of its arena (`_sbrk` in `pva_hal_pico.c`) and gives
+FatFs its long-file-name buffers from the arena too (the linker wraps `ff_memalloc` and
+`ff_memfree`, see `CMakeLists.txt`).

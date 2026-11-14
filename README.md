@@ -28,6 +28,19 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 15 24 11" src="https://github.com/user-attachments/assets/0310b504-c6c6-4eab-aabf-4a06c1766a72" /> | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 13 08 34" src="https://github.com/user-attachments/assets/f1b99f3c-fd99-4abc-b139-31da34824565" /> |
 
+**v1.4** (engine 0.13; the colours, the member lists, the chart and its headlines tried on a PicoVerse 2350, the
+chart's scales and ranges, the order by percent and the tape so far in the host test and the Z80 harness only): **$** opens a market monitor in 80 columns, after the idea of the
+[IEX Markt Monitor](https://monitor.iex.nl/). A list of up to 40 instruments in two columns: name,
+price, change and percent, the risers green and the fallers red (SCREEN 6 with 80 columns of text); Enter shows the day's course of the chosen one as a
+line chart with a price and a time scale over 1D, 5D, 1M, 6M, YTD, 1Y, 5Y or all years, and its latest headlines
+under it (T reads them in the news reader); I on an index shows its members (15 indices, lists of up to 100 with
+pages), O orders a list by percent, and the region's market headlines pass as a tape over the table. Three regions (1 Europe, 2 Americas, 3 Asia-Pacific), each with its indices, its
+currencies, commodities and rates, and the shares of two markets (AEX and DAX; Dow Jones 30 and US
+technology; Japan and Hong Kong), and My list from `PICOAMP.INI`. The engine fetches the prices
+from Yahoo Finance's chart service (unofficial, no key, delayed by 15 to 20 minutes for most
+exchanges) every minute while the page shows, every 5 minutes while an https station plays. See
+`picoamp/README.md`, section Markets.
+
 **v1.2** (tested on a PicoVerse 2350 with an NMS 8245, as COM and ROM): engine 0.12 and three new things to
 look at while the radio plays. **W**: the weather for the clock's place, with a big picture
 that moves (turning sun rays, drifting clouds, stars, falling rain and snow, thunder) and the
@@ -52,7 +65,7 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(v1.0; `bin/picoamp_wifi.uf2` here is v1.2).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.4).
 
 ## Downloads (`bin/`)
 
@@ -62,11 +75,11 @@ PicoAmp v1.0 is also published as third-party firmware in the PicoVerse reposito
 | `picoamp.uf2` | the same without WiFi |
 | `picoplay_wifi.uf2` | **PicoPlay** firmware: Nextor (Sunrise IDE on the microSD), the 1 MB mapper, the engine and the WiFi, for SymbOS / MSX-DOS with `PICOPLAY.EXE`, `PICOAMP.COM`, `PVTEST.COM` |
 | `picoplay.uf2` | the same without WiFi |
-| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather and news pages) |
+| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather, news and markets pages) |
 | `PICOPLAY.EXE` | the SymbOS player |
 | `PVTEST.COM` | the MSX-DOS test tool |
 | `RADIO.M3U` | a few internet radio stations to start with |
-| `loadrom.exe` | Cristiano's LoadROM tool (Windows) with the two extra modes: `-pa` PicoAmp, `-p1` PicoPlay (add `-w` for WiFi) |
+| `loadrom.exe` | Cristiano's LoadROM tool (Windows) with the two extra modes: `-pa` PicoAmp, `-p1` PicoPlay (add `-w` for WiFi). Still v1.2 (it builds the v1.2 firmware): use the `.uf2` files here for v1.4 |
 | `SHA256SUMS` | checksums |
 
 Flash a `.uf2` as any PicoVerse firmware: hold BOOTSEL, plug in USB, and copy the file to the

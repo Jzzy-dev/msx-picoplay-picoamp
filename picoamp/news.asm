@@ -89,6 +89,28 @@ nw_open:
         ld b,60
         jp tx_text
 .ok:    call nw_favs
+        ld hl,nw_ext            ; from the markets: the headlines they fetched (feed FEh)
+        ld a,(hl)
+        ld (hl),0
+        ld (nw_xt),a
+        or a
+        jr z,.own
+        ld a,(ckb+CK_NST)
+        cp 2
+        jr nz,.own
+        ld a,(ckb+CK_NFEED)
+        cp #FE
+        jr nz,.own
+        ld (nw_feed),a
+        ld a,(ckb+CK_NCOUNT)
+        ld (nw_n),a
+        xor a
+        ld (nw_sel),a
+        ld (nw_first),a
+        ld (nw_wait),a
+        jp nw_list
+.own:   xor a
+        ld (nw_xt),a
         ld a,(ckb+CK_NST)       ; a feed that is there already: its headlines
         cp 2
         jr nz,.f
@@ -629,7 +651,11 @@ nw_favs:
 
 ; nw_name: A = favourite -> HL = its name
 nw_name:
-        ld l,a
+        cp #FE                  ; (the markets' feed)
+        jr nz,.f
+        ld hl,txt_nw_mk
+        ret
+.f:     ld l,a
         ld h,0
         add hl,hl
         add hl,hl
@@ -644,6 +670,10 @@ nw_name:
 ; a feed (A = favourite) asked for; its headlines when it is in
 nw_fetch:
         ld (nw_feed),a
+        push af
+        xor a
+        ld (nw_xt),a
+        pop af
         ld e,a
         ld a,C_NFETCH
         call cmd_u8
@@ -1696,6 +1726,16 @@ nw_keys:
         cp 13
         jr z,.enter
         cp 8
+        jr z,.bk
+        cp 27
+        jr nz,.nb
+.bk:    ld a,(nw_xt)            ; the markets' headlines: back there
+        or a
+        ld a,c
+        jr z,.nb
+        ld c,PG_MARKETS
+        jp pg_enter
+.nb:    cp 8
         jp z,nw_feeds
         cp 27
         jp z,fs_close
@@ -1913,6 +1953,9 @@ nw_infov:
 ; the keys of every view: the pages, the playback keys (B = the key)
 nw_kcommon:
         ld a,b
+        cp '$'
+        ld c,PG_MARKETS
+        jp z,pg_enter
         and #DF
         cp 'I'
         jp z,nw_infov
@@ -1938,11 +1981,12 @@ txt_nw_old:     db "The news needs engine 0.12 or newer",0
 txt_nw_klist:   db " Enter read  Up/Down choose  Left/Right page  1-9 a feed  F My feeds  S sort",0
 txt_nw_kstory:  db " Up/Down scroll  Left/Right page  Enter full article/summary  N/P next/prev  ESC",0
 txt_nw_kfeeds:  db " Left/Right side  Enter read/add  D remove  U/J move  BS back  ESC headlines",0
-txt_nw_kall:    db " C clock   W weather   T the player   I info",0
+txt_nw_kall:    db " C clock   W weather   $ markets   T the player   I info",0
 txt_nw_snew:    db " Sorted: newest first",0
 txt_nw_sfeed:   db " Sorted: as the feed has them",0
 txt_nw_sold:    db " Sorting needs a newer engine",0
 txt_nw_fetch:   db "Fetching the stories...",0
+txt_nw_mk:      db "Market news",0
 txt_nw_fail:    db "The feed did not come (no internet, or no answer)",0
 txt_nw_nowifi:  db "The news needs the cartridge's WiFi",0
 txt_nw_none:    db "No stories in this feed",0
@@ -1982,6 +2026,7 @@ nw_glyphs:      db 0,0,0,#FC,0,0,0,0                    ; TX_HL
                 db #30,#38,#28,#28,#E8,#D8,#30,0        ; TX_NOTE
 
 nw_view:        db 0
+nw_xt:          db 0            ; 1: the headlines are the markets' (ESC: back there)
 nw_nf:          db 0            ; My feeds
 nw_feed:        db 0            ; the one shown
 nw_n:           db 0            ; its stories
