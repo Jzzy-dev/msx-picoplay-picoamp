@@ -982,6 +982,10 @@ draw_static:
         ld ix,pat_close
         ld a,WHITE*16+RED
         call put_cell
+        ld de,#001E             ; the help box beside it
+        ld a,'?'
+        ld c,NAVY*16+CYAN
+        call put_char
         ; seek track
         ld de,#0401
         ld b,30
@@ -2726,7 +2730,7 @@ draw_state:
         call fmt_u16
 .put:   ld hl,linebuf
 .p2:    ld de,#000B
-        ld b,20
+        ld b,19                 ; (up to the help box)
         ld c,A_TITLE
         jp put_str
 
@@ -5491,6 +5495,8 @@ left_click:
         ld a,e                  ; the title bar's close box
         cp 31
         jp z,quit
+        cp 30                   ; and its help box
+        jp z,help_open
         ret
 .r4:    cp 4
         jr nz,.r5
@@ -6303,7 +6309,6 @@ help_text:
         db #5E,"F          favourite+ D, DEL favourite-",0
         db #5E,"/ or J     search     ?      this page",0
         db #5E,"C W T $    pages      ESC Q  quit",0
-        db #5E,0
         db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
         db #4E,"           0 middle, G or ESC closes",0
         db #4E,"Search: type a part of a station's name,",0
@@ -6314,7 +6319,8 @@ help_text:
         db #4E,"  the one that plays), D removes it (in",0
         db #4E,"  Internet radio/Favourites)",0
         db #4E,"Mouse: click to choose, again to play;",0
-        db #4E,"       the right button goes back",0
+        db #4E,"       the right button goes back; the",0
+        db #4E,"       ? box at the top: this page",0
         db #6E,"press a key",0
         db #FF
 txt_program:    db "PROGRAM",0

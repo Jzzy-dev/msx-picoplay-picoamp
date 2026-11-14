@@ -51,7 +51,7 @@ The engine is found by itself in any slot, as PVTEST and PicoPlay do.
 
 | Area | What it shows |
 |------|---------------|
-| Title bar | State (PLAYING / PAUSED / STOPPED), position in the playlist, a close box for the mouse |
+| Title bar | State (PLAYING / PAUSED / STOPPED), position in the playlist, a **?** box (the help page) and a close box for the mouse |
 | Big digits | Elapsed time |
 | State | STOPPED, PAUSED, PLAYING 1/38; for a station its name about 3 s, then PLAYING 1/38 about 1 s |
 | Info lines | Title, artist (the station for radio), then bit rate, sample rate and mono/stereo, and for a station HTTP or HTTPS ("128K 44.1KHZ ST HTTPS"; or "BUFFERING 40%"). The volume bar turns red while muted (M) |
@@ -457,6 +457,7 @@ A mouse in either port is used as soon as it moves. An arrow appears.
 * **Equalizer:** drag a slider or the balance (it snaps to the centre near
   the middle). Clicking the preset name picks the next one, the right button
   closes the screen.
+* **? box** in the title bar: the help page (a click or any key closes it).
 * **Close box** in the title bar: quit.
 * **Help page:** a click closes it. **Full screen:** a click is the next
   picture, the right button goes back.
