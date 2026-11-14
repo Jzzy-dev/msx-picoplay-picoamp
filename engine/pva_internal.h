@@ -11,15 +11,6 @@
 #else
 #include "hardware/sync.h"
 #define pva_barrier() __dmb()
-// covers (pva_art.c)
-bool    pva_art_init(void);
-void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len);
-void    pva_art_none(void);
-void    pva_art_poll(void);
-int     pva_art_cmd(uint8_t code, const uint8_t *args);
-uint8_t pva_art_state(void);
-uint8_t pva_art_gen(void);
-
 #endif
 
 // register window + mailbox, shared by both cores
@@ -327,6 +318,13 @@ void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
 bool    pva_art_init(void);
 void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len);
 void    pva_art_none(void);
+bool    pva_art_station(const char *url, const char *uuid, const char *name);  // false: the logo first (busy)
+bool    pva_art_station_busy(void);
+void    pva_art_station_cancel(void);
+void   *pva_dec_scratch(size_t n);
+#include "ff.h"
+FIL    *pva_dec_fil(void);
+bool    pva_dec_restart(void);
 void    pva_art_poll(void);
 int     pva_art_cmd(uint8_t code, const uint8_t *args);
 uint8_t pva_art_state(void);

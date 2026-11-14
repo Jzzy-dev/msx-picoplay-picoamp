@@ -917,6 +917,7 @@ static int cmd_entry_info(void)
 // ROM). Under MSX-DOS the program writes the file through Nextor instead.
 #define FAV_MAX 4096u               // as PicoPlay: the file stays within 4 KB
 static bool card_writes;
+bool pva_card_writes(void) { return card_writes; }
 
 void pva_allow_card_writes(bool on) { card_writes = on; }
 
@@ -1135,6 +1136,15 @@ static void split_stream_title(const char *t)
     }
 }
 
+static bool net_wait;               // the stream starts when the station's logo is there (or given up)
+static char wait_url[URL_MAX_LEN + 1], wait_uuid[40];
+
+static void net_wait_end(void)
+{
+    if (net_wait) pva_art_station_cancel();
+    net_wait = false;
+}
+
 static int open_stream(const char *entry)
 {
     char u[URL_MAX_LEN + 1];
@@ -1154,12 +1164,22 @@ static int open_stream(const char *entry)
         given_station[k] = 0;
         if (sep2) uuid = sep2 + 1;
     }
-    int r = pva_net_start(u);
-    if (r != PVA_OK) return r;
-    if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
-    pva_art_none();
+    // the station's logo first, when it is not known yet (the stream ring is free until the stream starts)
+    if (pva_net_active()) pva_net_stop();
+    pva_dec_close();                        // (its file: the card's logos use it while a station plays)
+    int r;
+    net_wait_end();
+    snprintf(wait_url, sizeof wait_url, "%s", u);
+    snprintf(wait_uuid, sizeof wait_uuid, "%s", uuid ? uuid : "");
+    net_wait = !pva_art_station(wait_url, wait_uuid[0] ? wait_uuid : NULL, given_station);
+    if (!net_wait)
+    {
+        r = pva_net_start(u);
+        if (r != PVA_OK) return r;
+        if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
+    }
     r = pva_dec_open_stream(&info);
-    if (r != PVA_OK) { pva_net_stop(); return r; }
+    if (r != PVA_OK) { net_wait = false; pva_art_station_cancel(); pva_net_stop(); return r; }
     snprintf(info.album, sizeof info.album, "%s", given_station);
     if (given_station[0]) snprintf(info.title, sizeof info.title, "%s", given_station);
     else
@@ -1184,6 +1204,7 @@ static int open_track(const char *path)
 {
     if (is_url(path)) return open_stream(path);
     buffering = false;
+    net_wait_end();
     if (pva_net_active()) pva_net_stop();
     char fp[PATH_MAX_LEN + 8];
     fatfs_path(fp, sizeof fp, path);
@@ -1234,6 +1255,7 @@ static int play_pos(uint16_t pos)
 
 static void stop_playback(void)
 {
+    net_wait_end();
     if (pva_dec_is_stream() || pva_net_active()) pva_net_stop();
     buffering = false;
     pva_dec_close();
@@ -1988,7 +2010,18 @@ bool pva_core1_poll(void)
     }
 
     pva_win[PVA_R_WHERE] = PVA_W_DECODE;
-    if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
+    if (net_wait && !pva_art_station_busy())
+    {
+        // the logo is there (or given up): now the stream
+        net_wait = false;
+        pva_dec_restart();              // (its pool held the logo's PNG reader)
+        int r = pva_net_start(wait_url);
+        if (r != PVA_OK) { play_error = (uint8_t)r; track_ended(); }
+        else if (wait_uuid[0]) pva_dir_click(wait_uuid);
+        status_dirty = true;
+    }
+    if (net_wait) { }                   // (the stream waits for the logo)
+    else if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
     {
         // wait until the buffer has 'prefill' bytes (or the stream gave up)
         size_t b = pva_net_buffered();

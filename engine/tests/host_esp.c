@@ -13,6 +13,8 @@
 //     /list.pls       audio/x-scpls body pointing at /stream.mp3
 //     /aac            content-type audio/aacp
 //     /missing        404
+//     /logo.png, /logo.jpg  the station logos (logo.png / logo.jpg in host_esp_logo_dir)
+//     /logo.txt       a "logo" that is no picture
 //   radio2.test (10.0.0.2) port 8000  /live  plain stream
 //   secure.test (10.0.0.3)            TLS only, /stream.mp3
 //   all.api.radio-browser.info, de1.api.radio-browser.info (10.0.0.4) and
@@ -22,6 +24,8 @@
 //                               HLS, broken and over-long ones mixed in;
 //                               tag=many gives 150 stations
 //     /json/url/<uuid>          counts a click
+//     /json/stations/byuuid/<uuid>, /json/stations/byurl?url=   one station
+//       (Test FM's favicon is /logo.png, Radio Two Live's /logo.jpg, Plain "Quoted" Radio's /logo.txt)
 //   ip-api.com (10.0.0.6)                     /json/?fields=...  Amsterdam by IP
 //   geocoding-api.open-meteo.com (10.0.0.7)   /v1/search?name=   places by name
 //   api.open-meteo.com (10.0.0.8)             /v1/forecast?...   offset and weather now
@@ -37,6 +41,8 @@
 
 // ---------------- configuration (tests change these) ----------------
 bool     host_esp_present = true;
+const char *host_esp_logo_dir = "assets";
+uint32_t host_esp_logo_gets;                // requests for a logo
 uint8_t  host_esp_wifi_state = 2;           // NET_STATE answer, 2 = connected
 uint32_t host_esp_uart_bpms = 86;           // 859372 baud / 10 bits / 1000
 uint32_t host_esp_server_bps = 24000;       // server sends this many bytes/s (128 kbit/s = 16000)
@@ -181,17 +187,25 @@ static const st_t stations[] = {
     { "Long URL", "http://radio.test/stream.mp3?xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "MP3", "Germany", "pop", 128, 0, 1 },
 };
 
+static const char *favicon(const st_t *t)
+{
+    if (!strcmp(t->url, "http://radio.test/stream.mp3") && !strcmp(t->name, "Test FM")) return "http:\\/\\/radio.test\\/logo.png";
+    if (!strcmp(t->url, "http://radio2.test:8000/live")) return "http://radio.test/logo.jpg";
+    if (!strcmp(t->url, "http://radio.test/plain") && t->name[0] == ' ') return "http://radio.test/logo.txt";
+    return "";
+}
+
 static void station_json(bq_t *b, const st_t *t, int i)
 {
     char j[1200];
     int n = snprintf(j, sizeof j,
         "{\"changeuuid\":\"c-%d\",\"stationuuid\":\"9617a958-0601-11e8-ae97-52543be04c%02d\",\"serveruuid\":null,"
-        "\"name\":\"%s\",\"url\":\"%s\",\"url_resolved\":\"%s\",\"homepage\":\"http://x.test/\",\"favicon\":\"\","
+        "\"name\":\"%s\",\"url\":\"%s\",\"url_resolved\":\"%s\",\"homepage\":\"http://x.test/\",\"favicon\":\"%s\","
         "\"tags\":\"%s\",\"country\":\"%s\",\"countrycode\":\"XX\",\"iso_3166_2\":null,\"state\":\"\","
         "\"language\":\"dutch,english\",\"languagecodes\":\"nl\",\"votes\":%d,\"lastchangetime\":\"2024-01-01 10:00:00\","
         "\"codec\":\"%s\",\"bitrate\":%d,\"hls\":%d,\"lastcheckok\":%d,\"clickcount\":%d,\"clicktrend\":-1,"
         "\"ssl_error\":0,\"geo_lat\":52.1,\"geo_long\":-4.5e0,\"has_extended_info\":false}",
-        i, i % 100, t->name, t->url, t->url, t->tags, t->country, 100 - i, t->codec, t->bitrate, t->hls, t->ok, 1000 - i);
+        i, i % 100, t->name, t->url, t->url, favicon(t), t->tags, t->country, 100 - i, t->codec, t->bitrate, t->hls, t->ok, 1000 - i);
     bq_put(b, j, (size_t)n);
 }
 
@@ -277,6 +291,28 @@ static void api(conn_t *c, const char *path)
                 if (n++) bq_put(&b, ",", 1);
                 station_json(&b, t, i);
             }
+        bq_put(&b, "]", 1);
+    }
+    else if (!strncmp(path, "/json/stations/byuuid/", 22) || !strncmp(path, "/json/stations/byurl?url=", 25))
+    {
+        char want[300] = "";
+        const char *q = path[15] == 'u' ? path + 22 : path + 25;
+        size_t k = 0;
+        for (; *q && *q != '&' && k + 1 < sizeof want; q++)
+        {
+            if (*q == '%' && q[1] && q[2]) { char h[3] = { q[1], q[2], 0 }; want[k++] = (char)strtol(h, NULL, 16); q += 2; }
+            else want[k++] = *q;
+        }
+        want[k] = 0;
+        bq_put(&b, "[", 1);
+        for (int i = 0; i < (int)(sizeof stations / sizeof stations[0]); i++)
+        {
+            char u[64];
+            snprintf(u, sizeof u, "9617a958-0601-11e8-ae97-52543be04c%02d", i % 100);
+            if (path[15] == 'u' ? strcmp(want, u) : strcmp(want, stations[i].url)) continue;
+            station_json(&b, &stations[i], i);
+            break;
+        }
         bq_put(&b, "]", 1);
     }
     else if (!strncmp(path, "/json/url/", 10))
@@ -674,6 +710,25 @@ static void serve(conn_t *c)
                    "[playlist]\r\nNumberOfEntries=1\r\nFile1=http://radio.test/stream.mp3\r\nTitle1=Test FM\r\nLength1=-1\r\n");
         return;
     }
+    if (r1 && (!strcmp(path, "/logo.png") || !strcmp(path, "/logo.jpg")))
+    {
+        host_esp_logo_gets++;
+        char fn[300];
+        snprintf(fn, sizeof fn, "%s/%s", host_esp_logo_dir, path + 1);
+        FILE *fp = fopen(fn, "rb");
+        if (!fp) { http_reply(c, "HTTP/1.1 404 Not Found\r\n\r\n", NULL); return; }
+        static uint8_t img[200000];
+        size_t n = fread(img, 1, sizeof img, fp);
+        fclose(fp);
+        char hd[160];
+        snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: image/%s\r\nContent-Length: %u\r\n\r\n", path[7] == 'p' ? "png" : "jpeg", (unsigned)n);
+        bq_put(&c->out, hd, strlen(hd));
+        bq_put(&c->out, img, n);
+        c->kind = 3;
+        c->closed = true;
+        return;
+    }
+    if (r1 && !strcmp(path, "/logo.txt")) { host_esp_logo_gets++; http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n", "<html>a page, no picture</html>"); return; }
     if (r1 && !strcmp(path, "/aac")) { http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: audio/aacp\r\n\r\n", "xxxx"); return; }
     http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n", "<html>no</html>");
 }
