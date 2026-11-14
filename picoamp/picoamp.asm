@@ -12,7 +12,7 @@
 ; Keys: Up/Down select, Left/Right page, Enter open/play, BS parent folder,
 ;       Space pause/play, S stop, N next, P previous, + (or =) / - volume, M mute,
 ;       , / . 10 seconds back / on, H shuffle, R repeat,
-;       V spectrum / oscilloscope, G equalizer screen, E next preset,
+;       V spectrum / oscilloscope / cover, G equalizer screen, E next preset,
 ;       Z full screen pictures, F / D (DEL) add / remove a favourite,
 ;       / or J search the station directory, ? the help page,
 ;       ESC or Q quit (the music keeps playing).
@@ -146,6 +146,8 @@ C_NTEXT  equ #42
 C_NINFO  equ #43
 C_NSORT  equ #44
 C_MUTE   equ #45
+C_COVSET equ #51                ; covers (engine 0.14)
+C_COVGET equ #52
 W_CLOCK  equ #4D00
 
 ; status block offsets
@@ -170,6 +172,20 @@ ST_DGEN  equ 173
 ST_DIRST equ 177
 ST_EQ    equ 179
 ST_BAL   equ 184
+ST_COVGEN equ 185               ; +1 when the cover changes
+ST_COVST equ 186                ; 0 none, 1 in the making, 2 ready
+; the cover view: the cover's own colours between these two lines (the line
+; interrupt switches the palette there); entries the cover may set: 2 7 10
+; 13 15. The others are the player's in the band too: the bars, the VU
+; meters, the labels, the mouse pointer, the title bar and the list (a switch
+; can come late: interrupts are off a while for the mouse's BIOS call or a row
+; of text, 25 lines at most in the harness)
+COV_FREE equ #A484
+SPLIT_TOP equ 4                 ; (rows 0-5 above the cover use only colours that stay:
+                                ; the switch may come up to 44 lines late)
+SPLIT_BOT equ 128               ; (and rows 16-22 under it: up to 56 lines, until the
+                                ; control row's dark blue and light grey)
+H_KEYI  equ #FD9A
 F_SEEK   equ #04
 F_STREAM equ #10
 F_BUFFER equ #20
@@ -297,6 +313,7 @@ start:
         call fetch_status
         ld hl,st+ST_EQ
         call find_eq
+        call cover_init
         call show_view
         ld hl,argbuf
         call open_path
@@ -313,7 +330,9 @@ mainloop:
         ld (hl),a
         call fetch_status
         call info_any
-.same:  ld a,(loading)
+.same:  call cover_poll
+        call split_update
+        ld a,(loading)
         or a
         call nz,check_loading
         call ticker_run
@@ -324,6 +343,7 @@ mainloop:
         call msg_run
         call mouse
         call keys
+        call split_update
         jr mainloop
 
 ; the status changed: what shows it now
@@ -438,8 +458,8 @@ fetch_frame:
         ld (hl),a
         ld bc,V_SCOPE           ; levels, peaks, VU
         ld a,(view)
-        or a
-        jr z,.cp
+        cp 1
+        jr nz,.cp
         ld bc,V_SCOPE+64        ; and the scope
 .cp:    ld hl,W_VIZ
         ld de,viz
@@ -503,7 +523,7 @@ cmd:    ld (code),a
         and 7
         ld (rlen+1),a
         ld hl,(rlen)
-        ld de,REPLY_MAX
+        ld de,(rmax)
         or a
         sbc hl,de
         jr c,.lenok
@@ -775,16 +795,20 @@ vreg:   di
         ei
         ret
 
-setpal: xor a
-        ld b,16
-        call vreg
+setpal: call split_kill         ; (the whole screen in the player's colours)
+        di
+        xor a
+        out (VDP_C),a
+        ld a,#80+16
+        out (VDP_C),a
         ld hl,palette
-        ld b,32
-        ld c,VDP_P
+        ld bc,32*256+VDP_P
         otir
+        ei
         ret
 
 restore_screen:
+        call cover_unhook
         xor a
         ld b,16
         call vreg
@@ -1093,8 +1117,7 @@ freq_label:
         inc de
         xor a
         ld (de),a
-.put:   ld a,(lab_bar)
-        inc a
+.put:   ld a,(lab_col)
         ld e,a
         ld d,16
         ld hl,numbuf
@@ -1124,23 +1147,36 @@ draw_view:
         ld a,(view)
         or a
         jp z,draw_bars
-        jp draw_scope
+        dec a
+        jp z,draw_scope
+        call merge_bands        ; the cover: 12 bars beside it
+        jp draw_bars
 
 ; V / a click on the label: spectrum <-> oscilloscope
 toggle_view:
         xor a
         ld (eq_open),a
-        ld a,(view)
-        xor 1
-        ld (view),a
+        ld a,(view)             ; spectrum, scope, cover (an engine with covers)
+        inc a
+        cp 2
+        jr c,.v
+        jr nz,.z
+        ld hl,cov_cap
+        bit 0,(hl)
+        jr nz,.v
+.z:     xor a
+.v:     ld (view),a
         ; fall through
 ; draw what the area shows now (the equalizer closed)
 show_view:
         call draw_area_labels
         ld a,(view)
         or a
-        jr nz,.scope
-        call bars_normal
+        jr z,.bars
+        dec a
+        jr z,.scope
+        jp cover_view
+.bars:  call bars_normal
         ld hl,bar_raw           ; every bar cell drawn again
         ld bc,NBARS*2
         ld a,#FF
@@ -1170,6 +1206,9 @@ draw_area_labels:
         or a
         jr z,.l
         ld hl,txt_scope
+        dec a
+        jr z,.l
+        ld hl,txt_cover
 .l:     ld a,(eq_open)
         or a
         jr z,.l2
@@ -1189,15 +1228,23 @@ draw_area_labels:
         or a
         jp nz,draw_eq_info
         ld a,(view)
-        or a
-        ret nz
-        ; frequency labels under bars 0, 6, 12, 17, 21 (from the engine's table)
         ld hl,label_bars
+        or a
+        jr z,.lab
+        dec a
+        ret z
+        ld hl,label_cover
+        ; frequency labels under bars 0, 6, 12, 17, 21 (from the engine's table);
+        ; the cover's: the bands of its bars 0, 4, 8
 .lab:   ld a,(hl)
         cp #FF
         ret z
         inc hl
+        ld e,(hl)
+        inc hl
         push hl
+        ld hl,lab_col
+        ld (hl),e
         call freq_label
         pop hl
         jr .lab
@@ -1265,7 +1312,11 @@ bars_from:
         call draw_bar
 .skip:  pop bc
         inc b
-        ld a,(bp_nbars)
+        ld a,(bp_bands)         ; after the bands: the VU meters
+        cp b
+        jr nz,.nb
+        ld b,NBARS
+.nb:    ld a,(bp_nbars)
         cp b
         jr nz,.b
         ret
@@ -1871,6 +1922,7 @@ vspan:  ld a,d
 ; the equalizer screen: five sliders (-12..+12 dB) and the balance
 
 eq_open_screen:
+        call setpal             ; (the line interrupt off)
         ld a,1
         ld (eq_open),a
         ld hl,st+ST_EQ
@@ -3910,6 +3962,8 @@ bars_normal:
         ld (bp_col0),a
         ld a,NBARS+2
         ld (bp_nbars),a
+        ld a,NBARS
+        ld (bp_bands),a
         ret
 
 bars_reset:                     ; every bar drawn again
@@ -4113,23 +4167,404 @@ srch_go:
         ld hl,txt_srchfail
         jp msg_err
 
+; the help page's text (a macro: in the COM file in the program, in the ROM in
+; bank 1, where it leaves the RAM to the program): each line its colour, its
+; text, 0; FFh at the end
+        MACRO HELP_TEXT
+        db #53,"  PICOAMP - THE KEYS",0
+        db #5E,"Up/Down    choose     Enter  play/open",0
+        db #5E,"Left/Right page       BS     parent",0
+        db #5E,"Space      pause      S      stop",0
+        db #5E,"N / P      next/prev  , / .  -10s/+10s",0
+        db #5E,"+ = / - M  vol/mute   H / R  shuffle/rep",0
+        db #5E,"G          equalizer  V      scope/cover",0
+        db #5E,"E          EQ preset  Z      full screen",0
+        db #5E,"F          favourite+ D, DEL favourite-",0
+        db #5E,"/ or J     search     ?      this page",0
+        db #5E,"C W T $    pages      ESC Q  quit",0
+        db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
+        db #4E,"           0 middle, G or ESC closes",0
+        db #4E,"Search: type a part of a station's name,",0
+        db #4E,"  Enter; BS deletes, ESC stops",0
+        db #4E,"Full screen: Left/Right or V next picture,",0
+        db #4E,"             Z or ESC back",0
+        db #4E,"Favourites: F adds the chosen station (or",0
+        db #4E,"  the one that plays), D removes it (in",0
+        db #4E,"  Internet radio/Favourites)",0
+        db #4E,"Mouse: click to choose, again to play;",0
+        db #4E,"       the right button goes back; the",0
+        db #4E,"       ? box at the top: this page",0
+        db #6E,"press a key",0
+        db #FF
+        ENDM
+
+;------------------------------------------------------------------------------
+; the cover view (V, engine 0.14): the track's cover in columns 1-10 of the
+; area, 12 spectrum bars (two bands each) beside it, the VU meters as always.
+; The engine makes the cover (80 x 80 pixels, SCREEN 4 cells, colours of its
+; own in the entries COV_FREE); a line interrupt switches to the cover's
+; palette at line SPLIT_TOP and back at SPLIT_BOT, so the rest of the screen
+; keeps the player's colours.
+
+; cover_init: an engine with covers: it learns the palette; the hook goes in
+cover_init:
+        ld a,(eng_minor)
+        cp 14
+        ret c
+        ld a,1
+        ld (cov_cap),a
+        ld hl,palette
+        ld de,args
+        ld bc,32
+        ldir
+        ld hl,COV_FREE
+        ld (args+32),hl
+        ld a,C_COVSET
+        ld bc,34
+        call cmd
+    IFNDEF ROMBUILD
+        ld hl,cov_isr_src       ; the interrupt's code in RAM of pages 2-3
+        ld de,cov_isr
+        ld bc,cov_isr_end-cov_isr_src
+        ldir
+    ENDIF
+        di
+        ld hl,H_KEYI            ; the hook that was there runs after ours
+        ld de,cov_chain
+        ld bc,5
+        ldir
+        ld a,#C3
+        ld (H_KEYI),a
+        ld hl,cov_isr
+        ld (H_KEYI+1),hl
+        ei
+        ld a,1
+        ld (hook_on),a
+        ret
+
+; cover_unhook: (at the end) the line interrupt off, the old hook back
+cover_unhook:
+        ld a,(hook_on)
+        or a
+        ret z
+        call split_kill
+        xor a
+        ld (hook_on),a
+        di
+        ld hl,cov_chain
+        ld de,H_KEYI
+        ld bc,5
+        ldir
+        ei
+        ret
+
+; cover_view: the area empty, the bars beside the cover, the cover again
+cover_view:
+        call vb_clear
+        ld hl,navy_colrow
+        ld (colfn),hl
+        call area_out_col
+        call area_out_pat
+        call bars_normal
+        ld a,12
+        ld (bp_col0),a
+        ld (bp_bands),a
+        ld hl,bar_raw
+        ld bc,NBARS*2
+        ld a,#FF
+        call memset
+        ld hl,bar_last
+        ld bc,NBARS*2
+        ld a,#FF
+        call memset
+        ld hl,cellcache
+        ld bc,NBARS*10
+        ld a,#FF
+        call memset
+        xor a
+        ld (cov_ok),a
+        dec a
+        ld (cov_seen),a
+        jp cover_poll
+
+navy_colrow:                    ; colfn: a row of the area in navy
+        ld hl,rowcol
+        ld bc,192
+        ld a,NAVY*16+NAVY
+        jp memset
+
+; merge_bands: the cover view's 12 bars: of every two bands the louder
+merge_bands:
+        ld hl,viz+V_LEVEL
+        call .m
+        ld hl,viz+V_PEAK
+.m:     ld d,h
+        ld e,l
+        ld b,12
+.l:     ld a,(hl)
+        inc hl
+        cp (hl)
+        jr nc,.a
+        ld a,(hl)
+.a:     inc hl
+        ld (de),a
+        inc de
+        djnz .l
+        ret
+
+; cover_poll: the cover view shows and the engine has another cover: it
+; comes (a cover in the making: its next generation is waited for)
+cover_poll:
+        ld a,(view)
+        cp 2
+        ret nz
+        ld a,(eq_open)
+        ld hl,help_on
+        or (hl)
+        ld hl,fs_on
+        or (hl)
+        ld hl,pg_on
+        or (hl)
+        ret nz
+        ld a,(st+ST_COVGEN)
+        ld hl,cov_seen
+        cp (hl)
+        ret z
+        ld (hl),a
+        ld a,(st+ST_COVST)
+        cp 1
+        ret z
+        cp 2
+        jr nz,cover_none
+        ld hl,0                 ; (the reply stays in the engine: it goes to VRAM from there)
+        ld (rmax),hl
+        ld a,C_COVGET
+        ld bc,0
+        call cmd
+        ld hl,REPLY_MAX
+        ld (rmax),hl
+        jr c,cover_none
+        jr nz,cover_none
+        ld hl,W_REPLY           ; its palette
+        ld de,sp_band
+        ld bc,32
+        call eng_copy
+        ld hl,W_REPLY+32        ; its patterns, then its colours: 10 rows of 80 bytes
+        ld de,#0608             ; (row 6, column 1)
+        call cov_rows
+        ld de,#2608
+        call cov_rows
+        ld a,1
+        ld (cov_ok),a
+        ret
+
+cov_rows:                       ; HL = engine address, DE = VRAM: 10 rows of 80 bytes
+        ld b,10
+.r:     push bc
+        push hl
+        push de
+        di
+        ld a,(slot)
+        ld h,#40
+        call ENASLT
+        di
+        pop hl                  ; (the VRAM address)
+        push hl
+        call vwrite
+        pop de
+        pop hl
+        push hl
+        push de
+        ld bc,80*256+VDP_D
+        otir
+        ld a,(p1_slot)
+        ld h,#40
+        call ENASLT
+        ei
+        pop de
+        pop hl
+        ld bc,80
+        add hl,bc
+        inc d
+        pop bc
+        djnz .r
+        ret
+
+; cover_none: no cover: the place empty, "NO COVER" in it
+cover_none:
+        xor a
+        ld (cov_ok),a
+        call setpal
+        ld de,#0608
+        ld b,10
+.r:     push bc
+        push de
+        ex de,hl
+        push hl
+        ld bc,80
+        xor a
+        call vfill
+        pop hl
+        ld a,h
+        add a,#20
+        ld h,a
+        ld bc,80
+        ld a,NAVY*16+NAVY
+        call vfill
+        ei
+        pop de
+        inc d
+        pop bc
+        djnz .r
+        ld hl,txt_nocover
+        ld de,#0A02
+        ld b,8
+        ld c,GREY*16+NAVY
+        jp put_str
+
+; split_update: the line interrupt on while the cover view shows a cover
+; (and nothing else is over the area), else off
+split_update:
+        ld a,(hook_on)
+        or a
+        ret z
+        ld a,(view)
+        cp 2
+        jr nz,.no
+        ld a,(cov_ok)
+        or a
+        jr z,.no
+        ld a,(eq_open)
+        ld hl,help_on
+        or (hl)
+        ld hl,fs_on
+        or (hl)
+        ld hl,pg_on
+        or (hl)
+        jr nz,.no
+        ld a,(split_on)
+        or a
+        ret nz
+        ; on: the first switch at SPLIT_TOP
+        ld hl,palette
+        ld de,sp_main
+        ld bc,32
+        ldir
+        ld a,1
+        ld (split_on),a
+        di
+        xor a
+        ld (sp_phase),a
+        ld a,SPLIT_TOP
+        out (VDP_C),a
+        ld a,#80+19
+        out (VDP_C),a
+        ld a,1                  ; an old flag in S#1 away
+        out (VDP_C),a
+        ld a,#8F
+        out (VDP_C),a
+        in a,(VDP_C)
+        xor a
+        out (VDP_C),a
+        ld a,#8F
+        out (VDP_C),a
+        ld a,(RG0SAV)           ; IE1
+        or #10
+        ld (RG0SAV),a
+        out (VDP_C),a
+        ld a,#80
+        out (VDP_C),a
+        ei
+        ret
+.no:    ld a,(split_on)
+        or a
+        ret z
+        jp setpal               ; off, the player's palette everywhere
+
+; split_kill: the line interrupt off (the palette stays as it is)
+split_kill:
+        ld a,(split_on)
+        or a
+        ret z
+        xor a
+        ld (split_on),a
+        di
+        ld a,(RG0SAV)
+        and #EF
+        ld (RG0SAV),a
+        out (VDP_C),a
+        ld a,#80
+        out (VDP_C),a
+        ei
+        ret
+
+; the H.KEYI hook (copied to cov_isr): at the line interrupt the palette for
+; the band or the one for the rest, and the line of the next one
+; (the ROM's program runs in RAM of page 2 already: there it stays)
+cov_isr_src:
+    IFNDEF ROMBUILD
+        DISP cov_isr
+    ENDIF
+        ld a,1                  ; S#1: the line interrupt's flag (reading clears it)
+        out (VDP_C),a
+        ld a,#8F
+        out (VDP_C),a
+        in a,(VDP_C)
+        rrca
+        jr nc,.s0
+        ld a,(sp_phase)
+        xor 1
+        ld (sp_phase),a
+        ld hl,sp_band
+        ld a,SPLIT_BOT
+        jr nz,.p
+        ld hl,sp_main
+        ld a,SPLIT_TOP
+.p:     out (VDP_C),a           ; R#19: the next one
+        ld a,#80+19
+        out (VDP_C),a
+        xor a                   ; R#16: from entry 0
+        out (VDP_C),a
+        ld a,#80+16
+        out (VDP_C),a
+        ld c,VDP_P
+        REPT 32
+        outi
+        ENDR
+.s0:    xor a                   ; S#0 again: the BIOS reads it next
+        out (VDP_C),a
+        ld a,#8F
+        out (VDP_C),a
+cov_chain:
+        ret                     ; (the hook that was there: 5 bytes)
+        ds 4,#C9
+    IFNDEF ROMBUILD
+        ENT
+    ENDIF
+cov_isr_end:
+
 ;------------------------------------------------------------------------------
 ; the help page: all the keys, in 6-pixel text over the whole screen
 help_open:
+        call setpal             ; (the line interrupt off)
         ld a,(eq_open)
         or a
         call nz,eq_close
         ld a,1
         ld (help_on),a
         call cls
+    IFDEF ROMBUILD
+        ld a,1                  ; (the ROM: the text is in bank 1)
+        ld (#6000),a
+    ENDIF
         ld hl,help_text
         ld d,0
 .l:     ld a,d
         cp 24
-        jp nc,help_credits      ; (the screen has 24 rows)
+        jr nc,.end              ; (the screen has 24 rows)
         ld a,(hl)
         cp #FF
-        jp z,help_credits
+        jr z,.end
         ld c,a                  ; each line: colour, text, 0
         inc hl
         push de
@@ -4145,6 +4580,12 @@ help_open:
         jr nz,.z
         inc d
         jr .l
+.end:
+    IFDEF ROMBUILD
+        xor a
+        ld (#6000),a
+    ENDIF
+        ; fall through
 
 ; the credits at the bottom right, in 8-pixel letters (a cell each, so
 ; each word can have colours of its own)
@@ -4343,6 +4784,7 @@ fs_setup:
         ld (bp_col0),a
         ld a,NBARS
         ld (bp_nbars),a
+        ld (bp_bands),a
         jp bars_reset
 
 ; tk_row0_reset: the tickers stop; row 0 starts again (a page, the full screen)
@@ -6005,6 +6447,7 @@ M_LEAVE equ MODBASE+18          ; it closes (or another page comes)
 ; pg_enter: C = the page (also from a page: the other one)
 pg_enter:
         push bc
+        call setpal             ; (the line interrupt off)
         ld a,(pg_on)
         or a
         call nz,M_LEAVE
@@ -6260,6 +6703,8 @@ idtext:         db "PVAUDIO",0
 txt_title:      db "PICOAMP",0
 txt_spectrum:   db "SPECTRUM",0
 txt_scope:      db "SCOPE",0
+txt_cover:      db "COVER",0
+txt_nocover:    db "NO COVER",0
 txt_equalizer:  db "EQUALIZER",0
 txt_level:      db "LEVEL",0
 txt_keys:       db "SHF REP EQ",0
@@ -6296,33 +6741,12 @@ txt_bye:        db "PicoAmp: the music plays on.",13,10,"$"
 txt_notfound:   db "No PicoVerse Audio Engine found (flash LoadROM -p1).",13,10,"$"
 txt_nomemory:   db "Not enough memory for PicoAmp.",13,10,"$"
 txt_noanswer:   db "The engine does not answer.",13,10,"$"
-label_bars:     db 0,6,12,17,21,#FF
+label_bars:     db 0,1, 6,7, 12,13, 17,18, 21,22, #FF     ; band, column
+label_cover:    db 0,12, 8,16, 16,20, #FF
+    IFNDEF ROMBUILD
 help_text:
-        db #53,"  PICOAMP - THE KEYS",0
-        db #5E,"Up/Down    choose     Enter  play/open",0
-        db #5E,"Left/Right page       BS     parent",0
-        db #5E,"Space      pause      S      stop",0
-        db #5E,"N / P      next/prev  , / .  -10s/+10s",0
-        db #5E,"+ = / - M  vol/mute   H / R  shuffle/rep",0
-        db #5E,"V          scope      G      equalizer",0
-        db #5E,"E          EQ preset  Z      full screen",0
-        db #5E,"F          favourite+ D, DEL favourite-",0
-        db #5E,"/ or J     search     ?      this page",0
-        db #5E,"C W T $    pages      ESC Q  quit",0
-        db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
-        db #4E,"           0 middle, G or ESC closes",0
-        db #4E,"Search: type a part of a station's name,",0
-        db #4E,"  Enter; BS deletes, ESC stops",0
-        db #4E,"Full screen: Left/Right or V next picture,",0
-        db #4E,"             Z or ESC back",0
-        db #4E,"Favourites: F adds the chosen station (or",0
-        db #4E,"  the one that plays), D removes it (in",0
-        db #4E,"  Internet radio/Favourites)",0
-        db #4E,"Mouse: click to choose, again to play;",0
-        db #4E,"       the right button goes back; the",0
-        db #4E,"       ? box at the top: this page",0
-        db #6E,"press a key",0
-        db #FF
+        HELP_TEXT
+    ENDIF
 txt_program:    db "PROGRAM",0
 txt_favpath:    db "/Internet radio/Favourites",0
 txt_extm3u:     db "#EXTM3U",13,10,0
@@ -6420,7 +6844,14 @@ st_kind_shown:  db 0
 eq_sel:         db 0
 eq_drag:        db #FF
 eqbal:          db 50
-view:           db 0
+view:           db 0                ; 0 spectrum, 1 scope, 2 cover
+cov_cap:        db 0                ; the engine makes covers
+cov_seen:       db #FF              ; the cover generation on the screen
+cov_ok:         db 0                ; the screen shows a cover (its palette in sp_band)
+split_on:       db 0                ; the line interrupt switches the palette
+hook_on:        db 0
+lab_col:        db 0
+rmax:           dw REPLY_MAX
 hold:           db 60
 mode_shown:     db #FF
 knob_pos:       db 0
@@ -6450,6 +6881,7 @@ bp_bottom:      db 15
 bp_mirror:      db 0
 bp_col0:        db 1
 bp_nbars:       db NBARS+2
+bp_bands:       db NBARS            ; the spectrum's bars (the cover view: 12)
 count:          dw 0
 sel:            dw 0
 top:            dw 0
@@ -6568,6 +7000,10 @@ mod_clock_src:
         include "clock.asm"
         ENT
     IFDEF ROMBUILD
+help_text:                      ; (the ROM: in bank 1, help_open switches it in)
+        HELP_TEXT
+    ENDIF
+    IFDEF ROMBUILD
         ds #8000-$,#FF
         org #4000               ; fileorg-ok (bank 2)
     ENDIF
@@ -6598,7 +7034,7 @@ REPLY_MAX       equ 1024
     IFDEF ROMBUILD
 bss_start       equ (progend + 255) & #FF00     ; after the program, in RAM
     ELSE
-bss_start       equ #8800               ; (after the COM file and its page modules)
+bss_start       equ #8900               ; (after the COM file and its page modules)
         assert mod_file_end <= bss_start
     ENDIF
 font            equ bss_start           ; 96 x 8
@@ -6633,7 +7069,19 @@ fav_name        equ fav_url + 256
 modext          equ fav_name + 64           ; (more room for a page module)
 ckb             equ modext + 1344           ; the engine's clock block (pages)
 t6tk            equ ckb + 48                ; row 0's ticker on a page / the full screen: 34 cells
+; the line interrupt's palettes: where row 0's ticker of a page or the full
+; screen goes (they and the cover view are never there at the same time)
+sp_main         equ t6tk                ; the player's palette (set as the interrupt starts)
+sp_band         equ sp_main + 32        ; the cover's band (set as the cover comes)
+sp_phase        equ sp_band + 32        ; 0: the band comes next, 1: its end
+        assert sp_phase < t6tk + 34*8
+    IFDEF ROMBUILD
+cov_isr         equ cov_isr_src         ; (the program is in RAM of page 2)
 bss_end         equ t6tk + 34*8
+    ELSE
+cov_isr         equ t6tk + 34*8         ; the interrupt's code (copied: pages 2-3 are RAM whatever 0 and 1 hold)
+bss_end         equ cov_isr + (cov_isr_end - cov_isr_src)
+    ENDIF
 MOD_MAX         equ ckb - MODBASE
         assert mod_clock_end - mod_clock <= MOD_MAX
         assert mod_wx_end - mod_wx <= MOD_MAX

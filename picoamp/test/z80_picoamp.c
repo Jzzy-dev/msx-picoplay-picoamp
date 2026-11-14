@@ -14,6 +14,12 @@
 // as the BIOS does (+ is right / down; the BIOS turns the mouse's own
 // offsets round).
 //
+// The VDP's line interrupt (R#0 IE1, R#19, S#1 FH) is there too: a line takes
+// 1/262 of a frame, display line 0 comes 70 lines after the frame interrupt,
+// and the interrupt runs the program's H.KEYI hook as the BIOS does (a stub at
+// 0038h). It counts how many lines after the asked one a palette written by
+// the hook was complete ("line interrupts" at the end).
+//
 // It prints how long each main loop pass took (frames) and how long the
 // program took to answer the keys.
 
@@ -29,6 +35,7 @@
 
 void pva_init(uint8_t *arena, size_t arena_size);
 size_t pva_arena_free(void);
+size_t pva_log_dump(char *out, size_t size);
 uint8_t pva_mem_read(uint16_t addr);
 void pva_mem_write(uint16_t addr, uint8_t data);
 void pva_core1_init(void);
@@ -160,7 +167,29 @@ static void wr(void *u, uint16_t a, uint8_t v)
       if (w >= 0 && a == w) fprintf(stderr, "[write %02X to %04X at PC %04X, page 1 %02X, HL %04X]\n", v, a, cpu.pc, page1, (unsigned)(cpu.h << 8 | cpu.l)); }
     if (a >= 0x100) mem[a] = v;
 }
-static uint8_t pin(z80 *z, uint8_t p) { (void)z; if (p == 0x99) vlatch = false; if (p == 0xB5) return rtc_read(); return 0; }
+// the line interrupt
+#define LINE_CYC    ((double)(HZ / 60) / 262.0)
+static int      li_fired = -1;          // the display line it last went off at (this frame), -1 none
+static bool     li_fh;                  // S#1 FH
+static int      li_line = -1;              // the line it went off at, for the palette after it
+static unsigned long li_count, li_late[64], li_pal_frames;
+static uint8_t  pal_line[192][32], pal_frame[192][32];  // the palette as the beam drew each line (this frame, the last one)
+static int      pal_ln = -1;
+static int      li_prev = -999;         // the line at the last look
+static uint16_t li_pc;                  // where the program was when the line came (PICOAMP_LATE: shown when late)
+static int beam_line(void);
+static uint8_t pin(z80 *z, uint8_t p)
+{
+    (void)z;
+    if (p == 0x99)
+    {
+        vlatch = false;
+        if ((vregs[15] & 15) == 1) { uint8_t v = li_fh ? 1 : 0; li_fh = false; return v; }
+        return 0;
+    }
+    if (p == 0xB5) return rtc_read();
+    return 0;
+}
 static void pout(z80 *z, uint8_t p, uint8_t v)
 {
     (void)z;
@@ -179,6 +208,13 @@ static void pout(z80 *z, uint8_t p, uint8_t v)
     {
         pal[pal_i * 2 + pal_hi] = v;
         pal_set = 1;
+        if (pal_hi && pal_i == 15 && li_line >= 0)       // a whole palette after a line interrupt: how late
+        {
+            int late = beam_line() - li_line;
+            li_late[late < 0 ? 0 : late > 63 ? 63 : late]++;
+            if (late > 8 && getenv("PICOAMP_LATE")) printf("[line %d: palette %d lines late, the line came at PC %04X]\n", li_line, late, li_pc);
+            li_line = -1;
+        }
         if (pal_hi) pal_i = (pal_i + 1) & 15;
         pal_hi ^= 1;
     }
@@ -192,6 +228,12 @@ static void pout(z80 *z, uint8_t p, uint8_t v)
             else { vregs[v & 0x3F] = vfirst; if ((v & 0x3F) == 16) { pal_i = vfirst & 15; pal_hi = 0; } }
         }
     }
+}
+
+static int beam_line(void)
+{
+    double since = (double)(cpu.cyc - (next_frame_cyc - HZ / 60));     // since the last frame interrupt
+    return (int)(since / LINE_CYC) - 70;
 }
 
 static uint8_t font[2048];
@@ -271,12 +313,27 @@ static int run(unsigned long max_cyc)
         {
             next_frame_cyc += HZ / 60;
             frames++;
+            li_fired = -1;
+            memcpy(pal_frame, pal_line, sizeof pal_frame);
             uint16_t j = mem[0xFC9E] | (mem[0xFC9F] << 8);
             j++;
             mem[0xFC9E] = (uint8_t)j; mem[0xFC9F] = (uint8_t)(j >> 8);
             if (cpu.iff1) cpu.halted = false;
         }
-        if (cpu.halted) { cpu.cyc += 4; busy_cyc += 4; continue; }
+        {
+            int ln = beam_line();               // the palette of every line the beam draws
+            if (ln != pal_ln && ln >= 0 && ln < 192) { memcpy(pal_line[ln], pal, 32); }
+            pal_ln = ln;
+        }
+        if (vregs[0] & 0x10)                    // IE1: the line interrupt
+        {
+            int ln = beam_line();
+            // (as the VDP: when the beam comes to that line, not when IE1 is set below it)
+            if (ln >= 0 && ln >= vregs[19] && li_prev < vregs[19] && li_fired < vregs[19]) { li_fired = vregs[19]; li_fh = true; li_line = vregs[19]; li_count++; li_pc = cpu.pc; }
+            li_prev = ln;
+        }
+        if (li_fh && (vregs[0] & 0x10) && cpu.iff1 && !cpu.int_pending) z80_gen_int(&cpu, 0xFF);
+        if (cpu.halted && !(cpu.int_pending && cpu.iff1)) { cpu.cyc += 4; busy_cyc += 4; continue; }
         if (!rom_mode && ((cpu.pc >= 0x4000 && cpu.pc < 0x9698) || cpu.pc >= 0xA600) && getenv("PICOAMP_CRASH") && !pc_warned)
         {
             pc_warned = 1;
@@ -499,6 +556,13 @@ int main(int argc, char **argv)
     cpu.read_byte = rd; cpu.write_byte = wr; cpu.port_in = pin; cpu.port_out = pout;
     cpu.pc = 0x100;
     cpu.sp = 0xF000;
+    cpu.interrupt_mode = 1;
+    {
+        // 0038h: the BIOS's interrupt as far as the hook: registers kept, H.KEYI called, EI, RET
+        static const uint8_t keyint[] = { 0xF5, 0xC5, 0xD5, 0xE5, 0xCD, 0x9A, 0xFD, 0xE1, 0xD1, 0xC1, 0xF1, 0xFB, 0xC9 };
+        memcpy(&mem[0x38], keyint, sizeof keyint);
+        mem[0xFD9A] = 0xC9;         // H.KEYI: nothing (RET)
+    }
     mem[0xF000] = 0; mem[0xF001] = 0;
     if (rom_mode)                   // the BIOS calls INIT (4002h) with the stack high up
     {
@@ -516,6 +580,19 @@ int main(int argc, char **argv)
            host_audio_underruns);
     printf("[RAM: %.0f reads, %.0f writes a second; busy %.0f%% (not in HALT)]\n",
            rd_ram / (cpu.cyc / (double)HZ), wr_ram / (cpu.cyc / (double)HZ), 100.0 - 100.0 * busy_cyc / cpu.cyc);
+    if (getenv("PICOAMP_LOG"))             // the engine's log at the end
+    {
+        static char lg[16384];
+        size_t n = pva_log_dump(lg, sizeof lg);
+        fwrite(lg, 1, n, stdout);
+        printf("\n");
+    }
+    if (li_count)
+    {
+        printf("[line interrupts: %lu; a palette complete after (lines late: times):", li_count);
+        for (int i = 0; i < 64; i++) if (li_late[i]) printf(" %d:%lu", i, li_late[i]);
+        printf("]\n");
+    }
     if (trace > 0) printf("[engine arena: %zu bytes free]\n", pva_arena_free());
     for (int k = 0; k < cnt_k; k++) printf("[%04X entered %lu times]\n", cnt_addr[k], cnt_n[k]);
     if (getenv("PICOAMP_HIST")) { printf("[passes by frames:"); for (int i = 0; i < 16; i++) if (pass_hist[i]) printf(" %d:%lu", i, pass_hist[i]); printf("]\n"); }
@@ -543,6 +620,7 @@ int main(int argc, char **argv)
     fwrite(pal, 1, sizeof pal, f);                  // the palette after VRAM, then the VDP registers
     fwrite(vregs, 1, sizeof vregs, f);
     fwrite(vram + 0x4000, 1, 0x4000, f);            // (SCREEN 6: the rest of its 27 KB)
+    fwrite(pal_frame, 1, sizeof pal_frame, f);      // the palette of each line in the last frame
     fclose(f);
     return 0;
 }

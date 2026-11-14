@@ -113,7 +113,7 @@ no header.
 | ROM copy in SRAM (`rom_sram`) | 64 KB |
 | core 1 stack | 8 KB |
 | engine arena (the rest of the 256 KB `rom_sram` cache) | ~184 KB here; 96 KB is the minimum (the news takes about 43 KB of it once it is opened: 24 KB of stories, 16 KB of an article, a field buffer) |
-| stream RAM | 128 KB (emu2413 tables) |
+| stream RAM | 128 KB (emu2413 tables); while a file plays, its first 37 KB hold the cover in the making (engine 0.14) |
 
 ## The MSX side, for reference
 

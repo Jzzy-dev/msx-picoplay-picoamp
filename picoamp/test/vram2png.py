@@ -51,6 +51,15 @@ if (R[0] & 0x0E) == 0x04 and (R[1] & 0x18) == 0x10:
                     px[16 + tx * 6 + c, Y] = PAL[f if (pat >> (7 - c)) & 1 else b]
     im.resize((1024, H * 4), Image.NEAREST).save(sys.argv[2])
     sys.exit(0)
+# the palette of every line, as the beam drew it in the last frame (a palette switched by a line
+# interrupt, the cover view's), when the harness saved it
+LPAL = None
+LB = 0x4000 + 32 + 64 + 0x4000
+if len(v) >= LB + 192 * 32:
+    LPAL = [[p3((v[LB + y * 32 + 2 * i] >> 4) & 7, v[LB + y * 32 + 2 * i + 1] & 7, v[LB + y * 32 + 2 * i] & 7)
+             for i in range(16)] for y in range(192)]
+    if all(sum(v[LB + y * 32:LB + y * 32 + 32]) == 0 for y in range(192)):
+        LPAL = None
 im = Image.new('RGB', (256, 192))
 px = im.load()
 for ty in range(24):
@@ -61,7 +70,8 @@ for ty in range(24):
             pat = v[bank + name * 8 + r]
             col = v[0x2000 + bank + name * 8 + r]
             for c in range(8):
-                px[tx * 8 + c, ty * 8 + r] = PAL[(col >> 4) if (pat >> (7 - c)) & 1 else (col & 15)]
+                pl = LPAL[ty * 8 + r] if LPAL else PAL
+                px[tx * 8 + c, ty * 8 + r] = pl[(col >> 4) if (pat >> (7 - c)) & 1 else (col & 15)]
 # sprites (mode 2, 8 x 8): attributes 1E00h, colours 1C00h, patterns 3800h
 order = []
 for n in range(32):
