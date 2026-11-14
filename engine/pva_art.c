@@ -49,7 +49,7 @@
 #include "tjpgd/tjpgd.h"
 
 #define KEY_MAX     260
-#define IMG_MAX     (8u * 1024u)    // a picture from the proxy (80 x 80: 2-5 KB)
+#define IMG_MAX     (6u * 1024u)    // a picture from the proxy (80 x 80, quality 80: 2-4 KB)
 #define JOB_MS      20000u          // a lookup and its picture, at most
 
 static pva_cover_t *cv;
@@ -70,7 +70,9 @@ static uint8_t      gen;
 #define WORK_SIZE   (TJPGD_WORKSPACE_SIZE + 64)
 #define A4(n)       (((n) + 3u) & ~3u)
 #define MEM_SIZE    (A4(sizeof(pva_cover_t)) + A4(WORK_SIZE) + A4(PVA_COVER_SIZE) + A4(sizeof(FIL)) + 16u)
-#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_SIZE) + 2u * 520u + 560u)    // (+ the jobs, the request)
+#define JOB_ROOM    436u
+#define LQ_SIZE     448u
+#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_SIZE) + 2u * JOB_ROOM + LQ_SIZE)    // (+ the jobs, the request)
 
 static bool    on;                  // covers are made
 static uint8_t *own;                // the arena's, when it gave it (then also online)
@@ -122,9 +124,11 @@ static bool mem(void)
 
 bool pva_art_init(void)
 {
-    // (the last to take from the arena: nothing comes after it; the PicoAmp ROM's 184 KB arena has
-    // about 66 KB left here, the Nextor modes' a few hundred bytes)
-    if (pva_arena_free() >= MEM_ONLINE + 2u * 1024u && (own = pva_alloc(MEM_ONLINE))) on = true;
+    // (the last to take from the arena: nothing comes after it. The PicoAmp ROM's arena has about
+    // 46.9 KB left here (184 KB less the HAL's heap and the microSD's buffers, the engine's own),
+    // the Nextor modes' a few hundred bytes. Online takes 45.5 KB.)
+    if (pva_arena_free() >= MEM_ONLINE + 512u && (own = pva_alloc(MEM_ONLINE))) on = true;
+    if (!own) pva_log("covers: %u bytes free, online needs %u", (unsigned)pva_arena_free(), (unsigned)(MEM_ONLINE + 512u));
     else if (pva_net_ring_idle(MEM_SIZE)) on = true;
     if (own) place(own);
     rnd ^= pva_hal_millis() * 2654435761u;
@@ -361,14 +365,14 @@ enum { J_LOGO, J_SONG };
 enum { L_IDLE, L_ASK, L_LOOKUP, L_FETCH };
 #define RB_HOSTS    3
 static const char *const rb_host[RB_HOSTS] = { "all.api.radio-browser.info", "de1.api.radio-browser.info", "nl1.api.radio-browser.info" };
-#define PROXY       "http://wsrv.nl/?w=80&h=80&fit=contain&cbg=000049&bg=000049&output=jpg&q=85&url="
+#define PROXY       "http://wsrv.nl/?w=80&h=80&fit=contain&cbg=000049&bg=000049&output=jpg&q=80&url="
 
 typedef struct
 {
     uint8_t kind;                   // J_LOGO, J_SONG
     char    path[40];               // its copy on the card
-    char    url[200], uuid[40], name[64];   // a station
-    char    term[160];              // a song or an album ("artist title")
+    char    url[160], uuid[40], name[56];   // a station
+    char    term[136];              // a song or an album ("artist title")
     bool    album;
 } job_t;
 
@@ -379,7 +383,6 @@ static uint8_t l_way, l_host;       // the question asked (uuid, address, name /
 static uint32_t l_t0;
 static bool    l_inflight;          // our request is with the web client (until its done callback)
 static bool    l_answered;          // a server answered the question (no picture: kept as such)
-#define LQ_SIZE 560
 static char   *l_q;                 // LQ_SIZE: the next request (also the picture's address, as it is read)
 static char    l_key[16];           // the JSON key whose value is the picture's address
 static uint8_t k_st;                // reading it: 0 looking for the key, 1 ':', 2 '"', 3 the value, 4 done
@@ -390,9 +393,9 @@ static bool    img_bad;
 static void online_place(uint8_t *m)
 {
     jq = (job_t *)m;
-    l_q = (char *)(m + 2u * A4(sizeof(job_t)));
+    l_q = (char *)(m + 2u * JOB_ROOM);
 }
-_Static_assert(A4(sizeof(job_t)) <= 520u, "the jobs' room");
+_Static_assert(A4(sizeof(job_t)) <= JOB_ROOM, "the jobs' room");
 
 static void enc(char *o, size_t size, const char *s)
 {
@@ -491,7 +494,7 @@ static bool lk_body(const uint8_t *p, size_t n)
                 else if (c != '\\')
                 {
                     size_t k = strlen(l_q);
-                    if (k + 1 < 240) { l_q[k] = c; l_q[k + 1] = 0; }
+                    if (k + 1 < 236) { l_q[k] = c; l_q[k + 1] = 0; }
                 }
                 break;
         }
@@ -506,7 +509,7 @@ static void lk_done(bool ok)
     if (k_st == 4 && (!strncmp(l_q, "http://", 7) || !strncmp(l_q, "https://", 8)))
     {
         // the picture, through the proxy
-        char e[470];
+        char e[LQ_SIZE - sizeof PROXY];
         enc(e, sizeof e, l_q);
         snprintf(l_q, LQ_SIZE, PROXY "%s", e);
         img_len = 0;

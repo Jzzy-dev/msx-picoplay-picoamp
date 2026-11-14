@@ -1917,7 +1917,9 @@ void pva_core1_init(void)
     reply = pva_alloc(PVA_REPLY_SIZE);
     bool dec_ok = pva_dec_init();
     // the Nextor modes leave the engine less RAM: the news then takes some of the stream RAM
-    size_t news_keep = pva_arena_size() < 160u * 1024u ? PVA_NEWS_KEEP : 0u;
+    // the news keeps 24 KB of the stream RAM (the stream's buffer: 72 KB); also in the PicoAmp ROM,
+    // whose arena's last 46 KB are the covers' (online)
+    size_t news_keep = PVA_NEWS_KEEP;
     bool net_ok = pva_net_init(news_keep);
     pva_viz_init();                     // takes some of the stream RAM; before the directory
     if (net_ok && news_keep) pva_news_init(news_keep);

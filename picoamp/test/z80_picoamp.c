@@ -523,7 +523,9 @@ int main(int argc, char **argv)
     fclose(f);
     if (argc > 7) load_font(argv[7]);
     if (host_disk_open(argv[2], 0)) { printf("no image\n"); return 2; }
-    static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024];    // the firmware's: the 256 KB SRAM cache - PICOAMP.ROM - core 1's stack
+    // the firmware's: the 256 KB SRAM cache - PICOAMP.ROM - core 1's stack - the HAL's heap (16 KB) and
+    // microSD buffers (2 x 1152), which the cartridge's HAL takes from the arena first
+    static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024 - 16 * 1024 - 2304];
     host_audio_unlimited = false;
     if (getenv("PICOAMP_JIFFY"))      // the interrupt count to start with (as after minutes of running)
     {
