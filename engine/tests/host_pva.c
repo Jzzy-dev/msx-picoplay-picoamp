@@ -50,6 +50,8 @@ extern bool host_esp_range;
 extern uint32_t host_esp_ranges, host_esp_redirs;
 extern const char *host_esp_logo_dir;
 extern uint32_t host_esp_logo_gets;
+extern bool host_esp_logo_stall;
+extern uint32_t host_esp_itunes_asks;
 
 static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } else if (verbose) { printf("  ok: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -95,6 +97,14 @@ static int cmd(uint8_t code, const void *args, size_t n)
         for (int k = 0; k < 20; k++) core1_tick();   // 20 ms between checks
     }
     return -1;
+}
+
+// the reply, as one number (to tell covers apart)
+static uint32_t fnv_reply(void)
+{
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < reply_len; i++) { h ^= reply[i]; h *= 16777619u; }
+    return h ? h : 1u;
 }
 
 static int cmd_str(uint8_t code, const char *s) { return cmd(code, s, strlen(s) + 1); }
@@ -269,6 +279,7 @@ static double sink_level(void) { double v = sink_frames ? (double)sink_sum_abs /
 int main(int argc, char **argv)
 {
     assets = argc > 1 ? argv[1] : "assets";
+    if (getenv("PVA_HOST_PICOAMP")) printf("(the PicoAmp ROM's memory)\n");
     host_esp_logo_dir = assets;
     build_image();
     {
@@ -277,8 +288,11 @@ int main(int argc, char **argv)
         host_esp_load_audio(sp);
     }
 
-    static uint8_t arena[120 * 1024 - 2304 - 16384];  // as the firmware: 128 KB left by Nextor - 8 KB core 1 stack - FatFs name buffers - the heap's piece
-    pva_init(arena, sizeof arena);
+    // the PicoAmp ROM's: the SRAM cache - the ROM - core 1's stack - the HAL's heap and microSD buffers
+    static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024 - 16 * 1024 - 2304];
+    // as the firmware: 128 KB left by Nextor - 8 KB core 1 stack - FatFs name buffers - the heap's piece;
+    // PVA_HOST_PICOAMP=1: the PicoAmp ROM's (no Nextor), as the Z80 test rig has it
+    pva_init(arena, getenv("PVA_HOST_PICOAMP") ? sizeof arena : 120 * 1024 - 2304 - 16384);
     pva_core1_init();
     host_audio_sink = sink;
 
@@ -1880,59 +1894,72 @@ int main(int argc, char **argv)
         f_unlink("0:/RADIOFAV.M3U");
         run_ms(500);
 
-        printf("[station logos]\n");
+        printf("[covers online: station logos, song covers, default pictures]\n");
+        if (getenv("PVA_HOST_PICOAMP")) CHECK(pva_art_online(), "online covers on with the PicoAmp ROM's memory (arena free %u)", (unsigned)pva_arena_free());
+        if (!pva_art_online())
+            printf("  (skipped: the Nextor modes' memory; PVA_HOST_PICOAMP=1 runs it with the PicoAmp ROM's)\n");
+        else
         {
             // the MSX player's palette; the cover may set 2, 7, 10, 13, 15
             static const uint8_t pal[34] = { 0,0, 0,0, 0x11,6, 0x33,7, 0x17,1, 0x27,3, 0x51,1, 0x27,6, 0x71,1, 0x73,3,
                                              0x61,6, 0x64,6, 0x11,4, 0x65,2, 0x55,5, 0x77,7, 0x84,0xA4 };
             pva_allow_card_writes(true);
             CHECK(cmd(PVA_C_COVER_SETUP, pal, sizeof pal) == PVA_OK, "COVER_SETUP");
-            DIR d; FILINFO fi;
-            if (f_opendir(&d, "0:/PICOAMP/LOGOS") == FR_OK)
-            {
-                char fn[300];
-                while (f_readdir(&d, &fi) == FR_OK && fi.fname[0]) { snprintf(fn, sizeof fn, "0:/PICOAMP/LOGOS/%s", fi.fname); f_unlink(fn); }
-                f_closedir(&d);
-            }
-            #define WAIT_COVER(ms) do { for (int w_ = 0; w_ < (ms) / 50; w_++) { run_ms(50); read_status(); \
-                if (st[PVA_ST_COVER_STATE] != PVA_COVER_MAKING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM) break; } } while (0)
-            #define LOGO_FILES() ({ int n_ = 0; DIR d_; FILINFO f_; if (f_opendir(&d_, "0:/PICOAMP/LOGOS") == FR_OK) { \
+            #define CLEAR_CARD() do { static const char *const dd_[] = { "0:/PICOAMP/LOGOS", "0:/PICOAMP/COVERS" }; \
+                for (int d_i = 0; d_i < 2; d_i++) { DIR d_; FILINFO f_; char fn_[300]; if (f_opendir(&d_, dd_[d_i]) == FR_OK) { \
+                while (f_readdir(&d_, &f_) == FR_OK && f_.fname[0]) { snprintf(fn_, sizeof fn_, "%s/%s", dd_[d_i], f_.fname); f_unlink(fn_); } \
+                f_closedir(&d_); } } } while (0)
+            #define FILES(dir) ({ int n_ = 0; DIR d_; FILINFO f_; if (f_opendir(&d_, dir) == FR_OK) { \
                 while (f_readdir(&d_, &f_) == FR_OK && f_.fname[0]) n_++; f_closedir(&d_); } n_; })
-            uint32_t g0 = host_esp_logo_gets, t0 = pva_hal_millis();
+            #define COVER_NOW() (cmd(PVA_C_COVER_GET, NULL, 0) == PVA_OK ? fnv_reply() : 0u)
+            CLEAR_CARD();
+            uint32_t g0 = host_esp_logo_gets, i0 = host_esp_itunes_asks, t0 = pva_hal_millis();
             static const char a1[] = "http://radio.test/stream.mp3\0Test FM\0";
             CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "play Test FM (by its address)");
-            WAIT_COVER(10000);
-            if (getenv("LOGO_LOG")) { cmd(PVA_C_LOG, NULL, 0); printf("%s\n", reply); }
-            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_READY && host_esp_logo_gets == g0 + 1 && strstr(host_esp_last_api, "byurl?url=http%3A%2F%2Fradio.test"),
-                  "a PNG logo, by the address (state %u, %s)", st[PVA_ST_COVER_STATE], host_esp_last_api);
-            CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM && LOGO_FILES() == 1, "then the stream (after %lu ms), the logo on the card",
-                  (unsigned long)(pva_hal_millis() - t0));
-            run_ms(2000);
+            // at once: the stream, and a default picture while the logo is asked for
+            run_ms(300);
             read_status();
-            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING, "plays");
-            int r = cmd(PVA_C_COVER_GET, NULL, 0);
-            int colours = 0;
+            CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM || st[PVA_ST_NET_STATE] != PVA_NET_IDLE, "the stream starts at once (net %u)", st[PVA_ST_NET_STATE]);
+            uint32_t dflt = 0;
+            for (int w = 0; w < 20 && st[PVA_ST_COVER_STATE] != PVA_COVER_READY; w++) { run_ms(50); read_status(); }
+            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_READY && (dflt = COVER_NOW()) != 0, "a default picture meanwhile");
+            // the logo, then the song's cover ("Artist One - Song A"), then none for "Artist Two - Song B" (the logo again)
+            uint32_t logo = 0, song = 0;
+            for (int w = 0; w < 300; w++)
             {
-                bool seen[16] = { 0 };
-                for (int i = 32; i < 32 + 1600 && r == PVA_OK; i++) seen[reply[i] & 15] = seen[reply[i] >> 4] = true;
-                for (int i = 0; i < 16; i++) colours += seen[i];
+                run_ms(50);
+                read_status();
+                if (st[PVA_ST_COVER_STATE] != PVA_COVER_READY) continue;
+                uint32_t h = COVER_NOW();
+                if (h != dflt && !logo && FILES("0:/PICOAMP/LOGOS") == 1) logo = h;
+                else if (h != dflt && logo && h != logo && !song) song = h;
+                if (logo && song && FILES("0:/PICOAMP/COVERS") >= 3 && h == logo) break;
             }
-            CHECK(r == PVA_OK && reply_len == PVA_COVER_SIZE && colours >= 3 && !memcmp(reply, pal, 4), "COVER_GET from the card while it streams (%d colours)", colours);
-            uint8_t first[PVA_COVER_SIZE];
-            memcpy(first, reply, sizeof first);
+            if (getenv("LOGO_LOG")) { cmd(PVA_C_LOG, NULL, 0); printf("%.*s\n", (int)reply_len, reply); }
+            CHECK(logo && strstr(host_esp_last_api, "byurl?url=http%3A%2F%2Fradio.test"), "the logo (by the address), kept on the card");
+            CHECK(song && host_esp_itunes_asks >= i0 + 2 && host_esp_logo_gets >= g0 + 2, "the song's cover (iTunes, through the proxy)");
+            CHECK(FILES("0:/PICOAMP/COVERS") == 3 && COVER_NOW() == logo, "a song without a cover: the logo again; all three songs kept (%d)", FILES("0:/PICOAMP/COVERS"));
+            read_status();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && host_esp_open_conns() == 1, "it played all along (%d connections)", host_esp_open_conns());
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
-            t0 = pva_hal_millis();
+            read_status();
+            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_NONE, "stopped: no cover");
+
+            // again: from the card, nothing asked
+            uint32_t q0 = host_esp_requests;
+            i0 = host_esp_itunes_asks;
             CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM again");
             run_ms(100);
             read_status();
-            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_READY && host_esp_logo_gets == g0 + 1, "the card's logo at once, not fetched again");
-            WAIT_COVER(5000);
-            CHECK(cmd(PVA_C_COVER_GET, NULL, 0) == PVA_OK && !memcmp(reply, first, sizeof first), "the same cover");
+            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_READY && COVER_NOW() == logo, "its logo at once, from the card");
+            run_ms(8000);
+            CHECK(host_esp_itunes_asks == i0 && host_esp_requests == q0 + 1, "nothing asked: only the stream (%u requests, %u iTunes)",
+                  host_esp_requests - q0, host_esp_itunes_asks - i0);
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
 
-            // by the uuid: the directory's Radio Two Live, a JPEG
+            // by the uuid: the directory's Radio Two Live
             cmd_str(PVA_C_DIR_OPEN, "/Internet radio");
             CHECK(cmd_str(PVA_C_DIR_SEARCH, "radio two") == PVA_E_BUSY, "search 'radio two'");
             WAIT_LIST(10000);
@@ -1941,81 +1968,64 @@ int main(int argc, char **argv)
             int i2 = find(n, "Radio Two Live");
             uint32_t c0 = host_esp_clicks;
             CHECK(i2 > 0 && cmd_u16(PVA_C_PLAY_INDEX, (uint16_t)i2) == PVA_OK, "play Radio Two Live");
-            WAIT_COVER(10000);
-            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_READY && host_esp_logo_gets == g0 + 2,
-                  "a JPEG logo (state %u)", st[PVA_ST_COVER_STATE]);
-            run_ms(2000);
-            read_status();
-            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && host_esp_clicks == c0 + 1 && LOGO_FILES() == 2, "plays, click counted after the logo");
-            CHECK(cmd(PVA_C_COVER_GET, NULL, 0) == PVA_OK && memcmp(reply + 32, first + 32, 800), "another cover");
+            for (int w = 0; w < 100 && FILES("0:/PICOAMP/LOGOS") < 2; w++) run_ms(50);
+            CHECK(FILES("0:/PICOAMP/LOGOS") == 2 && host_esp_clicks == c0 + 1, "its logo (the uuid asked first), the click counted");
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
 
-            // a "logo" that is a web page, and a station Radio Browser does not know: none, kept as such
+            // a "logo" that is no picture: the proxy says so; a default picture, "none" kept
             static const char a3[] = "http://radio.test/plain\0  Plain \"Quoted\" Radio\0";
             CHECK(cmd(PVA_C_PLAY_URL, a3, sizeof a3) == PVA_OK, "play a station whose logo is a page");
-            WAIT_COVER(10000);
-            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_NONE && host_esp_logo_gets == g0 + 3 && LOGO_FILES() == 3, "no cover, 'none' kept");
-            cmd(PVA_C_STOP, NULL, 0);
-            run_ms(300);
-            static const char a4[] = "http://radio.test/plain?unknown\0";
-            uint32_t q0 = host_esp_requests;
-            CHECK(cmd(PVA_C_PLAY_URL, a4, sizeof a4) == PVA_OK, "play a station Radio Browser does not know");
-            WAIT_COVER(10000);
-            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_NONE && LOGO_FILES() == 4, "no cover, 'none' kept");
-            run_ms(1000);
+            for (int w = 0; w < 100 && FILES("0:/PICOAMP/LOGOS") < 3; w++) run_ms(50);
             read_status();
-            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING, "plays");
-            cmd(PVA_C_STOP, NULL, 0);
-            run_ms(300);
-            q0 = host_esp_requests;
-            CHECK(cmd(PVA_C_PLAY_URL, a3, sizeof a3) == PVA_OK, "the page-logo station again");
-            run_ms(2000);
-            read_status();
-            CHECK(host_esp_logo_gets == g0 + 3 && host_esp_requests == q0 + 1 && st[PVA_ST_STATE] == PVA_STATE_PLAYING, "not asked again: only the stream (%u requests)",
-                  host_esp_requests - q0);
+            CHECK(FILES("0:/PICOAMP/LOGOS") == 3 && st[PVA_ST_COVER_STATE] == PVA_COVER_READY, "a default picture, 'none' kept");
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
 
-            // Radio Browser away: the station starts after the wait, nothing kept
-            f_unlink("0:/PICOAMP/LOGOS");
-            {
-                DIR d2; FILINFO f2; char fn[300];
-                if (f_opendir(&d2, "0:/PICOAMP/LOGOS") == FR_OK)
-                {
-                    while (f_readdir(&d2, &f2) == FR_OK && f2.fname[0]) { snprintf(fn, sizeof fn, "0:/PICOAMP/LOGOS/%s", f2.fname); f_unlink(fn); }
-                    f_closedir(&d2);
-                }
-            }
-            host_esp_api_all_down = true;
-            t0 = pva_hal_millis();
-            CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, Radio Browser away");
-            WAIT_COVER(12000);
-            CHECK(st[PVA_ST_NET_STATE] == PVA_NET_STREAM && st[PVA_ST_COVER_STATE] == PVA_COVER_NONE && LOGO_FILES() == 0 && pva_hal_millis() - t0 < 7500,
-                  "streams after %lu ms, no cover, nothing kept", (unsigned long)(pva_hal_millis() - t0));
-            host_esp_api_all_down = false;
+            // the proxy stops sending: the station plays, the request is given up (20 s)
+            CLEAR_CARD();
+            host_esp_logo_stall = true;
+            CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, the image proxy stops sending");
+            run_ms(3000);
+            read_status();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "plays meanwhile");
+            run_ms(20000);
+            read_status();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && host_esp_open_conns() == 1 && FILES("0:/PICOAMP/LOGOS") == 0,
+                  "given up, its connection closed (%d open), nothing kept", host_esp_open_conns());
+            host_esp_logo_stall = false;
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
 
-            // stopped while the logo is fetched: nothing left running
+            // stopped while asking: nothing left
             CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM");
             run_ms(30);
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(3000);
             read_status();
-            CHECK(st[PVA_ST_STATE] == PVA_STATE_STOPPED && host_esp_open_conns() == 0, "stopped at once: no stream after it");
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_STOPPED && host_esp_open_conns() == 0, "stopped at once: nothing after it");
 
-            // only where the card may be written
-            pva_allow_card_writes(false);
+            // [cover] online=off: a default picture, nothing asked
+            pva_cfg_set("cover.online", "off");
+            CLEAR_CARD();
             g0 = host_esp_logo_gets;
-            static const char a5[] = "http://radio2.test:8000/live\0";
-            f_unlink("0:/PICOAMP/LOGOS/X");
-            CHECK(cmd(PVA_C_PLAY_URL, a5, sizeof a5) == PVA_OK, "a station with the card read-only");
-            run_ms(2000);
+            uint32_t q1 = host_esp_requests;
+            CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, online=off");
+            run_ms(4000);
             read_status();
-            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_NONE && host_esp_logo_gets == g0 && st[PVA_ST_STATE] == PVA_STATE_PLAYING, "no logo asked for, it plays");
+            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_READY && host_esp_logo_gets == g0 && host_esp_requests == q1 + 1, "a default picture, nothing asked");
+            pva_cfg_set("cover.online", "on");
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
+
+            // the card read-only: asked each time, shown, not kept
+            pva_allow_card_writes(false);
+            CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, the card read-only");
+            for (int w = 0; w < 100; w++) { run_ms(50); read_status(); if (st[PVA_ST_COVER_STATE] == PVA_COVER_READY && COVER_NOW() == logo) break; }
+            CHECK(COVER_NOW() == logo && FILES("0:/PICOAMP/LOGOS") == 0, "its logo, nothing kept");
+            cmd(PVA_C_STOP, NULL, 0);
+            run_ms(300);
+            (void)t0;
         }
 
         printf("[directory: a big reply that ends with the close, quick station changes]\n");

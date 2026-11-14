@@ -212,8 +212,10 @@ static void fmt_num(char *out, size_t size, int64_t v, uint8_t sc, uint8_t dec, 
     uint64_t whole = a / (uint64_t)p10[dec], frac = a % (uint64_t)p10[dec];
     if (!a) neg = false;
     const char *sg = neg ? "-" : (sign && a) ? "+" : "";
-    if (dec) snprintf(out, size, "%s%llu.%0*llu", sg, (unsigned long long)whole, (int)dec, (unsigned long long)frac);
-    else snprintf(out, size, "%s%llu", sg, (unsigned long long)whole);
+    // (not %llu: the cartridge's printf does not take 64-bit numbers; at most 9 digits here)
+    if (whole > 999999999u) whole = 999999999u;
+    if (dec) snprintf(out, size, "%s%lu.%0*lu", sg, (unsigned long)whole, (int)dec, (unsigned long)frac);
+    else snprintf(out, size, "%s%lu", sg, (unsigned long)whole);
 }
 
 // the change in hundredths of a percent

@@ -90,10 +90,10 @@ PICOAMP shows "LOADING THE LIST...".
 | , / . | 10 seconds back / forward (files that can seek) |
 | H | Shuffle on/off |
 | R | Repeat on/off |
-| V | Spectrum / oscilloscope / cover (engine 0.14; a station's logo: 0.15) |
+| V | Spectrum / oscilloscope / cover (engine 0.14; logos, song covers online, default pictures: 0.16) |
 | G | Equalizer screen |
 | E | Next equalizer preset (Flat, Rock, Pop, Jazz, Classic, Voice, Bass, Loud) |
-| Z | Full screen pictures |
+| Z | Full screen pictures: bars, mirrored bars, plasma, the cover (twice as big) |
 | C | The clock page |
 | W | The weather page |
 | T | The news page |
@@ -436,20 +436,34 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   `folder.jpg`, `front.jpg`, `album.jpg`, `albumart.jpg`,
   `AlbumArtSmall.jpg` (or `.jpeg`). JPEG only, baseline (a progressive JPEG
   shows NO COVER; the engine's log says why).
-* **A station's logo** (engine 0.15, the PicoAmp ROM only): when a station
-  starts for the first time, the engine asks Radio Browser for its logo
-  (by the station's id when it comes from the directory, else by its
-  address, else by its exact name), fetches it (PNG or baseline JPEG; a JPEG
-  of at most about 36 KB) and makes it a cover before the stream starts.
-  That takes a moment (6 seconds at most; Radio Browser away or a slow
-  server: the station starts without it). The result is kept on the card
-  in `PICOAMP/LOGOS` (one small file a station, also "this station has no
-  logo"), so the next time the logo is there at once and nothing is asked.
-  Delete the folder to have them fetched again. Transparent parts of a logo
-  are the player's navy. With PICOAMP.COM (Nextor has the card) stations
-  have no cover.
+* **Online** (engine 0.16, the PicoAmp ROM: it has the memory; not with
+  PICOAMP.COM): a **station's logo** (Radio Browser is asked for the
+  station: by its id when it comes from the directory, else by its address,
+  else by its exact name), the cover of the **song that plays on a
+  station** ("Artist - Title", from the iTunes search), and the cover of a
+  **file that has none** (by its tags: artist and album, else artist and
+  title). The station plays at once; a picture comes when it is there
+  (usually within a second or two). A song's cover shows over the logo; a
+  song without one shows the logo again.
+* **Every picture from the internet** comes through the
+  [wsrv.nl](https://wsrv.nl/) image proxy as an 80 x 80 baseline JPEG
+  (whatever it was: PNG, ICO, SVG, progressive JPEG; transparent parts on
+  the player's navy), over plain HTTP, so the ESP-01's one TLS connection
+  stays the station's and the music does not stop for it. The proxy gets
+  the picture's address and nothing else.
+* **Kept on the card:** what was found (and "there is none") is kept in
+  `PICOAMP/LOGOS` and `PICOAMP/COVERS` (1.6 KB a picture), so it is not
+  asked again. Delete the folders to have them fetched again.
+* **Default pictures:** when nothing has a cover, one of three pictures
+  (Copacabana, New York, Amsterdam; in the engine) shows, a new one at
+  random for each track or station. More: put JPEG files (baseline, any
+  size; 80 x 80 is enough) in `PICOAMP/DEFAULTS` on the card.
+* **Switches** in PICOAMP.INI: `[cover] online=off` (nothing asked on the
+  internet), `defaults=off` (NO COVER instead of a default picture).
 
-![A station's logo](images/picoamp_logo.png)
+![A song's cover on a station](images/picoamp_songcover.png)
+![A default picture](images/picoamp_default.png)
+
 * **How it looks:** the engine makes it small and turns it into SCREEN 4
   cells: two colours in every 8 pixels of a row, dithered. The cover has
   colours of its own: five of the palette's entries (2, 7, 10, 13, 15) are
@@ -467,12 +481,17 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
 * **The engine's side:** a new track: the picture is found and decoded at
   once (TJpgDec, made 1/2, 1/4 or 1/8 as big while it decodes), then turned
   into cells in steps in the main loop, so the music does not wait. A
-  folder's image is made once for all its tracks. The memory (37 KB) is the
-  stream ring's while a file plays (a station ends the cover before it
-  takes the ring back). `COVER_SETUP` tells it the palette and the free
+  folder's image is made once for all its tracks. The memory (51 KB) is the
+  arena's in the PicoAmp ROM; with PICOAMP.COM (37 KB) it is the stream
+  ring's while a file plays (there a station has no cover). `COVER_SETUP` tells it the palette and the free
   entries, `COVER_GET` gives the cover (1632 bytes, sent from the engine's
   window to VRAM directly), `ST_COVER_GEN`/`ST_COVER_STATE` in the status
   say when there is a new one.
+
+* **Full screen (Z, then Left/Right):** COVER shows the cover twice as big
+  (160 x 160 pixels), with its palette for the whole screen.
+
+![The cover full screen](images/picoamp_fullcover.png)
 
 ### Equalizer screen
 

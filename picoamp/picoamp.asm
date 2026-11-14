@@ -4695,12 +4695,13 @@ help_close:                     ; (help_text: 24 lines at most, one a row)
 
 ;------------------------------------------------------------------------------
 ; full screen pictures (Z): big bars, mirrored bars, a plasma whose colours
-; turn with the music. Left/Right, V or a
+; turn with the music, the cover twice as big. Left/Right, V or a
 ; click: the next one; Z, ESC, Enter, BS or the right button: back.
 FS_BARS   equ 0
 FS_MIRROR equ 1
 FS_PLASMA equ 2
-FS_N      equ 3
+FS_COVER  equ 3
+FS_N      equ 4
 
 fs_open:
         ld a,(eq_open)
@@ -4748,6 +4749,8 @@ fs_setup:
         jr z,.bars
         cp FS_MIRROR
         jr z,.mir
+        cp FS_COVER
+        jp z,fs_cover
         ; the plasma: drawn once, then only its colours change
         call plasma_draw
         xor a
@@ -4936,11 +4939,187 @@ fs_draw:
         ld a,(fs_mode)
         cp FS_PLASMA
         jp z,plasma_colours
-        ld hl,scope_tick        ; the bars (and the mirrored ones): 25 a second
+        cp FS_COVER
+        jr nz,.bars
+        ld a,(cov_cap)          ; the cover: again when the engine has another
+        or a
+        ret z
+        ld a,(st+ST_COVGEN)
+        ld hl,fs_covgen
+        cp (hl)
+        ret z
+        ld a,(st+ST_COVST)
+        cp 1
+        ret z                   ; (in the making: the next generation)
+        jp fs_cover
+.bars:  ld hl,scope_tick        ; the bars (and the mirrored ones): 25 a second
         inc (hl)
         bit 0,(hl)
         ret nz
         jp draw_bars
+
+; the full screen's cover: 160 x 160 pixels (each of the cover's doubled),
+; rows 1-20, columns 6-25. The cover's palette for the whole screen: the
+; text of rows 0 and 23 (white on navy) is in entries the cover keeps.
+fs_cover:
+        ld a,(st+ST_COVGEN)
+        ld (fs_covgen),a
+        ld a,(cov_cap)
+        or a
+        jp z,fs_cover_none
+        ld a,(st+ST_COVST)
+        cp 2
+        jp nz,fs_cover_none
+        ld hl,0                 ; (the reply stays in the engine)
+        ld (rmax),hl
+        ld a,C_COVGET
+        ld bc,0
+        call cmd
+        ld hl,REPLY_MAX
+        ld (rmax),hl
+        jp c,fs_cover_none
+        jp nz,fs_cover_none
+        ld hl,W_REPLY           ; its palette, for the whole screen
+        ld de,vizbuf
+        ld bc,32
+        call eng_copy
+        di
+        xor a
+        out (VDP_C),a
+        ld a,#80+16
+        out (VDP_C),a
+        ld hl,vizbuf
+        ld bc,32*256+VDP_P
+        otir
+        ei
+        ld a,1                  ; the patterns, each bit twice
+        ld (fs_expand),a
+        ld hl,W_REPLY+32
+        ld de,#0130             ; (row 1, column 6)
+        call fs_cov_part
+        xor a                   ; then the colours, as they are
+        ld (fs_expand),a
+        ld hl,W_REPLY+32+800
+        ld de,#2130
+        ; fall through
+; fs_cov_part: HL = engine address of 10 rows of 80 bytes, DE = VRAM of the
+; first of 20 rows of 160 bytes
+fs_cov_part:
+        ld b,10
+.r:     push bc
+        push de
+        push hl
+        ld de,vizbuf
+        ld bc,80
+        call eng_copy           ; one row of the cover: 10 cells of 8 lines
+        pop hl
+        ld bc,80
+        add hl,bc
+        pop de
+        push hl
+        xor a                   ; its lines 0-3 make a row, 4-7 the next
+        call fs_cov_row
+        inc d
+        ld a,4
+        call fs_cov_row
+        inc d
+        pop hl
+        pop bc
+        djnz .r
+        ret
+; fs_cov_row: from lines A-A+3 of the 10 cells in vizbuf, 20 cells to VRAM DE
+fs_cov_row:
+        push de
+        ld (fs_line),a
+        ld de,vizbuf+96
+        ld hl,vizbuf
+        ld b,10
+.c:     push bc
+        xor a                   ; the left half of the cell (its high bits), then the right
+        call .half
+        ld a,1
+        call .half
+        ld bc,8
+        add hl,bc
+        pop bc
+        djnz .c
+        pop hl                  ; (the VRAM address)
+        push hl
+        call vwrite
+        ld hl,vizbuf+96
+        ld bc,160*256+VDP_D
+        otir
+        ei
+        pop de
+        ret
+.half:  ld (fs_half),a
+        push hl
+        ld a,(fs_line)
+        ld c,a
+        ld b,0
+        add hl,bc
+        ld b,4
+.l:     ld a,(hl)
+        push hl
+        ld c,a
+        ld a,(fs_expand)
+        or a
+        ld a,c
+        jr z,.put               ; a colour: as it is
+        ld a,(fs_half)
+        or a
+        ld a,c
+        jr nz,.lo
+        rrca
+        rrca
+        rrca
+        rrca
+.lo:    and #0F
+        ld hl,dbl_bits
+        add a,l
+        ld l,a
+        jr nc,.nc
+        inc h
+.nc:    ld a,(hl)
+.put:   ld (de),a
+        inc de
+        ld (de),a
+        inc de
+        pop hl
+        inc hl
+        djnz .l
+        pop hl
+        ret
+
+; no cover: the place empty, "NO COVER" in its middle
+fs_cover_none:
+        call setpal
+        ld de,#0130
+        ld b,20
+.r:     push bc
+        push de
+        ex de,hl
+        push hl
+        ld bc,160
+        xor a
+        call vfill
+        pop hl
+        ld a,h
+        add a,#20
+        ld h,a
+        ld bc,160
+        ld a,NAVY*16+NAVY
+        call vfill
+        ei
+        pop de
+        inc d
+        pop bc
+        djnz .r
+        ld hl,txt_nocover
+        ld de,#0A0C
+        ld b,8
+        ld c,GREY*16+NAVY
+        jp put_str
 
 ; the plasma: four sines over the 32 x 176 cell lines, 12 colours of the
 ; palette with dithered steps between them
@@ -6774,6 +6953,8 @@ txt_fshelp:     db "   </>: next  Z: back",0
 fs_names:       db "BARS       ",0,0,0,0,0
                 db "MIRROR     ",0,0,0,0,0
                 db "PLASMA     ",0,0,0,0,0
+                db "COVER      ",0,0,0,0,0
+dbl_bits:       db #00,#03,#0C,#0F,#30,#33,#3C,#3F,#C0,#C3,#CC,#CF,#F0,#F3,#FC,#FF
 pl_cols:        db 2,3,4,6,7,8,9,10,11,12,13,15
 
 eq_tab:         db 0,0,0,0,0, 5,2,-2,3,5, -1,3,4,2,-1, 3,1,-1,2,4, 3,0,-1,1,3, -4,-1,4,3,-2, 8,4,0,0,0, 6,2,0,1,5
@@ -6958,6 +7139,10 @@ srch_text:      ds SRCH_MAX+1
 fs_on:          db 0
 fs_mode:        db 0
 fs_shown:       db 0
+fs_covgen:      db 0
+fs_expand:      db 0
+fs_line:        db 0
+fs_half:        db 0
 pl_row:         db 0
 pl_pp:          dw 0
 pl_y:           db 0
@@ -7034,7 +7219,7 @@ REPLY_MAX       equ 1024
     IFDEF ROMBUILD
 bss_start       equ (progend + 255) & #FF00     ; after the program, in RAM
     ELSE
-bss_start       equ #8900               ; (after the COM file and its page modules)
+bss_start       equ (mod_file_end + 255) & #FF00   ; (after the COM file and its page modules)
         assert mod_file_end <= bss_start
     ENDIF
 font            equ bss_start           ; 96 x 8
@@ -7067,7 +7252,7 @@ MODBASE         equ tkstrip                 ; (shared: a page module while it sh
 fav_url         equ tkstrip + 8*82*8
 fav_name        equ fav_url + 256
 modext          equ fav_name + 64           ; (more room for a page module)
-ckb             equ modext + 1344           ; the engine's clock block (pages)
+ckb             equ modext + 1088           ; the engine's clock block (pages)
 t6tk            equ ckb + 48                ; row 0's ticker on a page / the full screen: 34 cells
 ; the line interrupt's palettes: where row 0's ticker of a page or the full
 ; screen goes (they and the cover view are never there at the same time)
@@ -7087,6 +7272,7 @@ MOD_MAX         equ ckb - MODBASE
         assert mod_wx_end - mod_wx <= MOD_MAX
         assert mod_news_end - mod_news <= MOD_MAX
         assert mod_mk_end - mod_mk <= MOD_MAX
+        assert MOD_MAX >= 6400              ; (room for the modules to grow a little)
         assert 8*82*8 >= FAV_MAX + 1
     IFDEF ROMBUILD
         assert progend - RUN_AT <= #4000 - (rom_payload - #4000)

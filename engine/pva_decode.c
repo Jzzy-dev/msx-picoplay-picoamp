@@ -588,22 +588,6 @@ bool pva_dec_init(void)
     return inbuf && mp3_pool && filep && pcm;
 }
 
-// the decoder's file, for others while a stream plays (none is open then)
-FIL *pva_dec_fil(void) { return filep; }
-
-// the decoder's pool while no stream decodes (a station's logo is read there): NULL none
-void *pva_dec_scratch(size_t n)
-{
-    return mp3_pool && n <= MP3_POOL_SIZE ? mp3_pool : NULL;
-}
-
-// the stream starts after the pool was lent: the decoder anew
-bool pva_dec_restart(void)
-{
-    in_len = in_pos = 0;
-    return reset_decoder();
-}
-
 void pva_dec_close(void)
 {
     close_file();

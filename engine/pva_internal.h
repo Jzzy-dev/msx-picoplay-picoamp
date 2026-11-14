@@ -239,6 +239,8 @@ bool     pva_web_init(void);
 int      pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done);
 void     pva_web_poll(void);
 bool     pva_web_busy(void);
+void     pva_web_abort(void);
+void     pva_web_no_lend(void);         // the next request does not borrow the stream's TLS connection
 uint8_t  pva_web_result(void);
 uint8_t  pva_web_error(void);           // PVA_NERR_xxx
 uint16_t pva_web_http(void);
@@ -316,15 +318,17 @@ void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
 
 // covers (pva_art.c)
 bool    pva_art_init(void);
-void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len);
+void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len, const char *artist, const char *album, const char *title);
 void    pva_art_none(void);
-bool    pva_art_station(const char *url, const char *uuid, const char *name);  // false: the logo first (busy)
-bool    pva_art_station_busy(void);
-void    pva_art_station_cancel(void);
-void   *pva_dec_scratch(size_t n);
-#include "ff.h"
-FIL    *pva_dec_fil(void);
-bool    pva_dec_restart(void);
+void    pva_art_station(const char *url, const char *uuid, const char *name);
+void    pva_art_song(const char *artist, const char *title);
+bool    pva_art_online(void);
+bool    pva_card_writes(void);
+// the default pictures (pva_art_defaults.c): 80 x 80 baseline JPEGs
+#define PVA_ART_DEFAULTS 3
+extern const uint8_t *const pva_art_default[PVA_ART_DEFAULTS];
+extern const uint16_t pva_art_default_len[PVA_ART_DEFAULTS];
+
 void    pva_art_poll(void);
 int     pva_art_cmd(uint8_t code, const uint8_t *args);
 uint8_t pva_art_state(void);
