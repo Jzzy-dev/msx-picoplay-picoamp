@@ -70,7 +70,7 @@ static uint8_t      gen;
 #define WORK_SIZE   (TJPGD_WORKSPACE_SIZE + 64)
 #define A4(n)       (((n) + 3u) & ~3u)
 #define MEM_SIZE    (A4(sizeof(pva_cover_t)) + A4(WORK_SIZE) + A4(PVA_COVER_SIZE) + A4(sizeof(FIL)) + 16u)
-#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_SIZE))
+#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_SIZE) + 2u * 520u + 560u)    // (+ the jobs, the request)
 
 static bool    on;                  // covers are made
 static uint8_t *own;                // the arena's, when it gave it (then also online)
@@ -90,6 +90,7 @@ static uint8_t  item;
 static uint32_t rnd = 0x2545F491u;
 static uint8_t  dflt_pick;          // the default picture of this item
 
+static void online_place(uint8_t *m);
 static void place(uint8_t *m)
 {
     cv = (pva_cover_t *)m;
@@ -105,6 +106,8 @@ static void place(uint8_t *m)
         img = m;
         m += IMG_MAX;
         logo_keep = m;
+        m += A4(PVA_COVER_SIZE);
+        online_place(m);
     }
 }
 
@@ -367,19 +370,27 @@ typedef struct
     bool    album;
 } job_t;
 
-static job_t   jq[2];               // [0] runs, [1] waits
+static job_t  *jq;                  // [2]: [0] runs, [1] waits (in the arena's block)
 static uint8_t jn;
 static uint8_t l_state;
 static uint8_t l_way, l_host;       // the question asked (uuid, address, name / song), the server
 static uint32_t l_t0;
 static bool    l_inflight;          // our request is with the web client (until its done callback)
 static bool    l_answered;          // a server answered the question (no picture: kept as such)
-static char    l_q[560];            // the next request (also the picture's address, as it is read)
+#define LQ_SIZE 560
+static char   *l_q;                 // LQ_SIZE: the next request (also the picture's address, as it is read)
 static char    l_key[16];           // the JSON key whose value is the picture's address
 static uint8_t k_st;                // reading it: 0 looking for the key, 1 ':', 2 '"', 3 the value, 4 done
 static char    roll[20];
 static uint32_t img_len;
 static bool    img_bad;
+
+static void online_place(uint8_t *m)
+{
+    jq = (job_t *)m;
+    l_q = (char *)(m + 2u * A4(sizeof(job_t)));
+}
+_Static_assert(A4(sizeof(job_t)) <= 520u, "the jobs' room");
 
 static void enc(char *o, size_t size, const char *s)
 {
@@ -418,12 +429,12 @@ static bool question(void)
         for (; l_way < 3; l_way++)
         {
             const char *h = rb_host[l_host];
-            if (l_way == 0 && j->uuid[0]) { snprintf(l_q, sizeof l_q, "http://%s/json/stations/byuuid/%s", h, j->uuid); return true; }
-            if (l_way == 1) { enc(e, sizeof e, j->url); snprintf(l_q, sizeof l_q, "http://%s/json/stations/byurl?url=%s", h, e); return true; }
+            if (l_way == 0 && j->uuid[0]) { snprintf(l_q, LQ_SIZE, "http://%s/json/stations/byuuid/%s", h, j->uuid); return true; }
+            if (l_way == 1) { enc(e, sizeof e, j->url); snprintf(l_q, LQ_SIZE, "http://%s/json/stations/byurl?url=%s", h, e); return true; }
             if (l_way == 2 && j->name[0])
             {
                 enc(e, sizeof e, j->name);
-                snprintf(l_q, sizeof l_q, "http://%s/json/stations/search?name=%s&nameExact=true&limit=1&order=votes&reverse=true&hidebroken=true", h, e);
+                snprintf(l_q, LQ_SIZE, "http://%s/json/stations/search?name=%s&nameExact=true&limit=1&order=votes&reverse=true&hidebroken=true", h, e);
                 return true;
             }
         }
@@ -431,7 +442,7 @@ static bool question(void)
     }
     if (l_way) return false;
     enc(e, sizeof e, j->term);
-    snprintf(l_q, sizeof l_q, "http://itunes.apple.com/search?term=%s&media=music&entity=%s&limit=1", e, j->album ? "album" : "song");
+    snprintf(l_q, LQ_SIZE, "http://itunes.apple.com/search?term=%s&media=music&entity=%s&limit=1", e, j->album ? "album" : "song");
     return true;
 }
 
@@ -495,7 +506,7 @@ static void lk_done(bool ok)
         // the picture, through the proxy
         char e[470];
         enc(e, sizeof e, l_q);
-        snprintf(l_q, sizeof l_q, PROXY "%s", e);
+        snprintf(l_q, LQ_SIZE, PROXY "%s", e);
         img_len = 0;
         img_bad = false;
         l_state = L_ASK;

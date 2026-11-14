@@ -1926,7 +1926,7 @@ void pva_core1_init(void)
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();
     // covers: their memory is the stream ring while a file plays (or the arena's)
-    pva_log(pva_art_init() ? "covers: on" : "covers: off (no memory)");
+    pva_log(!pva_art_init() ? "covers: off (no memory)" : pva_art_online() ? "covers: on, online too" : "covers: on (files; online needs the PicoAmp ROM's memory)");
     pva_hal_audio_mute(true);
     pva_log("engine %d.%d start, arena free %lu", PVA_FW_MAJOR, PVA_FW_MINOR, (unsigned long)pva_arena_free());
     static uint8_t reply_fallback[64];
