@@ -11,6 +11,15 @@
 #else
 #include "hardware/sync.h"
 #define pva_barrier() __dmb()
+// covers (pva_art.c)
+bool    pva_art_init(void);
+void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len);
+void    pva_art_none(void);
+void    pva_art_poll(void);
+int     pva_art_cmd(uint8_t code, const uint8_t *args);
+uint8_t pva_art_state(void);
+uint8_t pva_art_gen(void);
+
 #endif
 
 // register window + mailbox, shared by both cores
@@ -64,9 +73,12 @@ typedef struct
     uint32_t sample_rate;
     uint8_t  channels;
     bool     seekable;
+    uint32_t pic_pos, pic_len;      // the tag's picture (APIC, JPEG): where in the file; len 0 = none
+    bool     pic_front;             // it is the front cover
 } pva_track_info_t;
 
 bool pva_dec_init(void);
+const char *pva_dec_path(void);           // the file that is open (FatFs path)
 int  pva_dec_open(const char *fatfs_path, pva_track_info_t *info);  // PVA_OK / PVA_E_xxx
 void pva_dec_close(void);
 bool pva_dec_active(void);
@@ -121,6 +133,7 @@ void   pva_net_lend_tls(bool on);     // a web request borrows the stream's TLS 
 bool   pva_net_tls_free(void);        // the stream holds none now
 bool   pva_net_is_tls(void);          // the stream's URL is https
 void   *pva_net_spare_take(size_t n);   // a piece of it for good (NULL: none left)
+void   *pva_net_ring_idle(size_t n);     // the stream ring while no stream plays (covers): NULL else
 uint8_t pva_dir_conn(void);     // the directory's
 
 // the Radio Browser directory (pva_dir.c)
@@ -309,5 +322,14 @@ void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the
 // helpers
 int  pva_kind_from_name(const char *name);   // PVA_DE_xxx or 0
 void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
+
+// covers (pva_art.c)
+bool    pva_art_init(void);
+void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len);
+void    pva_art_none(void);
+void    pva_art_poll(void);
+int     pva_art_cmd(uint8_t code, const uint8_t *args);
+uint8_t pva_art_state(void);
+uint8_t pva_art_gen(void);
 
 #endif

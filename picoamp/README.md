@@ -51,12 +51,12 @@ The engine is found by itself in any slot, as PVTEST and PicoPlay do.
 
 | Area | What it shows |
 |------|---------------|
-| Title bar | State (PLAYING / PAUSED / STOPPED), position in the playlist, a close box for the mouse |
+| Title bar | State (PLAYING / PAUSED / STOPPED), position in the playlist, a **?** box (the help page) and a close box for the mouse |
 | Big digits | Elapsed time |
 | State | STOPPED, PAUSED, PLAYING 1/38; for a station its name about 3 s, then PLAYING 1/38 about 1 s |
 | Info lines | Title, artist (the station for radio), then bit rate, sample rate and mono/stereo, and for a station HTTP or HTTPS ("128K 44.1KHZ ST HTTPS"; or "BUFFERING 40%"). The volume bar turns red while muted (M) |
 | Seek bar | Position in the track; for radio, how full the buffer is |
-| Picture | Spectrum: 24 bars from 60 Hz to 16 kHz on a log scale, 2 dB a step, with falling peak dots. Or the oscilloscope, or the equalizer |
+| Picture | Spectrum: 24 bars from 60 Hz to 16 kHz on a log scale, 2 dB a step, with falling peak dots. Or the oscilloscope, the cover (with 12 bars beside it), or the equalizer |
 | Level | VU meters, left and right |
 | List | The folder or radio list, with the path, the number of entries and page arrows |
 | Bottom row | Control icons, SHF / REP (green when on), EQ, volume |
@@ -90,7 +90,7 @@ PICOAMP shows "LOADING THE LIST...".
 | , / . | 10 seconds back / forward (files that can seek) |
 | H | Shuffle on/off |
 | R | Repeat on/off |
-| V | Spectrum / oscilloscope |
+| V | Spectrum / oscilloscope / cover (engine 0.14) |
 | G | Equalizer screen |
 | E | Next equalizer preset (Flat, Rock, Pop, Jazz, Classic, Voice, Bass, Loud) |
 | Z | Full screen pictures |
@@ -423,6 +423,43 @@ Left/Right, V or a click: the next picture. Z, ESC, Enter, BS or the right
 button: back. The title is at the top, the picture's name and the time at the
 bottom. The playback keys keep working.
 
+### Cover
+
+V a third time (after the spectrum and the oscilloscope) shows the cover of
+the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
+(each the louder of two bands) beside it, the VU meters as always.
+
+![The cover view](images/picoamp_cover.png)
+
+* **Where the picture comes from:** the one in the MP3's ID3 tag (the front
+  cover first), else an image in the track's folder: `cover.jpg`,
+  `folder.jpg`, `front.jpg`, `album.jpg`, `albumart.jpg`,
+  `AlbumArtSmall.jpg` (or `.jpeg`). JPEG only, baseline (a progressive JPEG
+  shows NO COVER; the engine's log says why). A station has no cover (yet).
+* **How it looks:** the engine makes it small and turns it into SCREEN 4
+  cells: two colours in every 8 pixels of a row, dithered. The cover has
+  colours of its own: five of the palette's entries (2, 7, 10, 13, 15) are
+  chosen for it from the MSX2's 512, the other ten stay the player's (black,
+  white, red, yellow, green, cyan, magenta, grey, blue, navy) and the cover
+  uses them too.
+* **The palette switch:** a line interrupt (the VDP's R#19, through the
+  H.KEYI hook) switches to the cover's palette at line 4 and back at line
+  128, so the rest of the screen keeps the player's colours. Everything on
+  rows 0-5 and 16-22 uses only the ten entries that stay, so a switch that
+  comes late (interrupts are off for a while in the mouse's BIOS call or a
+  row of text: 29 lines at most in the harness) changes nothing you can
+  see. The switch is off while anything else is over the picture (the
+  equalizer, the help page, a page, the full screen).
+* **The engine's side:** a new track: the picture is found and decoded at
+  once (TJpgDec, made 1/2, 1/4 or 1/8 as big while it decodes), then turned
+  into cells in steps in the main loop, so the music does not wait. A
+  folder's image is made once for all its tracks. The memory (37 KB) is the
+  stream ring's while a file plays (a station ends the cover before it
+  takes the ring back). `COVER_SETUP` tells it the palette and the free
+  entries, `COVER_GET` gives the cover (1632 bytes, sent from the engine's
+  window to VRAM directly), `ST_COVER_GEN`/`ST_COVER_STATE` in the status
+  say when there is a new one.
+
 ### Equalizer screen
 
 Five sliders (60 Hz, 250 Hz, 1 kHz, 4 kHz, 12 kHz, -12 to +12 dB) and the
@@ -452,11 +489,12 @@ A mouse in either port is used as soon as it moves. An arrow appears.
   SHF, REP, EQ (opens the equalizer), and the volume meter (click where you
   want it).
 * **Seek bar:** click to jump there.
-* **Picture:** click it or its label to switch spectrum / oscilloscope.
+* **Picture:** click it or its label to switch spectrum / oscilloscope / cover.
   Clicking the preset name opens the equalizer.
 * **Equalizer:** drag a slider or the balance (it snaps to the centre near
   the middle). Clicking the preset name picks the next one, the right button
   closes the screen.
+* **? box** in the title bar: the help page (a click or any key closes it).
 * **Close box** in the title bar: quit.
 * **Help page:** a click closes it. **Full screen:** a click is the next
   picture, the right button goes back.
@@ -546,6 +584,13 @@ python3 test/vram2png.py vram.bin screen.png
 
 Each key in the key string is half a second: `{` up, `}` down, `<` left,
 `>` right, `^` Enter, `_` BS, `.` nothing, other characters as they are.
+The harness also has the VDP's line interrupt (a line is 1/262 of a frame;
+the interrupt runs the program's H.KEYI hook as the BIOS would) and keeps
+the palette of every line of the last frame, which `vram2png.py` uses: the
+cover view's screenshots show the palette switch as the screen would. At
+the end it says how many lines after the asked one each palette was
+complete; `PICOAMP_LATE=1` lists the late ones with the program's address,
+`PICOAMP_LOG=1` prints the engine's log.
 `PICOAMP_MOUSE="t:x,y,b;..."` moves the mouse to (x, y) from t seconds on with
 buttons b held (1 left, 2 right). `PICOAMP_DUMP="addr,len;..."` prints memory
 at the end. The harness prints how many frames each main loop pass took and
