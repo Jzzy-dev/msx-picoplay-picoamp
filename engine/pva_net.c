@@ -1044,6 +1044,14 @@ bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAIL
 
 uint8_t *pva_net_spare(size_t *size) { *size = spare_size; return spare; }
 
+// the stream ring while no stream uses it (a file plays): n bytes of it for a moment (the covers);
+// NULL when a stream is on or there is no ring. The ring is the stream's again with the next stream.
+void *pva_net_ring_idle(size_t n)
+{
+    if (!ring || ring_size < n || pva_net_active()) return NULL;
+    return ring;
+}
+
 // take n bytes (4-byte aligned) off the front of the spare RAM
 void *pva_net_spare_take(size_t n)
 {

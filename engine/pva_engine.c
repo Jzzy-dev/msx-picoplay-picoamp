@@ -9,6 +9,7 @@
 #include <string.h>
 #include "ff.h"
 #include "pva_internal.h"
+#include "pva_cover.h"
 
 #define DIR_MAX         1024u
 #define DIR_POOL        (16u * 1024u)
@@ -1156,6 +1157,7 @@ static int open_stream(const char *entry)
     int r = pva_net_start(u);
     if (r != PVA_OK) return r;
     if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
+    pva_art_none();
     r = pva_dec_open_stream(&info);
     if (r != PVA_OK) { pva_net_stop(); return r; }
     snprintf(info.album, sizeof info.album, "%s", given_station);
@@ -1197,6 +1199,7 @@ static int open_track(const char *path)
         r = pva_dec_open(alt, &info);
     }
     if (r == PVA_OK && !info.title[0]) set_title_from_path(path);
+    if (r == PVA_OK) pva_art_track(pva_dec_path(), info.pic_pos, info.pic_len);
     return r;
 }
 
@@ -1691,6 +1694,8 @@ static int execute(uint8_t code)
         case PVA_C_MKT_INFO: case PVA_C_MKT_CHART: case PVA_C_MKT_CHART_GET:
         case PVA_C_MKT_MEMBERS: case PVA_C_MKT_NEWS: case PVA_C_MKT_SORT: case PVA_C_MKT_TAPE:
             return pva_markets_cmd(code, args);
+        case PVA_C_COVER_SETUP: case PVA_C_COVER_GET:
+            return pva_art_cmd(code, args);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1843,6 +1848,8 @@ static void publish_status(void)
         for (int i = 0; i < PVA_EQ_BANDS; i++) st8(PVA_ST_EQ + (uint32_t)i, (uint8_t)g[i]);
     }
     st8(PVA_ST_BALANCE, balance);
+    st8(PVA_ST_COVER_GEN, pva_art_gen());
+    st8(PVA_ST_COVER_STATE, pva_art_state());
     st8(PVA_ST_DIR_STATE, dstate);
     st8(PVA_ST_DIR_ERR, derr);
     // display fields: coarse buffer level and rate, then the generation
@@ -1916,6 +1923,8 @@ void pva_core1_init(void)
     if (net_ok) pva_markets_init();
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();
+    // covers: their memory is the stream ring while a file plays (or the arena's)
+    pva_log(pva_art_init() ? "covers: on" : "covers: off (no memory)");
     pva_hal_audio_mute(true);
     pva_log("engine %d.%d start, arena free %lu", PVA_FW_MAJOR, PVA_FW_MINOR, (unsigned long)pva_arena_free());
     static uint8_t reply_fallback[64];
@@ -2026,6 +2035,11 @@ bool pva_core1_poll(void)
         pva_win[PVA_R_HEARTBEAT] = ++hb;
     }
     pva_viz_poll(state == PVA_STATE_PLAYING && !buffering);
+    {
+        uint8_t g = pva_art_gen();
+        pva_art_poll();                 // a cover in the making: a step
+        if (g != pva_art_gen()) status_dirty = true;
+    }
     pva_win[PVA_R_WHERE] = PVA_W_STATUS;
     if (status_dirty || now - last_status_ms >= STATUS_MS)
     {

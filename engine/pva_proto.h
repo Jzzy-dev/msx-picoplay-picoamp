@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        13
+#define PVA_FW_MINOR        14
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -190,6 +190,16 @@
 #define PVA_C_MKT_TAPE      0x50    // the region's market headlines as a tape: reply: 80 characters from where the tape
                                     // is, which goes one on with every call (an empty text: no headlines yet). They are
                                     // fetched while a list is open, every 15 minutes
+// covers (engine 0.14): a track's picture as SCREEN 4 cells, 10 x 10 (80 x 80 pixels), see pva_cover.h
+#define PVA_C_COVER_SETUP   0x51    // args: the player's palette (16 x 0RRR0BBB, 00000GGG), u16 the entries the cover may
+                                    // set (bit n: entry n). The covers are made only after this
+#define PVA_C_COVER_GET     0x52    // reply: the cover's palette (32 bytes: the player's, its free entries the cover's), 800
+                                    // pattern bytes (the cells row by row, 8 each, bit 7 the left pixel), 800 colour bytes
+                                    // (first << 4 | second). PVA_E_BUSY: still in the making, PVA_E_NOTFOUND: none
+#define PVA_COVER_BYTES     1632
+#define PVA_COVER_NONE      0       // PVA_ST_COVER_STATE
+#define PVA_COVER_MAKING    1
+#define PVA_COVER_READY     2
 #define PVA_MKT_RANGES      8       // MKT_CHART's ranges: 0 1D, 1 5D, 2 1M, 3 6M, 4 YTD, 5 1Y, 6 5Y, 7 all
 #define PVA_MKT_NOW         0xFD    // MKT_OPEN: what is open (a list or an index's members) once more, now
 #define PVA_NEWS_EXT        0xFE    // the news' feed number of a feed that is not one of My feeds
@@ -284,6 +294,8 @@
 #define PVA_ST_DIR_ERR      178     // u8  PVA_NERR_xxx when it failed
 #define PVA_ST_EQ           179     // s8[5] equalizer band gains in dB
 #define PVA_ST_BALANCE      184     // u8  0..100, 50 = centre
+#define PVA_ST_COVER_GEN    185     // u8  +1 when the cover changes (engine 0.14)
+#define PVA_ST_COVER_STATE  186     // u8  PVA_COVER_xxx
 #define PVA_EQ_BANDS        5
 #define PVA_EQ_MAX_DB       12
 
