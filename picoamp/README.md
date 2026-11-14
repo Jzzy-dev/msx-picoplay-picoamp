@@ -90,7 +90,7 @@ PICOAMP shows "LOADING THE LIST...".
 | , / . | 10 seconds back / forward (files that can seek) |
 | H | Shuffle on/off |
 | R | Repeat on/off |
-| V | Spectrum / oscilloscope / cover (engine 0.14) |
+| V | Spectrum / oscilloscope / cover (engine 0.14; a station's logo: 0.15) |
 | G | Equalizer screen |
 | E | Next equalizer preset (Flat, Rock, Pop, Jazz, Classic, Voice, Bass, Loud) |
 | Z | Full screen pictures |
@@ -435,7 +435,21 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   cover first), else an image in the track's folder: `cover.jpg`,
   `folder.jpg`, `front.jpg`, `album.jpg`, `albumart.jpg`,
   `AlbumArtSmall.jpg` (or `.jpeg`). JPEG only, baseline (a progressive JPEG
-  shows NO COVER; the engine's log says why). A station has no cover (yet).
+  shows NO COVER; the engine's log says why).
+* **A station's logo** (engine 0.15, the PicoAmp ROM only): when a station
+  starts for the first time, the engine asks Radio Browser for its logo
+  (by the station's id when it comes from the directory, else by its
+  address, else by its exact name), fetches it (PNG or baseline JPEG; a JPEG
+  of at most about 36 KB) and makes it a cover before the stream starts.
+  That takes a moment (6 seconds at most; Radio Browser away or a slow
+  server: the station starts without it). The result is kept on the card
+  in `PICOAMP/LOGOS` (one small file a station, also "this station has no
+  logo"), so the next time the logo is there at once and nothing is asked.
+  Delete the folder to have them fetched again. Transparent parts of a logo
+  are the player's navy. With PICOAMP.COM (Nextor has the card) stations
+  have no cover.
+
+![A station's logo](images/picoamp_logo.png)
 * **How it looks:** the engine makes it small and turns it into SCREEN 4
   cells: two colours in every 8 pixels of a row, dithered. The cover has
   colours of its own: five of the palette's entries (2, 7, 10, 13, 15) are
