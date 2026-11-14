@@ -288,7 +288,7 @@ int main(int argc, char **argv)
         host_esp_load_audio(sp);
     }
 
-    static uint8_t arena[200 * 1024];
+    static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024];    // the PicoAmp ROM's: the SRAM cache - the ROM - core 1's stack
     // as the firmware: 128 KB left by Nextor - 8 KB core 1 stack - FatFs name buffers - the heap's piece;
     // PVA_HOST_PICOAMP=1: the PicoAmp ROM's (no Nextor), as the Z80 test rig has it
     pva_init(arena, getenv("PVA_HOST_PICOAMP") ? sizeof arena : 120 * 1024 - 2304 - 16384);

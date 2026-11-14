@@ -523,7 +523,7 @@ int main(int argc, char **argv)
     fclose(f);
     if (argc > 7) load_font(argv[7]);
     if (host_disk_open(argv[2], 0)) { printf("no image\n"); return 2; }
-    static uint8_t arena[200 * 1024];
+    static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024];    // the firmware's: the 256 KB SRAM cache - PICOAMP.ROM - core 1's stack
     host_audio_unlimited = false;
     if (getenv("PICOAMP_JIFFY"))      // the interrupt count to start with (as after minutes of running)
     {
@@ -534,7 +534,7 @@ int main(int argc, char **argv)
         const char *mp3 = getenv("PICOAMP_MP3");
         host_esp_load_audio(mp3 ? mp3 : "assets/cbr128_v23.mp3");
     }
-    pva_init(arena, rom_mode ? sizeof arena : 120u * 1024u);   // as the firmware: PicoAmp ~200 KB, Nextor modes 120 KB
+    pva_init(arena, rom_mode ? sizeof arena : 120u * 1024u);   // as the firmware: PicoAmp 184 KB, Nextor modes 120 KB
     if (rom_mode) pva_allow_card_writes(true);  // as the PicoAmp firmware: no Nextor
     pva_core1_init();
     const char *a = argv[3];

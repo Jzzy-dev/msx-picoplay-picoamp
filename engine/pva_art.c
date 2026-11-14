@@ -30,7 +30,7 @@
 // is none"), so it is not asked again. [cover] online=off in PICOAMP.INI turns
 // the online part off, [cover] defaults=off the default pictures.
 //
-// Memory: about 51 KB of the arena when it has it (the PicoAmp ROM); else the
+// Memory: about 49 KB of the arena when it has it (the PicoAmp ROM); else the
 // stream ring, which no stream uses while a file plays (then: a file's own
 // picture and the default pictures, while a file plays).
 //
@@ -49,7 +49,7 @@
 #include "tjpgd/tjpgd.h"
 
 #define KEY_MAX     260
-#define IMG_MAX     (12u * 1024u)   // a picture from the proxy (80 x 80: 2-5 KB)
+#define IMG_MAX     (8u * 1024u)    // a picture from the proxy (80 x 80: 2-5 KB)
 #define JOB_MS      20000u          // a lookup and its picture, at most
 
 static pva_cover_t *cv;
@@ -122,7 +122,9 @@ static bool mem(void)
 
 bool pva_art_init(void)
 {
-    if (pva_arena_free() >= MEM_ONLINE + 24u * 1024u && (own = pva_alloc(MEM_ONLINE))) on = true;
+    // (the last to take from the arena: nothing comes after it; the PicoAmp ROM's 184 KB arena has
+    // about 66 KB left here, the Nextor modes' a few hundred bytes)
+    if (pva_arena_free() >= MEM_ONLINE + 2u * 1024u && (own = pva_alloc(MEM_ONLINE))) on = true;
     else if (pva_net_ring_idle(MEM_SIZE)) on = true;
     if (own) place(own);
     rnd ^= pva_hal_millis() * 2654435761u;
