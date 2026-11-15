@@ -84,6 +84,7 @@ static uint8_t making;              // what the conversion makes
 static uint8_t *conv_to;            // where: out, or logo_keep (a logo made while a song's cover shows)
 static char    conv_path[40];       // its copy on the card ("": none)
 static bool    logo_ok;             // logo_keep has the station's logo
+static bool    lent;                // the pictures have the memory
 static char    key[KEY_MAX];        // a file's picture: where it came from (an album's folder image once)
 
 // what plays
@@ -624,6 +625,7 @@ static void station_fallback(void)
 // a file starts (fatfs path; its tag's picture: pos, len, len 0 = none; its tags)
 void pva_art_track(const char *path, uint32_t pic_pos, uint32_t pic_len, const char *artist, const char *album, const char *title)
 {
+    if (lent) return;                   // (the pictures have the memory)
     if (!on) return;
     job_drop_all();
     logo_ok = false;
@@ -657,6 +659,7 @@ void pva_art_track(const char *path, uint32_t pic_pos, uint32_t pic_len, const c
 // a station starts (its address, its directory uuid or NULL, its name)
 void pva_art_station(const char *url, const char *uuid, const char *name)
 {
+    if (lent) return;                   // (the pictures have the memory)
     if (!on) return;
     job_drop_all();
     item = I_STREAM;
@@ -681,6 +684,7 @@ void pva_art_station(const char *url, const char *uuid, const char *name)
 // the song on a station changes ("" artist: not a song it can look for)
 void pva_art_song(const char *artist, const char *title)
 {
+    if (lent) return;                   // (the pictures have the memory)
     if (!on || item != I_STREAM || !cv) return;
     // (the logo's job stays; a song's job waiting or running goes)
     if (jn && jq[jn - 1].kind == J_SONG)
@@ -691,6 +695,32 @@ void pva_art_song(const char *artist, const char *title)
     }
     if (online_cover(artist, title, false)) return;
     if (shown == P_ONLINE || shown == P_NONE) station_fallback();
+}
+
+// the pictures page: the covers' memory (covers stop meanwhile)
+uint8_t *pva_art_borrow(size_t *n)
+{
+    if (lent) return NULL;
+    job_drop_all();
+    show_none();
+    uint8_t *m = own;
+    if (m) *n = MEM_ONLINE;
+    else if ((m = pva_net_ring_idle(MEM_SIZE))) *n = pva_net_capacity();
+    if (!m) return NULL;
+    cv = NULL;
+    conv_to = NULL;
+    lent = true;
+    return m;
+}
+
+void pva_art_giveback(void)
+{
+    if (!lent) return;
+    lent = false;
+    item = I_NONE;
+    key[0] = 0;
+    if (own) place(own);
+    pva_cover_redo();
 }
 
 // nothing plays: no cover
@@ -707,6 +737,7 @@ void pva_art_none(void)
 
 void pva_art_poll(void)
 {
+    if (lent) return;
     if (!on) return;
     job_poll();
     bool fg = state == PVA_COVER_MAKING && conv_to == out, bg = conv_to && conv_to == logo_keep;

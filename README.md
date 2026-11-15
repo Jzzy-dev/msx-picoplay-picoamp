@@ -16,7 +16,7 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 | What | For | What it is |
 |------|-----|------------|
 | **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data, the time of day, the place, the weather and forecast, news feeds and full articles from the internet, a sleep timer and a radio alarm, the settings file. The MSX talks to it through a 4 KB memory window |
-| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, an 80-column news reader, mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
+| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, an 80-column news reader, a SCREEN 8 picture browser, slideshow and screensaver for JPEGs on the card (ROM), mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
 | **PicoPlay** | SymbOS 4.0 | A windowed player with folders, play lists, internet radio, the station directory, favourites and an equalizer |
 | **PVTEST** | MSX-DOS | A quick check of the cartridge from the prompt, and a small player |
 

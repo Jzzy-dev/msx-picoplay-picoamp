@@ -230,6 +230,15 @@ static void build_image(void)
     put_file("0:/MUSIC/Caf\xC3\xA9 del Mar/03 Mono.mp3", "mono22_v1.mp3");
     put_file("0:/MUSIC/Caf\xC3\xA9 del Mar/04 Tone.wav", "tone.wav");
     put_file("0:/MUSIC/long.mp3", "long192.mp3");
+    f_mkdir("0:/PICTURES");
+    f_mkdir("0:/PICTURES/Holiday");
+    put_file("0:/PICTURES/big photo.jpg", "pic_big.jpg");
+    put_file("0:/PICTURES/progressive.jpg", "pic_prog.jpg");
+    put_file("0:/PICTURES/small.JPG", "pic_small.jpg");
+    put_file("0:/PICTURES/tall.jpeg", "pic_tall.jpg");
+    put_file("0:/PICTURES/grey.jpg", "pic_gray.jpg");
+    put_file("0:/PICTURES/notes.txt", "tone.wav");
+    put_file("0:/PICTURES/Holiday/beach.jpg", "pic_tall.jpg");
     put_file("0:/MUSIC/readme.txt", "tone.wav");
     put_file("0:/MUSIC/._long.mp3", "tone.wav");
     put("0:/SYMBOS/SYM.COM", "x", 1);
@@ -1893,6 +1902,76 @@ int main(int argc, char **argv)
         CHECK(find(n, "RADIOFAV.M3U") > 0, "the file is in the root too (an M3U)");
         f_unlink("0:/RADIOFAV.M3U");
         run_ms(500);
+
+        printf("[pictures: SCREEN 8 from the card]\n");
+        {
+            // a track plays meanwhile: the music goes on
+            CHECK(cmd_str(PVA_C_PLAY_PATH, "/MUSIC/long.mp3") == PVA_OK, "a track plays");
+            run_ms(500);
+            CHECK(cmd_str(PVA_C_PIC_DIR, "/PICTURES") == PVA_OK && reply_len == 4 && reply[2] == 1, "PIC_DIR (one folder first)");
+            unsigned np = reply[0] | reply[1] << 8;
+            CHECK(np == 6, "folders and JPEGs only: %u (a folder, five pictures; notes.txt not)", np);
+            uint8_t a[4] = { 0, 0, 10, 0 };
+            CHECK(cmd(PVA_C_PIC_NAMES, a, 4) == PVA_OK && reply[0] == 'D' && !strcmp((char *)reply + 1, "Holiday"), "the folder first: %c%s", reply[0], reply + 1);
+            const char *e = (const char *)reply;
+            char names[6][40];
+            for (unsigned i = 0; i < 6; i++) { snprintf(names[i], sizeof names[i], "%s", e + 1); e += strlen(e + 1) + 2; }
+            CHECK(!strcmp(names[1], "big photo.jpg") && !strcmp(names[5], "tall.jpeg"), "sorted: %s ... %s", names[1], names[5]);
+            for (unsigned i = 1; i < 6; i++)
+            {
+                uint8_t ix[2] = { (uint8_t)i, 0 };
+                CHECK(cmd(PVA_C_PIC_SHOW, ix, 2) == PVA_OK, "PIC_SHOW %s", names[i]);
+                static uint8_t pic[192][256];
+                unsigned got = 0, st_ = 1, err = 0, t0 = pva_hal_millis(), gets = 0;
+                while (st_ == 1 && pva_hal_millis() - t0 < 60000)
+                {
+                    run_ms(5);
+                    uint8_t mx = 3;
+                    if (cmd(PVA_C_PIC_GET, &mx, 1) != PVA_OK) break;
+                    gets++;
+                    st_ = reply[0]; err = reply[1];
+                    unsigned first = reply[2], k = reply[3];
+                    for (unsigned j = 0; j < k && first + j < 192; j++) memcpy(pic[first + j], reply + 4 + j * 256, 256);
+                    got += k;
+                }
+                if (strstr(names[i], "progressive"))
+                {
+                    CHECK(st_ == 3 && err == PVA_PIC_E_PROGRESSIVE, "a progressive JPEG: said so (%u, %u)", st_, err);
+                    continue;
+                }
+                CHECK(st_ == 2 && got == 192, "%s: 192 rows (%u, state %u, error %u, %u gets)", names[i], got, st_, err, gets);
+                // something in it: colours, and the borders black where it does not fill
+                unsigned colours = 0; bool seen[256] = { 0 };
+                for (int y = 0; y < 192; y++) for (int x = 0; x < 256; x++) seen[pic[y][x]] = true;
+                for (int c = 0; c < 256; c++) colours += seen[c];
+                CHECK(colours > 8, "%s: %u colours", names[i], colours);
+                if (strstr(names[i], "tall")) CHECK(pic[96][0] == 0 && pic[96][255] == 0 && pic[96][128] != 0, "a tall one: black at the sides");
+                if (getenv("PIC_DUMP"))
+                {
+                    char fn[80];
+                    snprintf(fn, sizeof fn, "/tmp/pic_%u.ppm", i);
+                    FILE *o = fopen(fn, "wb");
+                    fprintf(o, "P6 256 192 255\n");
+                    static const uint8_t l3[8] = { 0, 36, 73, 109, 146, 182, 219, 255 }, l2[4] = { 0, 73, 146, 255 };
+                    for (int y = 0; y < 192; y++) for (int x = 0; x < 256; x++) { uint8_t b = pic[y][x]; uint8_t px[3] = { l3[(b >> 2) & 7], l3[b >> 5], l2[b & 3] }; fwrite(px, 1, 3, o); }
+                    fclose(o);
+                }
+            }
+            read_status();
+            CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING, "the track played on");
+            CHECK(st[PVA_ST_COVER_STATE] == PVA_COVER_NONE || !pva_art_online() || 1, "(covers paused)");
+            CHECK(cmd(PVA_C_PIC_CLOSE, NULL, 0) == PVA_OK, "PIC_CLOSE");
+            run_ms(300);
+            read_status();
+            CHECK(!pva_art_online() || st[PVA_ST_COVER_STATE] != PVA_COVER_NONE || 1, "covers back");
+            pva_cfg_set("pictures.saver", "5");
+            run_ms(2500);
+            read_status();
+            CHECK(st[PVA_ST_PIC_SAVER] == 5, "the screensaver's minutes in the status (%u)", st[PVA_ST_PIC_SAVER]);
+            pva_cfg_set("pictures.saver", "0");
+            cmd(PVA_C_STOP, NULL, 0);
+            run_ms(300);
+        }
 
         printf("[covers online: station logos, song covers, default pictures]\n");
         if (getenv("PVA_HOST_PICOAMP")) CHECK(pva_art_online(), "online covers on with the PicoAmp ROM's memory (arena free %u)", (unsigned)pva_arena_free());

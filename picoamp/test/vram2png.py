@@ -14,6 +14,26 @@ if len(v) >= 0x4000 + 32:          # the palette the program set (the harness sa
     pv = v[0x4000:0x4020]
     PAL = [p3((pv[2 * i] >> 4) & 7, pv[2 * i + 1] & 7, pv[2 * i] & 7) for i in range(16)]
 R = list(v[0x4020:0x4060]) if len(v) >= 0x4060 else [0] * 64
+if (R[0] & 0x0E) == 0x0E and (R[1] & 0x18) == 0x00:
+    # SCREEN 8 (G7: 256 x 192/212, a byte a dot, GGGRRRBB), the page R#2 shows
+    import os
+    PF = 192 * 32                       # (the per-line palettes the harness saves: skip them)
+    lo = v[:0x4000]
+    mid = v[0x4060:0x8060]
+    rest_at = len(v) - 0x18000
+    full = lo + mid + v[rest_at:]
+    page = (R[2] >> 5) & 1
+    H = 212 if R[9] & 0x80 else 192
+    L3 = [0, 36, 73, 109, 146, 182, 219, 255]
+    L2 = [0, 73, 146, 255]
+    im = Image.new('RGB', (256, H))
+    px = im.load()
+    for y in range(H):
+        for x in range(256):
+            b = full[page * 0x10000 + y * 256 + x]
+            px[x, y] = (L3[(b >> 2) & 7], L3[b >> 5], L2[b & 3])
+    im.resize((512, H * 2), Image.NEAREST).save(sys.argv[2])
+    sys.exit(0)
 if (R[0] & 0x0E) == 0x08 and (R[1] & 0x18) == 0x00:
     # SCREEN 6 (512 x 212, 4 colours, 2 bits a dot, 128 bytes a line from 0000h)
     full = v[:0x4000] + v[0x4060:]

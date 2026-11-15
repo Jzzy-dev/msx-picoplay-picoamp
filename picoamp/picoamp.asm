@@ -174,6 +174,7 @@ ST_EQ    equ 179
 ST_BAL   equ 184
 ST_COVGEN equ 185               ; +1 when the cover changes
 ST_COVST equ 186                ; 0 none, 1 in the making, 2 ready
+ST_SAVER equ 187                ; the screensaver after this many minutes (0 off; engine 0.17)
 ; the cover view: the cover's own colours between these two lines (the line
 ; interrupt switches the palette there); entries the cover may set: 2 7 10
 ; 13 15. The others are the player's in the band too: the bars, the VU
@@ -344,7 +345,48 @@ mainloop:
         call mouse
         call keys
         call split_update
+    IFDEF ROMBUILD
+        call saver_tick
+    ENDIF
         jr mainloop
+
+    IFDEF ROMBUILD
+; the screensaver (the pictures page's slideshow) after [pictures] saver minutes without a
+; key; counted in steps of 256 interrupts (4.3 s at 60 Hz, 5.1 s at 50 Hz: 13 a minute)
+saver_tick:
+        ld a,(JIFFY+1)
+        ld hl,idle_t
+        cp (hl)
+        ret z
+        ld (hl),a
+        ld hl,(idle_s)
+        inc hl
+        ld a,(fs_on)            ; (a page, the full screen: from the start)
+        or a
+        jr z,.n
+        ld hl,0
+.n:     ld (idle_s),hl
+        ld a,(st+ST_SAVER)
+        or a
+        ret z
+        ld l,a
+        ld h,0
+        ld d,h
+        ld e,l
+        add hl,hl
+        add hl,de
+        add hl,hl
+        add hl,hl
+        add hl,de               ; * 13
+        ex de,hl
+        ld hl,(idle_s)
+        sbc hl,de               ; (no carry: 'add' left it clear)
+        ret c
+        ld a,1
+        ld (pic_saver),a
+        ld c,PG_PICS
+        jp pg_enter
+    ENDIF
 
 ; the status changed: what shows it now
 info_any:
@@ -6372,6 +6414,10 @@ keys:
         ret z
     ENDIF
         ld b,a
+    IFDEF ROMBUILD
+        ld hl,0                 ; (the screensaver counts from the last key)
+        ld (idle_s),hl
+    ENDIF
         ld a,(srch_on)
         or a
         ld a,b
@@ -6444,6 +6490,11 @@ keys:
         cp 'T'
         ld c,PG_NEWS
         jp z,pg_enter
+    IFDEF ROMBUILD
+        cp 'I'
+        ld c,PG_PICS
+        jp z,pg_enter
+    ENDIF
         ld a,b
         ; fall through
 
@@ -6615,6 +6666,7 @@ PG_CLOCK   equ 1
 PG_WEATHER equ 2
 PG_NEWS    equ 3
 PG_MARKETS equ 4
+PG_PICS    equ 5
 M_OPEN  equ MODBASE
 M_TICK  equ MODBASE+3           ; each main loop pass
 M_FRAME equ MODBASE+6           ; a new picture from the engine
@@ -6684,6 +6736,10 @@ mod_tab:        dw mod_clock_src, mod_clock_end-mod_clock
                 db 3
                 dw mod_mk_src, mod_mk_end-mod_mk
                 db 3            ; (in the news' bank, after it)
+    IFDEF ROMBUILD
+                dw mod_pic_src, mod_pic_end-mod_pic
+                db 2            ; (in the weather's bank, after it; the ROM only)
+    ENDIF
 
 ; ini_save: the settings to PICOAMP.INI. The engine writes the file where no
 ; one else writes the card (the ROM); under MSX-DOS this program does.
@@ -6917,7 +6973,11 @@ txt_centre:     db "CENTRE",0
 txt_gclose:     db "G:CLOSE",0
 txt_empty:      db 0
 txt_bye:        db "PicoAmp: the music plays on.",13,10,"$"
+    IFDEF ROMBUILD
+txt_notfound:   db "No engine.",13,10,"$"
+    ELSE
 txt_notfound:   db "No PicoVerse Audio Engine found (flash LoadROM -p1).",13,10,"$"
+    ENDIF
 txt_nomemory:   db "Not enough memory for PicoAmp.",13,10,"$"
 txt_noanswer:   db "The engine does not answer.",13,10,"$"
 label_bars:     db 0,1, 6,7, 12,13, 17,18, 21,22, #FF     ; band, column
@@ -6932,7 +6992,11 @@ txt_extm3u:     db "#EXTM3U",13,10,0
 txt_extinf:     db "#EXTINF:-1,",0
 txt_crlf:       db 13,10,0
 txt_favrom:     db "Favourites: MSX-DOS writes the card here",0
+    IFDEF ROMBUILD
+txt_favold:     db "Engine too old",0
+    ELSE
 txt_favold:     db "Favourites: needs engine 0.10 or newer",0
+    ENDIF
 txt_favsel:     db "Choose (or play) a station first",0
 txt_favthere:   db "Already a favourite",0
 txt_favfull:    db "RADIOFAV.M3U is full (4 KB)",0
@@ -6948,7 +7012,11 @@ beat_cols:      db WHITE*16+RED, NAVY*16+ORANGE, NAVY*16+YELLOW, NAVY*16+GREEN
                 db NAVY*16+CYAN, WHITE*16+BLUE, WHITE*16+MAGENTA
 txt_srchnone:   db "No stations found",0
 txt_srchwifi:   db "Search: no WiFi (the ESP) for the directory",0
+    IFDEF ROMBUILD
+txt_srchfail    equ txt_favold
+    ELSE
 txt_srchfail:   db "Search: the engine is too old (0.9 or newer)",0
+    ENDIF
 txt_fshelp:     db "   </>: next  Z: back",0
 fs_names:       db "BARS       ",0,0,0,0,0
                 db "MIRROR     ",0,0,0,0,0
@@ -7129,6 +7197,11 @@ rom_sp:         dw 0
 ms_try:         db 0
 ms_rest:        db 0                    ; bit 0 / 1: port 1 / 2 gave 0,0
 help_on:        db 0
+    IFDEF ROMBUILD
+idle_s:         dw 0            ; steps of 256 interrupts without a key
+idle_t:         db 0            ; (JIFFY's high byte then)
+pic_saver:      db 0            ; the pictures page opens as the screensaver
+    ENDIF
 bt_avg:         db 0
 bt_gap:         db 0
 bt_n:           db 0
@@ -7196,6 +7269,12 @@ mod_wx_src:
         DISP MODBASE
         include "weather.asm"
         ENT
+    IFDEF ROMBUILD
+mod_pic_src:                    ; (bank 2 as well; the ROM only: PICOAMP.COM has no room)
+        DISP MODBASE
+        include "pictures.asm"
+        ENT
+    ENDIF
     IFDEF ROMBUILD
         ds #8000-$,#FF
         org #4000               ; fileorg-ok (bank 3)
@@ -7272,6 +7351,9 @@ MOD_MAX         equ ckb - MODBASE
         assert mod_wx_end - mod_wx <= MOD_MAX
         assert mod_news_end - mod_news <= MOD_MAX
         assert mod_mk_end - mod_mk <= MOD_MAX
+    IFDEF ROMBUILD
+        assert mod_pic_end - mod_pic <= MOD_MAX
+    ENDIF
         assert MOD_MAX >= 6400              ; (room for the modules to grow a little)
         assert 8*82*8 >= FAV_MAX + 1
     IFDEF ROMBUILD

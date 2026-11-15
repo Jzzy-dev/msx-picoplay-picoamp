@@ -98,6 +98,7 @@ PICOAMP shows "LOADING THE LIST...".
 | W | The weather page |
 | T | The news page |
 | $ | The market monitor |
+| I | The pictures page and slideshow (`PICOAMP.ROM`, engine 0.17) |
 | F | Add the chosen station (or the one that plays) to the favourites |
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
 | / or J | Search the station directory by name |
@@ -352,6 +353,47 @@ lends its connection for each update and connects again (it plays from its
 buffer meanwhile); the updates then come every 5 minutes. With an http
 station or a file nothing is interrupted. The engine fetches only while the
 page shows.
+
+### Pictures
+
+I opens a picture browser (`PICOAMP.ROM` with engine 0.17; `PICOAMP.COM` has
+no room left for it). It starts in `/PICTURES` and lists only folders and
+JPEG files (`.jpg`, `.jpeg`), sorted, folders first. The engine decodes the
+picture (TJpgDec, in steps between the audio work, so the music keeps
+playing), scales it to fit 256 x 192 with the MSX's dot shape (1.1 : 1) and
+black bars where the shape differs, and dithers it (Floyd–Steinberg) to the
+256 colours of SCREEN 8 (3 bits green, 3 red, 2 blue). PICOAMP takes the
+rows a few at a time and draws them into the hidden VRAM page; the page flips
+when the picture is complete. Any size works (a 4000 x 2250 photo takes a
+few seconds); progressive JPEGs are refused with a message (most cameras and
+phones write baseline ones). The engine borrows the cover's memory while a
+picture is decoded, and draws the cover again afterwards.
+
+| Key | Action |
+|-----|--------|
+| Up / Down, Left / Right | Choose (Left/Right a page) |
+| Enter | Open a folder, or show the chosen picture (there: Left / Right the previous / next one, Space marks it, any other key back) |
+| BS | Parent folder |
+| Space | Mark / unmark the chosen picture (a `*` and yellow) |
+| A | Mark all pictures (or, if all are marked, none) |
+| G | Slideshow: the marked pictures, or all of the folder (Right the next one now, any other key back) |
+| O | Screensaver: off, 1, 2, 5, 10, 15, 30 minutes |
+| R | The slideshow's interval: 5, 10, 20, 30, 60 seconds |
+| U | Shuffle on/off |
+| F | This folder for the screensaver |
+| ESC or I | The player |
+
+The screensaver starts the slideshow of its folder after the chosen minutes
+without a key, while the player's own screen shows (not on another page);
+any key returns to the player. The settings are in `PICOAMP.INI`:
+
+```
+[pictures]
+saver=5
+interval=10
+shuffle=off
+folder=/PICTURES
+```
 
 ### Settings: PICOAMP.INI
 
