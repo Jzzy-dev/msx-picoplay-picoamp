@@ -174,6 +174,7 @@ ST_EQ    equ 179
 ST_BAL   equ 184
 ST_COVGEN equ 185               ; +1 when the cover changes
 ST_COVST equ 186                ; 0 none, 1 in the making, 2 ready
+ST_SAVER equ 187                ; the screensaver after this many minutes (0 off; engine 0.17)
 ; the cover view: the cover's own colours between these two lines (the line
 ; interrupt switches the palette there); entries the cover may set: 2 7 10
 ; 13 15. The others are the player's in the band too: the bars, the VU
@@ -181,6 +182,7 @@ ST_COVST equ 186                ; 0 none, 1 in the making, 2 ready
 ; can come late: interrupts are off a while for the mouse's BIOS call or a row
 ; of text, 25 lines at most in the harness)
 COV_FREE equ #A484
+COV_Y0   equ 48                 ; the cover's first line (row 6)
 SPLIT_TOP equ 4                 ; (rows 0-5 above the cover use only colours that stay:
                                 ; the switch may come up to 44 lines late)
 SPLIT_BOT equ 128               ; (and rows 16-22 under it: up to 56 lines, until the
@@ -344,7 +346,48 @@ mainloop:
         call mouse
         call keys
         call split_update
+    IFDEF ROMBUILD
+        call saver_tick
+    ENDIF
         jr mainloop
+
+    IFDEF ROMBUILD
+; the screensaver (the pictures page's slideshow) after [pictures] saver minutes without a
+; key; counted in steps of 256 interrupts (4.3 s at 60 Hz, 5.1 s at 50 Hz: 13 a minute)
+saver_tick:
+        ld a,(JIFFY+1)
+        ld hl,idle_t
+        cp (hl)
+        ret z
+        ld (hl),a
+        ld hl,(idle_s)
+        inc hl
+        ld a,(fs_on)            ; (a page, the full screen: from the start)
+        or a
+        jr z,.n
+        ld hl,0
+.n:     ld (idle_s),hl
+        ld a,(st+ST_SAVER)
+        or a
+        ret z
+        ld l,a
+        ld h,0
+        ld d,h
+        ld e,l
+        add hl,hl
+        add hl,de
+        add hl,hl
+        add hl,hl
+        add hl,de               ; * 13
+        ex de,hl
+        ld hl,(idle_s)
+        sbc hl,de               ; (no carry: 'add' left it clear)
+        ret c
+        ld a,1
+        ld (pic_saver),a
+        ld c,PG_PICS
+        jp pg_enter
+    ENDIF
 
 ; the status changed: what shows it now
 info_any:
@@ -436,6 +479,9 @@ eng_copy:
 ; changed) and the display generation of the status, with page 1 switched
 ; to the engine once
 fetch_frame:
+    IFDEF ROMBUILD
+        call row_wait
+    ENDIF
         di
         ld a,(slot)
         ld h,#40
@@ -756,10 +802,36 @@ screen_init:
         ret
 
 ; call the main ROM routine at IX (A and the other registers passed)
-bios:   ld iy,(EXPTBL-1)
+bios:
+    IFDEF ROMBUILD
+        push af
+        call row_wait
+        pop af
+    ENDIF
+        ld iy,(EXPTBL-1)
         call CALSLT
         ei
         ret
+
+    IFDEF ROMBUILD
+; row_wait: while the cover's rows come (the line interrupts switch their
+; colours), until they are done: for what keeps interrupts off a while (the
+; BIOS, a row of text, the engine's picture data). A changes.
+row_wait:
+        ld a,i                  ; (interrupts off: no waiting, they would not come)
+        ret po
+.w:     ld a,(split_on)
+        or a
+        ret z
+        ld a,(sp_nrow)
+        or a
+        ret z
+        ld a,(sp_phase)         ; 1-9: a row's switch comes next
+        dec a
+        cp 9
+        jr c,.w
+        ret
+    ENDIF
 
 ; VRAM write address HL (below 16 KB). The caller keeps interrupts off until
 ; its bytes are out: the interrupt routine talks to the VDP as well.
@@ -3731,7 +3803,11 @@ text6_keep:
         jr z,t6_out
         add hl,de
         call t6_pass
-t6_out: ld de,(t6_cell)
+t6_out:
+    IFDEF ROMBUILD
+        call row_wait
+    ENDIF
+        ld de,(t6_cell)
         call cell_addr
         push hl
         call vwrite
@@ -4217,7 +4293,11 @@ cover_init:
         ld de,args
         ld bc,32
         ldir
+    IFDEF ROMBUILD
+        ld hl,COV_FREE+1        ; (bit 0: a palette for every row of the cover's cells, engine 0.17)
+    ELSE
         ld hl,COV_FREE
+    ENDIF
         ld (args+32),hl
         ld a,C_COVSET
         ld bc,34
@@ -4335,7 +4415,7 @@ cover_poll:
         cp 1
         ret z
         cp 2
-        jr nz,cover_none
+        jp nz,cover_none
         ld hl,0                 ; (the reply stays in the engine: it goes to VRAM from there)
         ld (rmax),hl
         ld a,C_COVGET
@@ -4343,12 +4423,29 @@ cover_poll:
         call cmd
         ld hl,REPLY_MAX
         ld (rmax),hl
-        jr c,cover_none
-        jr nz,cover_none
+        jp c,cover_none
+        jp nz,cover_none
         ld hl,W_REPLY           ; its palette
         ld de,sp_band
         ld bc,32
         call eng_copy
+    IFDEF ROMBUILD
+        xor a                   ; the rows' palettes (engine 0.17: after the cover)
+        ld (sp_nrow),a
+        ld a,(eng_minor)
+        cp 17
+        jr c,.nr
+        ld hl,W_REPLY+1632
+        ld de,sp_nrow
+        ld bc,2+9*20
+        call eng_copy
+        ld a,(sp_nrow)
+        cp 10
+        jr c,.nr
+        xor a
+        ld (sp_nrow),a
+.nr:
+    ENDIF
         ld hl,W_REPLY+32        ; its patterns, then its colours: 10 rows of 80 bytes
         ld de,#0608             ; (row 6, column 1)
         call cov_rows
@@ -4498,6 +4595,101 @@ split_kill:
         ei
         ret
 
+    IFDEF ROMBUILD
+; the H.KEYI hook: at the line interrupts the palette for the cover's band
+; (line SPLIT_TOP), then each row of its cells' own colours (sp_nrow rows:
+; the free entries, sp_early lines before the row), then the player's (line
+; SPLIT_BOT). At the frame's interrupt a switch that did not come (a line
+; missed) starts again.
+cov_isr_src:
+        ld a,1                  ; S#1: the line interrupt's flag (reading clears it)
+        out (VDP_C),a
+        ld a,#8F
+        out (VDP_C),a
+        in a,(VDP_C)
+        rrca
+        jr nc,.nf
+        ld hl,sp_phase
+        ld a,(hl)
+        inc (hl)
+        or a
+        jr z,.top
+        ld b,a                  ; B: a row (1-9), or the end
+        ld a,(sp_nrow)
+        cp b
+        jr c,.bot
+        ld c,b                  ; the next line: the next row's, or the end of the band
+        inc c
+        cp c
+        ld a,SPLIT_BOT
+        jr c,.nl
+        ld a,c
+        add a,a
+        add a,a
+        add a,a
+        add a,COV_Y0
+        ld hl,sp_early
+        sub (hl)
+.nl:    out (VDP_C),a
+        ld a,#80+19
+        out (VDP_C),a
+        ld a,b                  ; the row's entries: sp_rows + (B - 1) * 20
+        dec a
+        add a,a
+        add a,a
+        ld c,a
+        add a,a
+        add a,a
+        add a,c
+        ld e,a
+        ld d,0
+        ld hl,sp_rows
+        add hl,de
+        ld c,VDP_C
+        REPT 5                  ; (entry, R#16; its two bytes)
+        outi
+        outi
+        inc c
+        outi
+        outi
+        dec c
+        ENDR
+        jr .s0
+.nf:    ld a,(sp_phase)         ; (not the line's: the frame's. A switch missed: from the start)
+        or a
+        jr z,.s0
+        ld a,(split_on)
+        or a
+        jr z,.s0
+.bot:   xor a                   ; the player's palette; next: the band again
+        ld (sp_phase),a
+        ld a,SPLIT_TOP
+        ld hl,sp_main
+        jr .p
+.top:   ld a,(sp_nrow)          ; the band's palette; next: row 1, or the end
+        or a
+        ld a,SPLIT_BOT
+        jr z,.t1
+        ld a,COV_Y0+8
+        ld hl,sp_early
+        sub (hl)
+.t1:    ld hl,sp_band
+.p:     out (VDP_C),a           ; R#19: the next one
+        ld a,#80+19
+        out (VDP_C),a
+        xor a                   ; R#16: from entry 0
+        out (VDP_C),a
+        ld a,#80+16
+        out (VDP_C),a
+        ld c,VDP_P
+        REPT 32
+        outi
+        ENDR
+.s0:    xor a                   ; S#0 again: the BIOS reads it next
+        out (VDP_C),a
+        ld a,#8F
+        out (VDP_C),a
+    ELSE
 ; the H.KEYI hook (copied to cov_isr): at the line interrupt the palette for
 ; the band or the one for the rest, and the line of the next one
 ; (the ROM's program runs in RAM of page 2 already: there it stays)
@@ -4535,6 +4727,7 @@ cov_isr_src:
         out (VDP_C),a
         ld a,#8F
         out (VDP_C),a
+    ENDIF
 cov_chain:
         ret                     ; (the hook that was there: 5 bytes)
         ds 4,#C9
@@ -4750,7 +4943,16 @@ fs_setup:
         cp FS_MIRROR
         jr z,.mir
         cp FS_COVER
+    IFDEF ROMBUILD
+        jr nz,.pl
+        ld a,2                  ; the cover: the pictures page's, in SCREEN 8
+        ld (pic_saver),a
+        ld c,PG_PICS
+        jp pg_enter
+.pl:
+    ELSE
         jp z,fs_cover
+    ENDIF
         ; the plasma: drawn once, then only its colours change
         call plasma_draw
         xor a
@@ -4939,6 +5141,7 @@ fs_draw:
         ld a,(fs_mode)
         cp FS_PLASMA
         jp z,plasma_colours
+    IFNDEF ROMBUILD
         cp FS_COVER
         jr nz,.bars
         ld a,(cov_cap)          ; the cover: again when the engine has another
@@ -4952,12 +5155,14 @@ fs_draw:
         cp 1
         ret z                   ; (in the making: the next generation)
         jp fs_cover
+    ENDIF
 .bars:  ld hl,scope_tick        ; the bars (and the mirrored ones): 25 a second
         inc (hl)
         bit 0,(hl)
         ret nz
         jp draw_bars
 
+    IFNDEF ROMBUILD             ; (the ROM: the pictures page's, in SCREEN 8)
 ; the full screen's cover: 160 x 160 pixels (each of the cover's doubled),
 ; rows 1-20, columns 6-25. The cover's palette for the whole screen: the
 ; text of rows 0 and 23 (white on navy) is in entries the cover keeps.
@@ -5120,6 +5325,8 @@ fs_cover_none:
         ld b,8
         ld c,GREY*16+NAVY
         jp put_str
+
+    ENDIF
 
 ; the plasma: four sines over the 32 x 176 cell lines, 12 colours of the
 ; palette with dithered steps between them
@@ -6372,6 +6579,10 @@ keys:
         ret z
     ENDIF
         ld b,a
+    IFDEF ROMBUILD
+        ld hl,0                 ; (the screensaver counts from the last key)
+        ld (idle_s),hl
+    ENDIF
         ld a,(srch_on)
         or a
         ld a,b
@@ -6444,6 +6655,11 @@ keys:
         cp 'T'
         ld c,PG_NEWS
         jp z,pg_enter
+    IFDEF ROMBUILD
+        cp 'I'
+        ld c,PG_PICS
+        jp z,pg_enter
+    ENDIF
         ld a,b
         ; fall through
 
@@ -6615,6 +6831,7 @@ PG_CLOCK   equ 1
 PG_WEATHER equ 2
 PG_NEWS    equ 3
 PG_MARKETS equ 4
+PG_PICS    equ 5
 M_OPEN  equ MODBASE
 M_TICK  equ MODBASE+3           ; each main loop pass
 M_FRAME equ MODBASE+6           ; a new picture from the engine
@@ -6684,6 +6901,10 @@ mod_tab:        dw mod_clock_src, mod_clock_end-mod_clock
                 db 3
                 dw mod_mk_src, mod_mk_end-mod_mk
                 db 3            ; (in the news' bank, after it)
+    IFDEF ROMBUILD
+                dw mod_pic_src, mod_pic_end-mod_pic
+                db 2            ; (in the weather's bank, after it; the ROM only)
+    ENDIF
 
 ; ini_save: the settings to PICOAMP.INI. The engine writes the file where no
 ; one else writes the card (the ROM); under MSX-DOS this program does.
@@ -6917,7 +7138,11 @@ txt_centre:     db "CENTRE",0
 txt_gclose:     db "G:CLOSE",0
 txt_empty:      db 0
 txt_bye:        db "PicoAmp: the music plays on.",13,10,"$"
+    IFDEF ROMBUILD
+txt_notfound:   db "No engine.",13,10,"$"
+    ELSE
 txt_notfound:   db "No PicoVerse Audio Engine found (flash LoadROM -p1).",13,10,"$"
+    ENDIF
 txt_nomemory:   db "Not enough memory for PicoAmp.",13,10,"$"
 txt_noanswer:   db "The engine does not answer.",13,10,"$"
 label_bars:     db 0,1, 6,7, 12,13, 17,18, 21,22, #FF     ; band, column
@@ -6932,7 +7157,11 @@ txt_extm3u:     db "#EXTM3U",13,10,0
 txt_extinf:     db "#EXTINF:-1,",0
 txt_crlf:       db 13,10,0
 txt_favrom:     db "Favourites: MSX-DOS writes the card here",0
+    IFDEF ROMBUILD
+txt_favold:     db "Engine too old",0
+    ELSE
 txt_favold:     db "Favourites: needs engine 0.10 or newer",0
+    ENDIF
 txt_favsel:     db "Choose (or play) a station first",0
 txt_favthere:   db "Already a favourite",0
 txt_favfull:    db "RADIOFAV.M3U is full (4 KB)",0
@@ -6948,13 +7177,19 @@ beat_cols:      db WHITE*16+RED, NAVY*16+ORANGE, NAVY*16+YELLOW, NAVY*16+GREEN
                 db NAVY*16+CYAN, WHITE*16+BLUE, WHITE*16+MAGENTA
 txt_srchnone:   db "No stations found",0
 txt_srchwifi:   db "Search: no WiFi (the ESP) for the directory",0
+    IFDEF ROMBUILD
+txt_srchfail    equ txt_favold
+    ELSE
 txt_srchfail:   db "Search: the engine is too old (0.9 or newer)",0
+    ENDIF
 txt_fshelp:     db "   </>: next  Z: back",0
 fs_names:       db "BARS       ",0,0,0,0,0
                 db "MIRROR     ",0,0,0,0,0
                 db "PLASMA     ",0,0,0,0,0
                 db "COVER      ",0,0,0,0,0
+    IFNDEF ROMBUILD
 dbl_bits:       db #00,#03,#0C,#0F,#30,#33,#3C,#3F,#C0,#C3,#CC,#CF,#F0,#F3,#FC,#FF
+    ENDIF
 pl_cols:        db 2,3,4,6,7,8,9,10,11,12,13,15
 
 eq_tab:         db 0,0,0,0,0, 5,2,-2,3,5, -1,3,4,2,-1, 3,1,-1,2,4, 3,0,-1,1,3, -4,-1,4,3,-2, 8,4,0,0,0, 6,2,0,1,5
@@ -7129,6 +7364,11 @@ rom_sp:         dw 0
 ms_try:         db 0
 ms_rest:        db 0                    ; bit 0 / 1: port 1 / 2 gave 0,0
 help_on:        db 0
+    IFDEF ROMBUILD
+idle_s:         dw 0            ; steps of 256 interrupts without a key
+idle_t:         db 0            ; (JIFFY's high byte then)
+pic_saver:      db 0            ; the pictures page opens as the screensaver
+    ENDIF
 bt_avg:         db 0
 bt_gap:         db 0
 bt_n:           db 0
@@ -7139,10 +7379,12 @@ srch_text:      ds SRCH_MAX+1
 fs_on:          db 0
 fs_mode:        db 0
 fs_shown:       db 0
+    IFNDEF ROMBUILD
 fs_covgen:      db 0
 fs_expand:      db 0
 fs_line:        db 0
 fs_half:        db 0
+    ENDIF
 pl_row:         db 0
 pl_pp:          dw 0
 pl_y:           db 0
@@ -7196,6 +7438,12 @@ mod_wx_src:
         DISP MODBASE
         include "weather.asm"
         ENT
+    IFDEF ROMBUILD
+mod_pic_src:                    ; (bank 2 as well; the ROM only: PICOAMP.COM has no room)
+        DISP MODBASE
+        include "pictures.asm"
+        ENT
+    ENDIF
     IFDEF ROMBUILD
         ds #8000-$,#FF
         org #4000               ; fileorg-ok (bank 3)
@@ -7258,8 +7506,11 @@ t6tk            equ ckb + 48                ; row 0's ticker on a page / the ful
 ; screen goes (they and the cover view are never there at the same time)
 sp_main         equ t6tk                ; the player's palette (set as the interrupt starts)
 sp_band         equ sp_main + 32        ; the cover's band (set as the cover comes)
-sp_phase        equ sp_band + 32        ; 0: the band comes next, 1: its end
-        assert sp_phase < t6tk + 34*8
+sp_phase        equ sp_band + 32        ; 0: the band comes next, 1: its end (the ROM: 1-9 a row's switch)
+sp_nrow         equ sp_phase + 1        ; (the ROM) the cover's rows that have their own colours (0, 9)
+sp_early        equ sp_nrow + 1         ; how many lines before its row a switch is asked for
+sp_rows         equ sp_early + 1        ; 9 x 5 x (entry, 90h, two bytes)
+        assert sp_rows + 9*20 <= t6tk + 34*8
     IFDEF ROMBUILD
 cov_isr         equ cov_isr_src         ; (the program is in RAM of page 2)
 bss_end         equ t6tk + 34*8
@@ -7272,6 +7523,9 @@ MOD_MAX         equ ckb - MODBASE
         assert mod_wx_end - mod_wx <= MOD_MAX
         assert mod_news_end - mod_news <= MOD_MAX
         assert mod_mk_end - mod_mk <= MOD_MAX
+    IFDEF ROMBUILD
+        assert mod_pic_end - mod_pic <= MOD_MAX
+    ENDIF
         assert MOD_MAX >= 6400              ; (room for the modules to grow a little)
         assert 8*82*8 >= FAV_MAX + 1
     IFDEF ROMBUILD

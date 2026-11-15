@@ -98,6 +98,7 @@ PICOAMP shows "LOADING THE LIST...".
 | W | The weather page |
 | T | The news page |
 | $ | The market monitor |
+| I | The pictures page and slideshow (`PICOAMP.ROM`, engine 0.17) |
 | F | Add the chosen station (or the one that plays) to the favourites |
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
 | / or J | Search the station directory by name |
@@ -353,6 +354,51 @@ buffer meanwhile); the updates then come every 5 minutes. With an http
 station or a file nothing is interrupted. The engine fetches only while the
 page shows.
 
+### Pictures
+
+I opens a picture browser (`PICOAMP.ROM` with engine 0.17; `PICOAMP.COM` has
+no room left for it). It starts in `/PICTURES` and lists only folders and
+JPEG files (`.jpg`, `.jpeg`), sorted, folders first. The engine decodes the
+picture (TJpgDec, in steps between the audio work, so the music keeps
+playing), scales it to fit 256 x 192 with the MSX's dot shape (1.1 : 1) and
+black bars where the shape differs, and dithers it (Floyd–Steinberg) to the
+256 colours of SCREEN 8 (3 bits green, 3 red, 2 blue). PICOAMP takes the
+rows a few at a time and draws them into the hidden VRAM page; the page flips
+when the picture is complete. Any size works (a 4000 x 2250 photo takes a
+few seconds); progressive JPEGs are refused with a message (most cameras and
+phones write baseline ones). The engine borrows the cover's memory while a
+picture is decoded, and draws the cover again afterwards.
+
+| The browser | A picture |
+|---|---|
+| ![Pictures](images/picoamp_pictures.png) | ![A picture](images/picoamp_picture.png) |
+
+| Key | Action |
+|-----|--------|
+| Up / Down, Left / Right | Choose (Left/Right a page) |
+| Enter | Open a folder, or show the chosen picture (there: Left / Right the previous / next one, Space marks it, any other key back) |
+| BS | Parent folder |
+| Space | Mark / unmark the chosen picture (a `*` and yellow) |
+| A | Mark all pictures (or, if all are marked, none) |
+| G | Slideshow: the marked pictures, or all of the folder (Right the next one now, any other key back) |
+| O | Screensaver: off, 1, 2, 5, 10, 15, 30 minutes |
+| R | The slideshow's interval: 5, 10, 20, 30, 60 seconds |
+| U | Shuffle on/off |
+| F | This folder for the screensaver |
+| ESC or I | The player |
+
+The screensaver starts the slideshow of its folder after the chosen minutes
+without a key, while the player's own screen shows (not on another page);
+any key returns to the player. The settings are in `PICOAMP.INI`:
+
+```
+[pictures]
+saver=5
+interval=10
+shuffle=off
+folder=/PICTURES
+```
+
 ### Settings: PICOAMP.INI
 
 `PICOAMP.INI` in the root of the card keeps the clock's settings:
@@ -411,13 +457,14 @@ WiFi (ESP-01) and engine 0.9.
 
 ### Full screen
 
-Three pictures, made from the engine's spectrum and levels:
+Three pictures made from the engine's spectrum and levels, and the cover:
 
 | Picture | What it is |
 |---------|------------|
 | Bars | 24 bars of 20 cells (40 steps), green to red, with peaks |
 | Mirror | The bars from the middle up, and their reflection down |
 | Plasma | A plasma (four sines) drawn once; its 12 colours turn round a colour wheel, faster when the music is louder, brighter with the bass |
+| Cover | The cover, big (below) |
 
 Left/Right, V or a click: the next picture. Z, ESC, Enter, BS or the right
 button: back. The title is at the top, the picture's name and the time at the
@@ -459,7 +506,9 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   random for each track or station. More: put JPEG files (baseline, any
   size; 80 x 80 is enough) in `PICOAMP/DEFAULTS` on the card.
 * **Switches** in PICOAMP.INI: `[cover] online=off` (nothing asked on the
-  internet), `defaults=off` (NO COVER instead of a default picture).
+  internet), `defaults=off` (NO COVER instead of a default picture),
+  `rows=off` (one palette for the whole cover, as before 0.17), `rowearly=2`
+  (below).
 
 ![A song's cover on a station](images/picoamp_songcover.png)
 ![A default picture](images/picoamp_default.png)
@@ -470,6 +519,21 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   chosen for it from the MSX2's 512, the other ten stay the player's (black,
   white, red, yellow, green, cyan, magenta, grey, blue, navy) and the cover
   uses them too.
+* **Five colours for every row of cells** (`PICOAMP.ROM` with engine 0.17):
+  the engine chooses the five for each of the 10 rows of cells (8 lines
+  each), each row's starting from the row above, and puts a colour where the
+  row above had the nearest one. A line interrupt sets them before each row
+  (the entry, R#16, its two bytes: 20 OUTs). Faces, skies and reds look
+  closer to the picture than with five for the whole cover. The switch must
+  come on time: while the rows come, PICOAMP waits with what keeps
+  interrupts off a while (a BIOS call, a row of text, the engine's picture
+  data) until they are done; in the harness every row's switch then comes
+  on time (the band's start and end may come up to 14 lines late, which
+  shows nothing). The player's main loop goes round less often meanwhile
+  (0.8 frames a round instead of 0.5); keys answer as fast. On a real MSX,
+  if thin lines of wrong colours show at the top or bottom of the cover's
+  rows, `[cover] rowearly` (0-7, the lines before a row its switch is asked
+  for: 2) moves the switch; `rows=off` goes back to one palette.
 * **The palette switch:** a line interrupt (the VDP's R#19, through the
   H.KEYI hook) switches to the cover's palette at line 4 and back at line
   128, so the rest of the screen keeps the player's colours. Everything on
@@ -484,12 +548,19 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   folder's image is made once for all its tracks. The memory (51 KB) is the
   arena's in the PicoAmp ROM; with PICOAMP.COM (37 KB) it is the stream
   ring's while a file plays (there a station has no cover). `COVER_SETUP` tells it the palette and the free
-  entries, `COVER_GET` gives the cover (1632 bytes, sent from the engine's
+  entries, `COVER_GET` gives the cover (1632 bytes, then 182 for the rows' colours (0.17), sent from the engine's
   window to VRAM directly), `ST_COVER_GEN`/`ST_COVER_STATE` in the status
   say when there is a new one.
 
-* **Full screen (Z, then Left/Right):** COVER shows the cover twice as big
-  (160 x 160 pixels), with its palette for the whole screen.
+* **Full screen (Z, then Left/Right):** COVER shows the cover big. With
+  `PICOAMP.ROM` and engine 0.17 in SCREEN 8 (256 colours, as the pictures
+  page): the file's own picture again from the file, the default pictures
+  whole (Copacabana, New York, Amsterdam, 282 x 159 in the engine), a
+  picture from the internet fetched again through the proxy at up to
+  281 x 192 (iTunes' covers at 600 x 600 before that), fitted with the MSX's
+  dot shape and dithered. A new cover (the next track, a new song on a
+  station) comes when the engine has it. `PICOAMP.COM`: twice as big (160 x
+  160 pixels), with its palette for the whole screen.
 
 ![The cover full screen](images/picoamp_fullcover.png)
 

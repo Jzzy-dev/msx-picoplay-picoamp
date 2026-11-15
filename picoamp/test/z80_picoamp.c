@@ -6,7 +6,7 @@
 //
 // usage: z80_picoamp PICOAMP.COM image "args" "keys" seconds vram.bin
 //   keys: one character per half second; '{' up '}' down '<' left '>' right,
-//   '^' Enter, '_' Backspace, '.' nothing, others as they are
+//   '^' Enter, '_' Backspace, '~' Esc, '.' nothing, others as they are
 //
 // A mouse in port 1 (optional): PICOAMP_MOUSE="t:x,y,b;t:x,y,b;..." - from t
 // seconds on the pointer goes to (x, y) (screen pixels, it starts at 128, 96)
@@ -204,6 +204,23 @@ static void pout(z80 *z, uint8_t p, uint8_t v)
         vaddr &= 0x3FFF;
         vwrites++; vlatch = false;
     }
+    else if (p == 0x9B)
+    {
+        // a register through R#17 (as it says: one after another, or the same)
+        int rg = vregs[17] & 0x3F;
+        if (rg != 17) vregs[rg] = v;
+        if (!(vregs[17] & 0x80)) vregs[17] = (uint8_t)((vregs[17] & 0x80) | ((rg + 1) & 0x3F));
+        if (rg == 46 && (v & 0xF0) == 0xC0 && (vregs[0] & 0x0E) == 0x0E)
+        {
+            // HMMV in G7: a rectangle of one colour, at once
+            unsigned dx = vregs[36] | (vregs[37] & 1) << 8, dy = vregs[38] | (vregs[39] & 3) << 8;
+            unsigned nx = vregs[40] | (vregs[41] & 1) << 8, ny = vregs[42] | (vregs[43] & 3) << 8;
+            if (!nx) nx = 512;
+            if (!ny) ny = 1024;
+            for (unsigned y = dy; y < dy + ny && y < 512; y++)
+                for (unsigned x = dx; x < dx + nx && x < 256; x++) vram[y * 256u + x] = vregs[44];
+        }
+    }
     else if (p == 0x9A)
     {
         pal[pal_i * 2 + pal_hi] = v;
@@ -299,6 +316,7 @@ static uint8_t key_code(char k)
         case '>': return 28;
         case '^': return 13;
         case '_': return 8;
+        case '~': return 27;
         case '.': return 0;
     }
     return (uint8_t)k;
@@ -591,6 +609,14 @@ int main(int argc, char **argv)
     }
     if (li_count)
     {
+        if (getenv("PICOAMP_PEEK"))
+        {   // PICOAMP_PEEK=addr,len (hex, decimal): memory at the end
+            unsigned pa = 0, pn = 0;
+            sscanf(getenv("PICOAMP_PEEK"), "%x,%u", &pa, &pn);
+            printf("[memory %04X:", pa);
+            for (unsigned i = 0; i < pn && pa + i < 65536; i++) printf(" %02X", mem[pa + i]);
+            printf("]\n");
+        }
         printf("[line interrupts: %lu; a palette complete after (lines late: times):", li_count);
         for (int i = 0; i < 64; i++) if (li_late[i]) printf(" %d:%lu", i, li_late[i]);
         printf("]\n");
@@ -623,6 +649,7 @@ int main(int argc, char **argv)
     fwrite(vregs, 1, sizeof vregs, f);
     fwrite(vram + 0x4000, 1, 0x4000, f);            // (SCREEN 6: the rest of its 27 KB)
     fwrite(pal_frame, 1, sizeof pal_frame, f);      // the palette of each line in the last frame
+    fwrite(vram + 0x8000, 1, 0x18000, f);           // (SCREEN 8: the rest of both pages)
     fclose(f);
     return 0;
 }
