@@ -44,3 +44,14 @@ allocates its buffers) and PICOAMP said FOLDER NOT FOUND. Since engine 0.13 the 
 depend on that: it lends the heap 16 KB of its arena (`_sbrk` in `pva_hal_pico.c`) and gives
 FatFs its long-file-name buffers from the arena too (the linker wraps `ff_memalloc` and
 `ff_memfree`, see `CMakeLists.txt`).
+
+## RAM: leave the heap room
+
+The firmware's static RAM (the ROM cache, the audio emulators, the engine's
+buffers) ends just under the heap's limit (0x20080000). When the engine
+starts, the I2S output takes about 2.3 KB of the heap, and the C library
+takes some more. With too little heap, `malloc()` panics on core 1 and the
+MSX says "The engine does not answer". After a build, run
+`./check-heap.sh <build dir>`: it wants 3 KB at least. Engine memory that
+is only needed while a feature runs belongs in the arena, not in static
+variables.

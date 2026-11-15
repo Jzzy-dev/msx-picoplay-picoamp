@@ -50,7 +50,7 @@
 #include "tjpgd/tjpgd.h"
 
 #define KEY_MAX     260
-#define IMG_MAX     (6u * 1024u)    // a picture from the proxy (80 x 80, quality 80: 2-4 KB)
+#define IMG_MAX     (5u * 1024u)    // a picture from the proxy (80 x 80, quality 80: 2-4 KB)
 #define JOB_MS      20000u          // a lookup and its picture, at most
 
 static pva_cover_t *cv;
@@ -73,7 +73,7 @@ static uint8_t      gen;
 #define MEM_SIZE    (A4(sizeof(pva_cover_t)) + A4(WORK_SIZE) + A4(PVA_COVER_FULL) + A4(sizeof(FIL)) + 16u)
 #define JOB_ROOM    436u
 #define LQ_SIZE     448u
-#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_FULL) + 2u * JOB_ROOM + LQ_SIZE)    // (+ the jobs, the request)
+#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_FULL) + 2u * JOB_ROOM + LQ_SIZE + HEAD)    // (+ the jobs, the request)
 
 static bool    on;                  // covers are made
 static uint8_t *own;                // the arena's, when it gave it (then also online)
@@ -90,16 +90,27 @@ static char    key[KEY_MAX];        // a file's picture: where it came from (an 
 
 // where the pictures come from (for a bigger picture of what shows): a file's or a default's; the
 // addresses of the song's cover and the station's logo (the originals, before the proxy)
+// (they are at the start of the arena's block, which stays when the pictures borrow the rest: the
+// firmware's RAM outside the arena is short; without the arena's block, none)
 #define URL_MAX     240
+typedef struct
+{
+    char path[KEY_MAX];
+    char song[URL_MAX], logo[URL_MAX];
+} head_t;
+#define HEAD        A4(sizeof(head_t))
+static head_t  *hd;
 static uint8_t  src_kind;           // PVA_SRC_FILE, PVA_SRC_MEM (src_pos: the default)
-static char     src_path[KEY_MAX];
 static uint32_t src_pos, src_len;
-static char     url_song[URL_MAX], url_logo[URL_MAX];
+static char     no_url[1];          // (no head: nowhere to keep it)
+#define src_path    (hd ? hd->path : no_url)
+#define url_song    (hd ? hd->song : no_url)
+#define url_logo    (hd ? hd->logo : no_url)
 
 static void src_set(uint8_t kind, const char *path, uint32_t pos, uint32_t len)
 {
     src_kind = kind;
-    snprintf(src_path, sizeof src_path, "%s", path ? path : "");
+    if (hd) snprintf(hd->path, sizeof hd->path, "%s", path ? path : "");
     src_pos = pos;
     src_len = len;
 }
@@ -107,6 +118,7 @@ static void src_set(uint8_t kind, const char *path, uint32_t pos, uint32_t len)
 // a picture's address for a bigger one: iTunes' 100 x 100 cover as 600 x 600
 static void url_keep(char *d, const char *u, bool song)
 {
+    if (d == no_url) return;
     snprintf(d, URL_MAX, "%s", u);
     char *p = song ? strstr(d, "/100x100") : NULL;
     if (p) memcpy(p + 1, "600x600", 7);
@@ -121,6 +133,8 @@ static uint8_t  dflt_pick;          // the default picture of this item
 static void online_place(uint8_t *m);
 static void place(uint8_t *m)
 {
+    if (m == own) { hd = (head_t *)m; m += HEAD; }
+    else hd = NULL;
     cv = (pva_cover_t *)m;
     m += A4(sizeof(pva_cover_t));
     work = m;
@@ -156,7 +170,7 @@ bool pva_art_init(void)
     if (pva_arena_free() >= MEM_ONLINE + 512u && (own = pva_alloc(MEM_ONLINE))) on = true;
     if (!own) pva_log("covers: %u bytes free, online needs %u", (unsigned)pva_arena_free(), (unsigned)(MEM_ONLINE + 512u));
     else if (pva_net_ring_idle(MEM_SIZE)) on = true;
-    if (own) place(own);
+    if (own) { place(own); memset(hd, 0, sizeof *hd); }
     rnd ^= pva_hal_millis() * 2654435761u;
     return on;
 }
@@ -404,9 +418,12 @@ static int card_read(const char *path, char *url)
         else if (ph == pal_hash() && f_read(f, out, PVA_COVER_FULL, &br) == FR_OK && br == PVA_COVER_FULL)
         {
             r = 1;
-            url[0] = 0;
-            if (f_read(f, url, URL_MAX - 1, &br) == FR_OK) url[br < URL_MAX ? br : URL_MAX - 1] = 0;
-            url[URL_MAX - 1] = 0;
+            if (url != no_url)
+            {
+                url[0] = 0;
+                if (f_read(f, url, URL_MAX - 1, &br) == FR_OK) url[br < URL_MAX ? br : URL_MAX - 1] = 0;
+                url[URL_MAX - 1] = 0;
+            }
         }
     }
     f_close(f);
@@ -788,7 +805,7 @@ uint8_t *pva_art_borrow(size_t *n)
     job_drop_all();
     show_none();
     uint8_t *m = own;
-    if (m) *n = MEM_ONLINE;
+    if (m) { m += HEAD; *n = MEM_ONLINE - HEAD; }       // (the head stays: where the covers came from)
     else if ((m = pva_net_ring_idle(MEM_SIZE))) *n = pva_net_capacity();
     if (!m) return NULL;
     cv = NULL;

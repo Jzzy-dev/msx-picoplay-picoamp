@@ -51,7 +51,7 @@ static size_t    mem_size;
 static char     *pool;              // the names: a type byte (D folder, J picture) then the name, NUL
 static uint16_t *ent;               // their places in pool, sorted
 static uint16_t  n_ent, pool_used;
-static char      folder[PIC_PATH_MAX + 1];
+static char     *folder;            // PIC_PATH_MAX + 1 (in the borrowed memory, as the decoder's state)
 static uint8_t  *region, *mem_end;  // (after the fixed parts: the names and the strip, or a JPEG and the strip)
 static uint8_t  *strip_end;
 static FIL      *fil;
@@ -65,8 +65,8 @@ static uint8_t  *ring;              // RING_ROWS * OUT_W
 // a picture
 enum { P_IDLE, P_WORK, P_DONE, P_ERROR, P_FETCH };
 static uint8_t  pst = P_IDLE, perr;
-static JDEC     jd;
-static JSTEP    js;
+static JDEC     *jd;
+static JSTEP    *js;
 static uint16_t dw, dh;             // the decoded picture
 static uint16_t ox0, oy0, ow, oh;   // where it goes in the 256 x 192
 static uint16_t strip_y, strip_h;   // the decoded rows in strip (scaled)
@@ -96,6 +96,10 @@ static bool borrow(void)
     mem_size = n;
     uint8_t *m = mem;
     fil = (FIL *)m;         m += A4(sizeof(FIL));
+    jd = (JDEC *)m;         m += A4(sizeof(JDEC));
+    js = (JSTEP *)m;        m += A4(sizeof(JSTEP));
+    folder = (char *)m;     m += A4(PIC_PATH_MAX + 1u);
+    folder[0] = 0;
     work = m;               m += A4(WORK_SIZE);
     xs = (uint16_t *)m;     m += A4((OUT_W + 1) * 2u);
     acc = (uint32_t *)m;    m += OUT_W * 3u * 4u;
@@ -172,7 +176,7 @@ static int read_folder(const char *path)
     }
     f_closedir(&d);
     qsort(ent, n_ent, sizeof ent[0], ent_cmp);
-    snprintf(folder, sizeof folder, "%s", path);
+    snprintf(folder, PIC_PATH_MAX + 1, "%s", path);
     pva_log("pictures: %.30s: %u%s", path[0] ? path : "/", (unsigned)n_ent, full ? " (cut)" : "");
     return PVA_OK;
 }
@@ -358,17 +362,17 @@ static int pic_show(uint16_t idx)
 // the picture (in fil, or m_src) begins to be decoded
 static void decode(void)
 {
-    JRESULT r = jd_prepare(&jd, in_fn, work, WORK_SIZE, NULL);
+    JRESULT r = jd_prepare(jd, in_fn, work, WORK_SIZE, NULL);
     if (r != JDR_OK) { pic_fail(r == JDR_FMT3 ? PVA_PIC_E_PROGRESSIVE : PVA_PIC_E_FORMAT, r == JDR_FMT3 ? "progressive (or another kind) JPEG" : "not a JPEG it reads"); return; }
     // the scale: as small as it may be while it still covers the 256 x 192 (in the MSX's pixels), and its MCU row fits
     unsigned need_w = OUT_W * PIX_ASPECT_10 / 10, need_h = OUT_H;
     uint8_t s = 0;
-    while (s < 3 && (jd.width >> (s + 1)) >= need_w && (jd.height >> (s + 1)) >= need_h) s++;
-    while (s < 3 && (size_t)(jd.width >> s) * ((jd.msy * 8u >> s) + 1u) * 3u > strip_room()) s++;
+    while (s < 3 && (jd->width >> (s + 1)) >= need_w && (jd->height >> (s + 1)) >= need_h) s++;
+    while (s < 3 && (size_t)(jd->width >> s) * ((jd->msy * 8u >> s) + 1u) * 3u > strip_room()) s++;
     scale = s;
-    dw = (uint16_t)(jd.width >> s);
-    dh = (uint16_t)(jd.height >> s);
-    strip_h = (uint16_t)(jd.msy * 8u >> s);
+    dw = (uint16_t)(jd->width >> s);
+    dh = (uint16_t)(jd->height >> s);
+    strip_h = (uint16_t)(jd->msy * 8u >> s);
     if (!dw || !dh || (size_t)dw * (strip_h + 1u) * 3u > strip_room()) { pic_fail(PVA_PIC_E_SIZE, "too wide"); return; }
     lastrow = strip + (size_t)dw * strip_h * 3u;
     strip_full = false;
@@ -386,8 +390,8 @@ static void decode(void)
     sy = 0;
     oy = 0;
     strip_y = 0;
-    jd_step_begin(&jd, &js, out_fn, s);
-    pva_log("picture: %ux%u, 1/%u: %ux%u, %ux%u", jd.width, jd.height, 1u << s, dw, dh, ow, oh);
+    jd_step_begin(jd, js, out_fn, s);
+    pva_log("picture: %ux%u, 1/%u: %ux%u, %ux%u", jd->width, jd->height, 1u << s, dw, dh, ow, oh);
 }
 
 static void finish(void)
@@ -525,7 +529,7 @@ void pva_pics_poll(void)
             // the strip's rows to the ring (as it has room), then the next MCU row
             if (!use_strip()) return;
             if (oy >= OUT_H) { finish(); return; }
-            if (js.done)
+            if (js->done)
             {
                 while (oy < OUT_H && ring_n < RING_ROWS) { emit_row(true); oy++; }
                 if (oy >= OUT_H) finish();
@@ -534,10 +538,10 @@ void pva_pics_poll(void)
             memcpy(lastrow, strip + (size_t)(strip_h - 1u) * dw * 3u, (size_t)dw * 3u);
             strip_full = false;
         }
-        if (js.x == 0) strip_y = (uint16_t)(js.y >> scale);
-        JRESULT r = jd_step(&jd, &js, 64);
+        if (js->x == 0) strip_y = (uint16_t)(js->y >> scale);
+        JRESULT r = jd_step(jd, js, 64);
         if (r != JDR_OK) { pic_fail(PVA_PIC_E_FORMAT, "broken data"); return; }
-        if (js.x == 0) strip_full = true;           // (an MCU row ended)
+        if (js->x == 0) strip_full = true;           // (an MCU row ended)
     } while (pva_hal_millis() - now < 2u);
 }
 
