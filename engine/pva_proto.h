@@ -202,6 +202,8 @@
 #define PVA_C_PIC_GET       0x56    // args: u8 rows at most (0: 7). reply: u8 0 nothing / 1 making / 2 made (these rows the last) / 3 failed, u8 PVA_PIC_E_xxx,
                                     // u8 the first row here, u8 rows here (0-7), then the rows (256 bytes each)
 #define PVA_C_PIC_CLOSE     0x57    // the pictures' memory back to the covers
+#define PVA_C_PIC_COVER     0x58    // args: u8 1 = again. The cover that shows, made for SCREEN 8 as PIC_SHOW (its rows: PIC_GET; then PIC_CLOSE).
+                                    // reply: u8 0 it is being made, 1 it is the one made last, 2 there is none
 #define PVA_PIC_E_OPEN       1
 #define PVA_PIC_E_FORMAT     2      // not a JPEG it reads (or broken)
 #define PVA_PIC_E_PROGRESSIVE 3     // a progressive JPEG (TJpgDec reads baseline ones)

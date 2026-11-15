@@ -1710,7 +1710,7 @@ static int execute(uint8_t code)
             return pva_markets_cmd(code, args);
         case PVA_C_COVER_SETUP: case PVA_C_COVER_GET:
             return pva_art_cmd(code, args);
-        case PVA_C_PIC_DIR: case PVA_C_PIC_NAMES: case PVA_C_PIC_SHOW: case PVA_C_PIC_GET: case PVA_C_PIC_CLOSE:
+        case PVA_C_PIC_DIR: case PVA_C_PIC_NAMES: case PVA_C_PIC_SHOW: case PVA_C_PIC_GET: case PVA_C_PIC_CLOSE: case PVA_C_PIC_COVER:
             args[PVA_ARGS_SIZE - 1] = 0;
             return pva_pics_cmd(code, args, strlen((const char *)args));
         case PVA_C_PLAY_INDEX: return cmd_play_index();

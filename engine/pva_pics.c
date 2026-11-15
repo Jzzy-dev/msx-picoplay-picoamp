@@ -19,6 +19,11 @@
 // The screensaver's minutes ([pictures] saver in PICOAMP.INI) are in the
 // status (PVA_ST_PIC_SAVER), so that the player knows when to start it.
 //
+// The full screen cover (PIC_COVER): what the cover shows, bigger: a file's
+// own picture again from the file, a default picture whole, a picture from
+// the internet fetched again through the proxy at up to 281 x 192 (iTunes'
+// covers at 600 x 600 before that).
+//
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
@@ -47,6 +52,8 @@ static char     *pool;              // the names: a type byte (D folder, J pictu
 static uint16_t *ent;               // their places in pool, sorted
 static uint16_t  n_ent, pool_used;
 static char      folder[PIC_PATH_MAX + 1];
+static uint8_t  *region, *mem_end;  // (after the fixed parts: the names and the strip, or a JPEG and the strip)
+static uint8_t  *strip_end;
 static FIL      *fil;
 static uint8_t  *work;
 static uint8_t  *strip;
@@ -56,7 +63,7 @@ static int16_t  *err0, *err1;       // (OUT_W + 2) * 3: the dither's errors, thi
 static uint8_t  *ring;              // RING_ROWS * OUT_W
 
 // a picture
-enum { P_IDLE, P_WORK, P_DONE, P_ERROR };
+enum { P_IDLE, P_WORK, P_DONE, P_ERROR, P_FETCH };
 static uint8_t  pst = P_IDLE, perr;
 static JDEC     jd;
 static JSTEP    js;
@@ -88,8 +95,6 @@ static bool borrow(void)
     if (!mem) return false;
     mem_size = n;
     uint8_t *m = mem;
-    pool = (char *)m;       m += A4(NAMES_POOL);
-    ent = (uint16_t *)m;    m += A4(NAMES_MAX * 2u);
     fil = (FIL *)m;         m += A4(sizeof(FIL));
     work = m;               m += A4(WORK_SIZE);
     xs = (uint16_t *)m;     m += A4((OUT_W + 1) * 2u);
@@ -97,7 +102,12 @@ static bool borrow(void)
     err0 = (int16_t *)m;    m += A4((OUT_W + 2) * 3u * 2u);
     err1 = (int16_t *)m;    m += A4((OUT_W + 2) * 3u * 2u);
     ring = m;               m += RING_ROWS * OUT_W;
+    region = m;
+    mem_end = mem + n;
+    pool = (char *)m;       m += A4(NAMES_POOL);
+    ent = (uint16_t *)m;    m += A4(NAMES_MAX * 2u);
     strip = m;
+    strip_end = mem_end;
     size_t used = (size_t)(m - mem);
     if (used + 4096u > n) { pva_art_giveback(); mem = NULL; return false; }
     n_ent = pool_used = 0;
@@ -105,13 +115,13 @@ static bool borrow(void)
     return true;
 }
 
-static size_t strip_room(void) { size_t r = mem_size - (size_t)(strip - mem); return r > STRIP_MAX ? STRIP_MAX : r; }
+static void stop(void);
+static size_t strip_room(void) { size_t r = (size_t)(strip_end - strip); return r > STRIP_MAX ? STRIP_MAX : r; }
 
 void pva_pics_close(void)
 {
     if (!mem) return;
-    if (pst == P_WORK) f_close(fil);
-    pst = P_IDLE;
+    stop();
     mem = NULL;
     pva_art_giveback();
 }
@@ -168,9 +178,19 @@ static int read_folder(const char *path)
 }
 
 // ---------------------------------------------------------------- a picture
+static const uint8_t *m_src;        // a picture in memory (else the file)
+static size_t   m_len, m_pos;
+
 static size_t in_fn(JDEC *j, uint8_t *buf, size_t n)
 {
     (void)j;
+    if (m_src)
+    {
+        if (n > m_len - m_pos) n = m_len - m_pos;
+        if (buf) memcpy(buf, m_src + m_pos, n);
+        m_pos += n;
+        return n;
+    }
     UINT br = 0;
     if (!buf) return f_lseek(fil, f_tell(fil) + n) == FR_OK ? n : 0;
     if (f_read(fil, buf, (UINT)n, &br) != FR_OK) return 0;
@@ -288,28 +308,58 @@ static bool use_strip(void)
     return false;
 }
 
+static uint32_t big_sig;             // the full screen cover made last (0: none)
+static uint32_t cur_sig;
+
 static void pic_fail(uint8_t e, const char *why)
 {
     pva_log("picture: %s", why);
-    if (pst == P_WORK) f_close(fil);
+    if (pst == P_FETCH) pva_web_abort();
+    if (pst == P_WORK && !m_src) f_close(fil);
+    if (cur_sig) big_sig = 0;
     pst = P_ERROR;
     perr = e;
 }
+
+static void stop(void)
+{
+    if (pst == P_WORK && !m_src) f_close(fil);
+    if (pst == P_FETCH) pva_web_abort();
+    pst = P_IDLE;
+    m_src = NULL;
+}
+
+static void begin(void)
+{
+    pst = P_WORK;
+    perr = 0;
+    ring_head = ring_n = rows_out = rows_given = 0;
+    t_start = pva_hal_millis();
+}
+
+static void decode(void);
 
 static int pic_show(uint16_t idx)
 {
     if (!mem) return PVA_E_STATE;
     if (idx >= n_ent || pool[ent[idx]] != 'J') return PVA_E_ARGS;
-    if (pst == P_WORK) f_close(fil);
+    stop();
+    cur_sig = 0;
+    strip = (uint8_t *)ent + A4(NAMES_MAX * 2u);
+    strip_end = mem_end;
     char fp[PIC_PATH_MAX + 80];
     snprintf(fp, sizeof fp, "0:%s/%s", folder[0] && strcmp(folder, "/") ? folder : "", pool + ent[idx] + 1);
-    pst = P_WORK;
-    perr = 0;
-    ring_head = ring_n = rows_out = rows_given = 0;
-    t_start = pva_hal_millis();
+    begin();
     if (f_open(fil, fp, FA_READ) != FR_OK) { pic_fail(PVA_PIC_E_OPEN, "cannot open"); return PVA_OK; }
+    decode();
+    return PVA_OK;
+}
+
+// the picture (in fil, or m_src) begins to be decoded
+static void decode(void)
+{
     JRESULT r = jd_prepare(&jd, in_fn, work, WORK_SIZE, NULL);
-    if (r != JDR_OK) { pic_fail(r == JDR_FMT3 ? PVA_PIC_E_PROGRESSIVE : PVA_PIC_E_FORMAT, r == JDR_FMT3 ? "progressive (or another kind) JPEG" : "not a JPEG it reads"); return PVA_OK; }
+    if (r != JDR_OK) { pic_fail(r == JDR_FMT3 ? PVA_PIC_E_PROGRESSIVE : PVA_PIC_E_FORMAT, r == JDR_FMT3 ? "progressive (or another kind) JPEG" : "not a JPEG it reads"); return; }
     // the scale: as small as it may be while it still covers the 256 x 192 (in the MSX's pixels), and its MCU row fits
     unsigned need_w = OUT_W * PIX_ASPECT_10 / 10, need_h = OUT_H;
     uint8_t s = 0;
@@ -319,7 +369,7 @@ static int pic_show(uint16_t idx)
     dw = (uint16_t)(jd.width >> s);
     dh = (uint16_t)(jd.height >> s);
     strip_h = (uint16_t)(jd.msy * 8u >> s);
-    if (!dw || !dh || (size_t)dw * (strip_h + 1u) * 3u > strip_room()) { pic_fail(PVA_PIC_E_SIZE, "too wide"); return PVA_OK; }
+    if (!dw || !dh || (size_t)dw * (strip_h + 1u) * 3u > strip_room()) { pic_fail(PVA_PIC_E_SIZE, "too wide"); return; }
     lastrow = strip + (size_t)dw * strip_h * 3u;
     strip_full = false;
     // fit: dw x dh square pixels into 256 x 192 MSX pixels (1.1 wide)
@@ -338,14 +388,122 @@ static int pic_show(uint16_t idx)
     strip_y = 0;
     jd_step_begin(&jd, &js, out_fn, s);
     pva_log("picture: %ux%u, 1/%u: %ux%u, %ux%u", jd.width, jd.height, 1u << s, dw, dh, ow, oh);
-    return PVA_OK;
 }
 
 static void finish(void)
 {
-    f_close(fil);
+    if (!m_src) f_close(fil);
+    m_src = NULL;
     pst = P_DONE;
+    if (cur_sig) big_sig = cur_sig;
     pva_log("picture: made in %lu ms", (unsigned long)(pva_hal_millis() - t_start));
+}
+
+// ---------------------------------------------------------------- the full screen cover
+#define PROXY_BIG   "http://wsrv.nl/?w=281&h=192&fit=inside&bg=000000&output=jpg&q=75&url="
+#define FETCH_MS    20000u
+#define STRIP_COVER (15u * 1024u)       // (a strip of a 281-pixel picture: 14.3 KB)
+
+static uint8_t  *jbuf;
+static size_t    jcap, jlen;
+static bool      jbad, jdone, jok;
+static uint32_t  t_fetch;
+
+static uint32_t fnv(const void *p, size_t n, uint32_t h)
+{
+    const uint8_t *b = p;
+    while (n--) { h ^= *b++; h *= 16777619u; }
+    return h;
+}
+
+static bool j_body(const uint8_t *p, size_t n)
+{
+    if (pst != P_FETCH) return true;
+    if (jlen + n > jcap) { jbad = true; return true; }
+    memcpy(jbuf + jlen, p, n);
+    jlen += n;
+    return false;
+}
+
+static void j_done(bool ok) { jdone = true; jok = ok; }
+
+static void enc(char *o, size_t size, const char *s)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t k = 0;
+    for (; *s && k + 4 < size; s++)
+    {
+        unsigned char c = (unsigned char)*s;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') o[k++] = (char)c;
+        else { o[k++] = '%'; o[k++] = hex[c >> 4]; o[k++] = hex[c & 15]; }
+    }
+    o[k] = 0;
+}
+
+// reply: 0 it is being made, 1 it is the one made last (nothing to do), 2 there is none
+static int pic_cover(bool force)
+{
+    pva_art_src_t src;
+    bool have = pva_art_source(&src);
+    uint32_t sig = 0;
+    if (have)
+    {
+        sig = fnv(&src.kind, 1, 2166136261u);
+        sig = fnv(src.s, strlen(src.s), sig);
+        sig = fnv(&src.pos, 4, sig);
+        if (!sig) sig = 1;
+    }
+    if (!have) { pva_reply_byte(2); return PVA_OK; }
+    if (sig == big_sig && !force && !mem) { pva_reply_byte(1); return PVA_OK; }
+    if (!borrow()) return PVA_E_FULL;
+    stop();
+    cur_sig = sig;
+    strip = region;
+    strip_end = mem_end;
+    begin();
+    pva_reply_byte(0);
+    if (src.kind == PVA_SRC_MEM) { m_src = src.p; m_len = src.len; m_pos = 0; decode(); return PVA_OK; }
+    if (src.kind == PVA_SRC_FILE)
+    {
+        if (f_open(fil, src.s, FA_READ) != FR_OK || f_lseek(fil, src.pos) != FR_OK) { pic_fail(PVA_PIC_E_OPEN, "cannot open"); return PVA_OK; }
+        decode();
+        return PVA_OK;
+    }
+    // from the internet: the JPEG at the start of the region, the strip after it
+    jbuf = region;
+    jcap = (size_t)(mem_end - region) > STRIP_COVER + 4096u ? (size_t)(mem_end - region) - STRIP_COVER : 0;
+    char *u = (char *)ring;             // (the ring is not used yet: the address there)
+    size_t un = RING_ROWS * OUT_W;
+    if (!jcap || strlen(PROXY_BIG) + 3u * strlen(src.s) + 1u > un) { pic_fail(PVA_PIC_E_SIZE, "no room"); return PVA_OK; }
+    strcpy(u, PROXY_BIG);
+    enc(u + strlen(PROXY_BIG), un - strlen(PROXY_BIG), src.s);
+    jlen = 0;
+    jbad = jdone = jok = false;
+    pva_web_no_lend();
+    if (pva_web_get(u, j_body, j_done) != PVA_OK) { pic_fail(PVA_PIC_E_OPEN, "the web is busy"); return PVA_OK; }
+    pst = P_FETCH;
+    t_fetch = pva_hal_millis();
+    pva_log("picture: the cover from %.40s", src.s);
+    return PVA_OK;
+}
+
+static void fetch_poll(void)
+{
+    if (!jdone)
+    {
+        if (pva_hal_millis() - t_fetch > FETCH_MS) pic_fail(PVA_PIC_E_OPEN, "the cover did not come");
+        return;
+    }
+    if (!jok || jbad || jlen < 4 || jbuf[0] != 0xFF || jbuf[1] != 0xD8) { pst = P_WORK; m_src = jbuf; pic_fail(PVA_PIC_E_OPEN, "the cover did not come"); return; }
+    // the JPEG to the end, the strip before it
+    uint8_t *to = mem_end - A4(jlen);
+    memmove(to, jbuf, jlen);
+    strip = region;
+    strip_end = to;
+    m_src = to; m_len = jlen; m_pos = 0;
+    pst = P_WORK;
+    pva_log("picture: %u bytes in %lu ms", (unsigned)jlen, (unsigned long)(pva_hal_millis() - t_fetch));
+    decode();
 }
 
 void pva_pics_poll(void)
@@ -357,6 +515,7 @@ void pva_pics_poll(void)
         char v[8];
         saver_min = pva_cfg_get("pictures.saver", v, sizeof v) ? (uint8_t)atoi(v) : 0;
     }
+    if (pst == P_FETCH) { fetch_poll(); return; }
     if (pst != P_WORK) return;
     // about 2 ms a pass: the music goes on
     do
@@ -445,6 +604,8 @@ int pva_pics_cmd(uint8_t code, const uint8_t *args, size_t n)
             rows_given += k;
             return PVA_OK;
         }
+        case PVA_C_PIC_COVER:
+            return pic_cover(n > 0 && args[0]);
         case PVA_C_PIC_CLOSE:
             pva_pics_close();
             return PVA_OK;

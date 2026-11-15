@@ -16,6 +16,12 @@
 ;
 ; The screensaver: the main loop counts the seconds without a key and opens
 ; this page with pic_saver set; it plays [pictures] folder; any key ends it.
+;
+; The full screen cover (Z, the fourth picture: pic_saver 2): the cover that
+; shows, bigger (PIC_COVER: the file's own picture again, a default picture
+; whole, a picture from the internet fetched again at up to 281 x 192), made
+; again when the engine has another cover. Left / Right and V the other full
+; screen pictures, Z, ESC, Enter or BS back; the playback keys as always.
 ;==============================================================================
 
 C_PDIR   equ #53
@@ -23,6 +29,7 @@ C_PNAMES equ #54
 C_PSHOW  equ #55
 C_PGET   equ #56
 C_PCLOSE equ #57
+C_PCOVER equ #58
 PC_ROWS  equ 19                 ; list rows (2-20)
 PC_W     equ 39                 ; characters of a name shown
 VDP_I    equ #9B                ; (the VDP's register port, indirect)
@@ -31,6 +38,7 @@ M_BROWSE equ 0
 M_VIEW   equ 1                  ; one picture
 M_SHOW   equ 2                  ; the slideshow
 M_SAVER  equ 3                  ; the slideshow as the screensaver
+M_COVER  equ 4                  ; the full screen cover
 
 mod_pic:
         jp pc_open              ; the jump table (M_OPEN ...)
@@ -56,6 +64,8 @@ pc_open:
         ld a,(pic_saver)
         or a
         jr z,.page
+        cp 2
+        jr z,.cover
         xor a
         ld (pic_saver),a
         ld hl,pc_sfolder        ; the screensaver: its folder, its slideshow
@@ -66,6 +76,15 @@ pc_open:
         jp c,fs_close           ; (no pictures)
         ld a,M_SAVER
         jp pc_start_show
+.cover: xor a
+        ld (pic_saver),a
+        ld a,M_COVER
+        ld (pc_mode),a
+        call pc_s8_on
+        ld a,(st+ST_COVGEN)
+        ld (pc_cgen),a
+        ld a,1                  ; (made again: the screen is black)
+        jp pc_cover_req
 .page:  ld hl,pc_sfolder        ; the page: the screensaver's folder, else the root
         call pc_setpath
         call pc_dir
@@ -901,9 +920,11 @@ pc_tick:
         ld a,2
         ld (pc_ld),a
 .ready: cp 2
-        ret nz
-        ld a,(pc_mode)          ; the first, one picture: at once; the slideshow: its time
+        jp nz,pc_cov_gen
+        ld a,(pc_mode)          ; the first, one picture, the cover: at once; the slideshow: its time
         cp M_VIEW
+        jr z,.show
+        cp M_COVER
         jr z,.show
         ld a,(pc_first)
         or a
@@ -936,11 +957,15 @@ pc_tick:
         ld a,(pc_mode)
         cp M_VIEW
         ret z
+        cp M_COVER
+        jp z,pc_cov_done
 .next:  call pc_next
         ret c
         ld (pc_shown),hl
         jp pc_load
 .fail:  ld a,(pc_mode)          ; one picture: back, and why
+        cp M_COVER
+        jp z,pc_cov_fail
         cp M_VIEW
         jr nz,.skip
         ld a,(reply+1)
@@ -1027,6 +1052,8 @@ pc_keys_pic:
         ld a,(pc_mode)
         cp M_SAVER
         jp z,fs_close           ; the screensaver: back to the player
+        cp M_COVER
+        jp z,pc_cov_keys
         ld a,c
         cp 28
         jr z,.next
@@ -1035,9 +1062,9 @@ pc_keys_pic:
         ld a,(pc_mode)
         cp M_VIEW
         ld a,c
-        jr nz,pc_back           ; the slideshow: any other key ends it
+        jp nz,pc_back           ; the slideshow: any other key ends it
         cp ' '
-        jr nz,pc_back
+        jp nz,pc_back
         ld hl,(pc_shown)        ; one picture: Space marks it
         ld (pc_cur),hl
         jp pc_mark_quiet
@@ -1060,6 +1087,78 @@ pc_keys_pic:
         dec hl
         ld (pc_shown),hl
         jp pc_load
+
+; the full screen cover ------------------------------------------------------
+; pc_cover_req: A = 1 made again (else: only when the engine has another)
+pc_cover_req:
+        ld (args),a
+        ld bc,1
+        ld a,C_PCOVER
+        call cmd
+        ret c
+        ld a,(reply)            ; 0 being made, 1 the one that shows, 2 none
+        or a
+        ret nz
+        inc a
+        ld (pc_ld),a
+        ret
+
+; (pc_ld 0) another cover in the engine: made, when it is ready
+pc_cov_gen:
+        ld a,(pc_mode)
+        cp M_COVER
+        ret nz
+        ld a,(st+ST_COVGEN)
+        ld hl,pc_cgen
+        cp (hl)
+        ret z
+        ld b,a
+        ld a,(st+ST_COVST)
+        cp 2
+        ret nz
+        ld (hl),b
+        xor a
+        jr pc_cover_req
+
+; made (it shows) or failed (the one before stays): the memory back to the covers
+pc_cov_fail:
+        xor a
+        ld (pc_ld),a
+pc_cov_done:
+        ld a,C_PCLOSE
+        jp cmd0
+
+pc_cov_keys:
+        ld a,c
+        cp 28
+        jr z,.nx
+        cp 29
+        jr z,.pv
+        cp 27
+        jp z,fs_close
+        cp 13
+        jp z,fs_close
+        cp 8
+        jp z,fs_close
+        and #DF
+        cp 'Z'
+        jp z,fs_close
+        cp 'V'
+        jr z,.nx
+        cp 'G'
+        ret z
+        cp 'E'
+        jp z,next_eq
+        ld a,b                  ; the playback keys
+        jp keys_common
+.nx:    call .out
+        jp fs_next
+.pv:    call .out
+        jp fs_prev
+.out:   call pc_leave           ; (the other pictures are the main program's)
+        xor a
+        ld (pg_on),a
+        ret
 
 pc_mark_quiet:
         ld hl,(pc_cur)
@@ -1205,6 +1304,7 @@ txt_k_shuf:     db "pictures.shuffle",0
 txt_k_folder:   db "pictures.folder",0
 
 pc_mode:        db 0
+pc_cgen:        db 0            ; the cover's generation asked for
 pc_dirty:       db 0
 pc_s8:          db 0            ; SCREEN 8 now
 pc_first:       db 0            ; the next picture shows at once

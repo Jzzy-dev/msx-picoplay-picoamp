@@ -2018,6 +2018,48 @@ int main(int argc, char **argv)
             CHECK(logo && strstr(host_esp_last_api, "byurl?url=http%3A%2F%2Fradio.test"), "the logo (by the address), kept on the card");
             CHECK(song && host_esp_itunes_asks >= i0 + 2 && host_esp_logo_gets >= g0 + 2, "the song's cover (iTunes, through the proxy)");
             CHECK(FILES("0:/PICOAMP/COVERS") == 3 && COVER_NOW() == logo, "a song without a cover: the logo again; all three songs kept (%d)", FILES("0:/PICOAMP/COVERS"));
+            {
+                // the full screen cover: the logo again, bigger, through the proxy
+                extern char host_esp_last_wsrv[400];
+                uint8_t one = 1;
+                CHECK(cmd(PVA_C_PIC_COVER, &one, 1) == PVA_OK && reply_len == 1 && reply[0] == 0, "PIC_COVER: being made (%u)", reply_len ? reply[0] : 0xFF);
+                int rows = 0, stp = 1;
+                static uint8_t big[192][256];
+                for (int w = 0; w < 400 && stp == 1; w++)
+                {
+                    run_ms(20);
+                    uint8_t mx = 7;
+                    if (cmd(PVA_C_PIC_GET, &mx, 1) != PVA_OK) break;
+                    stp = reply[0];
+                    for (int k = 0; k < reply[3]; k++) memcpy(big[reply[2] + k], reply + 4 + k * 256, 256);
+                    rows += reply[3];
+                }
+                CHECK(stp == 2 && rows == 192, "its 192 rows (%d, state %d)", rows, stp);
+                CHECK(strstr(host_esp_last_wsrv, "w=281&h=192") && strstr(host_esp_last_wsrv, "radio.test%2Flogo.png"), "asked for at 281 x 192: %.90s", host_esp_last_wsrv);
+                if (getenv("PIC_DUMP"))
+                {
+                    FILE *pf = fopen("/tmp/pic_cover.ppm", "wb");
+                    fprintf(pf, "P6 256 192 255\n");
+                    for (int y = 0; y < 192; y++) for (int x = 0; x < 256; x++)
+                    { uint8_t b = big[y][x]; uint8_t c3[3] = { (uint8_t)((b >> 2 & 7) * 255 / 7), (uint8_t)((b >> 5) * 255 / 7), (uint8_t)((b & 3) * 85) }; fwrite(c3, 1, 3, pf); }
+                    fclose(pf);
+                }
+                // (the covers again: a song may have come meanwhile; then that one, its cover at 600 x 600)
+                CHECK(cmd(PVA_C_PIC_CLOSE, NULL, 0) == PVA_OK, "PIC_CLOSE");
+                uint8_t zero = 0;
+                int same = 0;
+                for (int round = 0; round < 3 && !same; round++)
+                {
+                    for (int w = 0; w < 60; w++) { run_ms(50); read_status(); if (st[PVA_ST_COVER_STATE] == PVA_COVER_READY) break; }
+                    if (cmd(PVA_C_PIC_COVER, &zero, 1) != PVA_OK) break;
+                    if (reply[0] == 1) { same = 1; break; }
+                    for (int w = 0; w < 400; w++) { run_ms(20); uint8_t mx = 7; if (cmd(PVA_C_PIC_GET, &mx, 1) != PVA_OK || reply[0] != 1) break; }
+                    if (strstr(host_esp_last_wsrv, "art.test")) CHECK(strstr(host_esp_last_wsrv, "600x600bb"), "a song's cover asked for at 600 x 600: %.120s", host_esp_last_wsrv);
+                    cmd(PVA_C_PIC_CLOSE, NULL, 0);
+                }
+                read_status();
+                CHECK(same && st[PVA_ST_COVER_STATE] == PVA_COVER_READY, "the cover back; PIC_COVER then: the same one, nothing to do");
+            }
             read_status();
             CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && host_esp_open_conns() == 1, "it played all along (%d connections)", host_esp_open_conns());
             cmd(PVA_C_STOP, NULL, 0);
@@ -2096,6 +2138,27 @@ int main(int argc, char **argv)
             pva_cfg_set("cover.online", "on");
             cmd(PVA_C_STOP, NULL, 0);
             run_ms(300);
+
+            // a palette for every row of cells (the free mask's bit 0)
+            {
+                uint8_t pr[34];
+                memcpy(pr, pal, 34);
+                pr[32] |= 1;
+                CHECK(cmd(PVA_C_COVER_SETUP, pr, sizeof pr) == PVA_OK, "COVER_SETUP with a palette for every row");
+                CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM");
+                for (int w = 0; w < 200; w++) { run_ms(50); read_status(); if (st[PVA_ST_COVER_STATE] == PVA_COVER_READY && FILES("0:/PICOAMP/LOGOS") >= 1) break; }
+                CHECK(cmd(PVA_C_COVER_GET, NULL, 0) == PVA_OK && reply_len == PVA_COVER_FULL && reply[PVA_COVER_SIZE] == PVA_COVER_CELLS - 1,
+                      "the cover with its rows' palettes (%u bytes, %u rows)", reply_len, reply[PVA_COVER_SIZE]);
+                int ok = 1;
+                for (int rw = 0; rw < PVA_COVER_CELLS - 1; rw++)
+                    for (int k = 0; k < PVA_COVER_ROW_ENT; k++)
+                    { const uint8_t *e = reply + PVA_COVER_SIZE + PVA_COVER_ROW_HEAD + rw * PVA_COVER_ROW_BYTES + k * 4; if (!((0xA484 >> e[0]) & 1) || e[1] != 0x90) ok = 0; }
+                CHECK(ok && reply[PVA_COVER_SIZE + 1] == 2, "only the free entries change (as the VDP takes them); the player starts 2 lines early");
+                cmd(PVA_C_STOP, NULL, 0);
+                run_ms(300);
+                CHECK(cmd(PVA_C_COVER_SETUP, pal, sizeof pal) == PVA_OK, "COVER_SETUP as before");
+                CLEAR_CARD();
+            }
 
             // the card read-only: asked each time, shown, not kept
             pva_allow_card_writes(false);

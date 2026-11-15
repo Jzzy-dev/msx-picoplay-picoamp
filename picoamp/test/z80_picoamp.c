@@ -609,6 +609,14 @@ int main(int argc, char **argv)
     }
     if (li_count)
     {
+        if (getenv("PICOAMP_PEEK"))
+        {   // PICOAMP_PEEK=addr,len (hex, decimal): memory at the end
+            unsigned pa = 0, pn = 0;
+            sscanf(getenv("PICOAMP_PEEK"), "%x,%u", &pa, &pn);
+            printf("[memory %04X:", pa);
+            for (unsigned i = 0; i < pn && pa + i < 65536; i++) printf(" %02X", mem[pa + i]);
+            printf("]\n");
+        }
         printf("[line interrupts: %lu; a palette complete after (lines late: times):", li_count);
         for (int i = 0; i < 64; i++) if (li_late[i]) printf(" %d:%lu", i, li_late[i]);
         printf("]\n");
