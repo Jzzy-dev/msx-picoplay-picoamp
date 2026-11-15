@@ -16,7 +16,7 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 | What | For | What it is |
 |------|-----|------------|
 | **PicoVerse Audio Engine** | RP2350 firmware | Decoding (MP3/WAV), internet radio, the Radio Browser station directory, a 5-band equalizer, the spectrum/VU/scope data, the time of day, the place, the weather and forecast, news feeds and full articles from the internet, a sleep timer and a radio alarm, the settings file. The MSX talks to it through a 4 KB memory window |
-| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, an 80-column news reader, a SCREEN 8 picture browser, slideshow and screensaver for JPEGs on the card (ROM), mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
+| **PICOAMP** | MSX2 | A full-screen Winamp/MUBScope-style player: a 24-band spectrum analyser, oscilloscope, equalizer screen, full-screen pictures, station search, favourites, covers (from the file, its folder or online), a clock page (digital or analog, internet time, place, weather, sleep timer, alarm), an animated weather page, an 80-column news reader, a SCREEN 8 picture browser, slideshow and screensaver for JPEGs on the card (ROM), mouse, help page. Two builds: `PICOAMP.COM` (MSX-DOS 2 / Nextor) and `PICOAMP.ROM` (a cartridge ROM that boots straight into the player) |
 | **PicoPlay** | SymbOS 4.0 | A windowed player with folders, play lists, internet radio, the station directory, favourites and an equalizer |
 | **PVTEST** | MSX-DOS | A quick check of the cartridge from the prompt, and a small player |
 
@@ -27,6 +27,22 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 | Weather (W) | News (T) |
 |---|---|
 | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 15 24 11" src="https://github.com/user-attachments/assets/0310b504-c6c6-4eab-aabf-4a06c1766a72" /> | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 13 08 34" src="https://github.com/user-attachments/assets/f1b99f3c-fd99-4abc-b139-31da34824565" /> |
+
+**v1.5** (engine 0.17; tried on a PicoVerse 2350 as the cartridge ROM): pictures and covers.
+**I** opens a picture browser for the JPEGs on the card (folders and pictures only): Enter shows
+one full screen in SCREEN 8 (256 colours, dithered, any size of baseline JPEG, the music plays
+on), Space marks pictures and **G** plays the marked ones (or the folder) as a slideshow, in
+order or shuffled. The same slideshow is a screensaver after 1 to 30 minutes without a key. The
+cover view (**V**) shows the track's cover: the picture in the MP3 or its folder, a station's
+logo and the song that plays on it, or an album's cover found online (Radio Browser, iTunes,
+through the wsrv.nl image proxy, kept on the card), else one of three default pictures; the
+small cover now has its own colours for each row of cells. **Z** then COVER shows it big in
+SCREEN 8. The pictures, the screensaver and the big cover are `PICOAMP.ROM` only. See
+`picoamp/README.md`, sections Pictures and Cover.
+
+| Pictures (I) | A picture | The cover (V) | The cover full screen (Z) |
+|---|---|---|---|
+| ![Pictures](picoamp/images/picoamp_pictures.png) | ![A picture](picoamp/images/picoamp_picture.png) | ![Cover](picoamp/images/picoamp_cover.png) | ![Full cover](picoamp/images/picoamp_fullcover.png) |
 
 **v1.4** (engine 0.13; the colours, the member lists, the chart and its headlines tried on a PicoVerse 2350, the
 chart's scales and ranges, the order by percent and the tape so far in the host test and the Z80 harness only): **$** opens a market monitor in 80 columns, after the idea of the
@@ -65,21 +81,21 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(v1.0; `bin/picoamp_wifi.uf2` here is v1.4).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.5).
 
 ## Downloads (`bin/`)
 
 | File | What |
 |------|------|
 | `picoamp_wifi.uf2` | **PicoAmp**: flash it and the MSX2 boots into PICOAMP. With the ESP-01 WiFi (internet radio) |
-| `picoamp.uf2` | the same without WiFi |
+| `picoamp.uf2` | the same without WiFi (still v1.4) |
 | `picoplay_wifi.uf2` | **PicoPlay** firmware: Nextor (Sunrise IDE on the microSD), the 1 MB mapper, the engine and the WiFi, for SymbOS / MSX-DOS with `PICOPLAY.EXE`, `PICOAMP.COM`, `PVTEST.COM` |
-| `picoplay.uf2` | the same without WiFi |
-| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather, news and markets pages) |
+| `picoplay.uf2` | the same without WiFi (still v1.4) |
+| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather, news, markets and pictures pages) |
 | `PICOPLAY.EXE` | the SymbOS player |
 | `PVTEST.COM` | the MSX-DOS test tool |
 | `RADIO.M3U` | a few internet radio stations to start with |
-| `loadrom.exe` | Cristiano's LoadROM tool (Windows) with the two extra modes: `-pa` PicoAmp, `-p1` PicoPlay (add `-w` for WiFi). Still v1.2 (it builds the v1.2 firmware): use the `.uf2` files here for v1.4 |
+| `loadrom.exe` | Cristiano's LoadROM tool (Windows) with the two extra modes: `-pa` PicoAmp, `-p1` PicoPlay (add `-w` for WiFi). It builds the v1.5 firmware |
 | `SHA256SUMS` | checksums |
 
 Flash a `.uf2` as any PicoVerse firmware: hold BOOTSEL, plug in USB, and copy the file to the
@@ -103,7 +119,7 @@ the ESP-01 must already know your access point (as for the Nextor WiFi tools).
 
 | Folder | What |
 |--------|------|
-| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds and the full articles, 383 checks) |
+| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds and the full articles, Yahoo Finance, iTunes and the wsrv.nl image proxy, 538 checks) |
 | `picoamp/` | PICOAMP (Z80, sjasmplus) and its clock, weather and news pages (`clock.asm`, `weather.asm`, `news.asm`, page modules), its Z80 test harness, screen tools and mock-ups |
 | `picoplay/` | PicoPlay (SymbOS C Compiler) and PVTEST (sjasmplus), their PC tests, and an openMSX device that runs the engine (`emu/`) |
 | `devrig/` | a headless openMSX test bench (NMS 8245 + the cartridge's slot layout). The system ROMs it needs are not included |

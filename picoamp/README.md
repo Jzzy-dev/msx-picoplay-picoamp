@@ -369,6 +369,10 @@ few seconds); progressive JPEGs are refused with a message (most cameras and
 phones write baseline ones). The engine borrows the cover's memory while a
 picture is decoded, and draws the cover again afterwards.
 
+| The browser | A picture |
+|---|---|
+| ![Pictures](images/picoamp_pictures.png) | ![A picture](images/picoamp_picture.png) |
+
 | Key | Action |
 |-----|--------|
 | Up / Down, Left / Right | Choose (Left/Right a page) |
