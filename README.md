@@ -6,6 +6,8 @@ radio over its ESP-01 itself. The MSX only browses, controls playback and draws.
 
 ![PICOAMP playing](picoamp/images/picoamp_playing.png)
 
+<img width="3198" height="1801" alt="PicoAmp-cover-art-screen-saver2" src="https://github.com/user-attachments/assets/53fedc80-2391-41cb-940d-743776f02262" />
+
 https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 
 [![WhatsApp Image 2026 10 27 at 17.31.34 (1)](https://msx.pics/images/2026/10/27/WhatsApp-Image-2026-10-27-at-17.31.34-1.md.jpeg)](https://msx.pics/image/x5IYH) [![WhatsApp Image 2026 10 27 at 17.31.34 (2)](https://msx.pics/images/2026/10/27/WhatsApp-Image-2026-10-27-at-17.31.34-2.md.jpeg)](https://msx.pics/image/x5qvI)
@@ -28,6 +30,14 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 15 24 11" src="https://github.com/user-attachments/assets/0310b504-c6c6-4eab-aabf-4a06c1766a72" /> | <img width="2000" height="1500" alt="WhatsApp Image 2026-10-30 at 13 08 34" src="https://github.com/user-attachments/assets/f1b99f3c-fd99-4abc-b139-31da34824565" /> |
 
+| Markets monitor list | Markets monitor chart |
+|---|---|
+| <img width="2000" height="1500" alt="monitorlist" src="https://github.com/user-attachments/assets/3d35731a-bd0d-4243-967b-4882418674be" /> | <img width="2000" height="1500" alt="monitorchart" src="https://github.com/user-attachments/assets/e3e8494d-9413-4460-9b41-fb568b3bf1bc" /> |
+
+| Album art in Player | Album art full screen (8) |
+|---|---|
+| <img width="1940" height="1077" alt="albumartGMinplayer" src="https://github.com/user-attachments/assets/f9548d79-87b0-4363-a985-586a295efe3e" /> | <img width="1788" height="1393" alt="albumartGMfullscreen" src="https://github.com/user-attachments/assets/6e9cab43-1431-47ba-baef-7b5dfe3cc10e" /> |
+
 **v1.5** (engine 0.17; tried on a PicoVerse 2350 as the cartridge ROM): pictures and covers.
 **I** opens a picture browser for the JPEGs on the card (folders and pictures only): Enter shows
 one full screen in SCREEN 8 (256 colours, dithered, any size of baseline JPEG, the music plays
@@ -40,9 +50,9 @@ small cover now has its own colours for each row of cells. **Z** then COVER show
 SCREEN 8. The pictures, the screensaver and the big cover are `PICOAMP.ROM` only. See
 `picoamp/README.md`, sections Pictures and Cover.
 
-| Pictures (I) | A picture | The cover (V) | The cover full screen (Z) |
+| Picture browser | a picture | another | and another.. |
 |---|---|---|---|
-| ![Pictures](picoamp/images/picoamp_pictures.png) | ![A picture](picoamp/images/picoamp_picture.png) | ![Cover](picoamp/images/picoamp_cover.png) | ![Full cover](picoamp/images/picoamp_fullcover.png) |
+| ![Pics](picoamp/images/picoamp_pictures.png) | <img width="1866" height="844" alt="5" src="https://github.com/user-attachments/assets/264eb145-3fd3-4715-98a7-6201640eb7e0" /> | <img width="1896" height="695" alt="7" src="https://github.com/user-attachments/assets/65a4c8ad-52d9-44ee-93d4-f49f1f4dbc38" /> | <img width="1862" height="861" alt="3" src="https://github.com/user-attachments/assets/5d97e121-52aa-400e-8871-0f1bfac8cd36" /> |
 
 **v1.4** (engine 0.13; the colours, the member lists, the chart and its headlines tried on a PicoVerse 2350, the
 chart's scales and ranges, the order by percent and the tape so far in the host test and the Z80 harness only): **$** opens a market monitor in 80 columns, after the idea of the
