@@ -2160,6 +2160,35 @@ int main(int argc, char **argv)
                 CLEAR_CARD();
             }
 
+            // how many are kept: 225 old copies in COVERS (numbers 1-225), 150 in LOGOS; [cover] keepcovers 200,
+            // keeplogos 100: the oldest go (a few a pass, in the background)
+            {
+                f_mkdir("0:/PICOAMP"); f_mkdir("0:/PICOAMP/LOGOS"); f_mkdir("0:/PICOAMP/COVERS");
+                for (int dir = 0; dir < 2; dir++)
+                    for (int k = 1; k <= (dir ? 225 : 150); k++)
+                    {
+                        char pth[48];
+                        snprintf(pth, sizeof pth, "0:/PICOAMP/%s/%08X.LGO", dir ? "COVERS" : "LOGOS", 0x10000000u + (unsigned)k);
+                        FIL fo;
+                        uint8_t h[12] = { 'P', 'V', 'L', 'G', 2, PVA_COVER_NONE, (uint8_t)k, (uint8_t)(k >> 8) };
+                        UINT bw;
+                        if (f_open(&fo, pth, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) { f_write(&fo, h, sizeof h, &bw); f_close(&fo); }
+                    }
+                CHECK(FILES("0:/PICOAMP/COVERS") == 225 && FILES("0:/PICOAMP/LOGOS") == 150, "225 covers, 150 logos on the card");
+                pva_art_recount();
+                uint32_t tp = pva_hal_millis();
+                for (int w = 0; w < 200 && (FILES("0:/PICOAMP/COVERS") > 200 || FILES("0:/PICOAMP/LOGOS") > 100); w++) run_ms(20);
+                int nc_ = FILES("0:/PICOAMP/COVERS"), nl_ = FILES("0:/PICOAMP/LOGOS");
+                CHECK(nc_ <= 200 && nc_ >= 180 && nl_ <= 100 && nl_ >= 90, "kept: %d covers, %d logos (in %lu ms)", nc_, nl_, (unsigned long)(pva_hal_millis() - tp));
+                FIL fo;
+                CHECK(f_open(&fo, "0:/PICOAMP/COVERS/10000001.LGO", FA_READ) != FR_OK && f_open(&fo, "0:/PICOAMP/COVERS/100000E1.LGO", FA_READ) == FR_OK,
+                      "the oldest went, the newest stayed");
+                f_close(&fo);
+                CLEAR_CARD();
+                pva_art_recount();
+                run_ms(200);
+            }
+
             // the card read-only: asked each time, shown, not kept
             pva_allow_card_writes(false);
             CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "Test FM, the card read-only");

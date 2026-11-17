@@ -505,6 +505,12 @@ the track that plays: 80 x 80 pixels in the left of the picture, 12 bars
   (Copacabana, New York, Amsterdam; in the engine) shows, a new one at
   random for each track or station. More: put JPEG files (baseline, any
   size; 80 x 80 is enough) in `PICOAMP/DEFAULTS` on the card.
+* **How many are kept:** at most 100 logos and 200 covers (`[cover]
+  keeplogos=100`, `keepcovers=200`; 0 keeps all). Each copy has a number
+  (the order it was kept in: the cartridge has no clock for the card's
+  dates); when a folder has more, the oldest go, down to about 90 %, a few
+  files a pass in the background. "No cover" notes count too, so a song
+  without a cover is asked about again once it is among the oldest.
 * **Switches** in PICOAMP.INI: `[cover] online=off` (nothing asked on the
   internet), `defaults=off` (NO COVER instead of a default picture),
   `rows=off` (one palette for the whole cover, as before 0.17), `rowearly=2`

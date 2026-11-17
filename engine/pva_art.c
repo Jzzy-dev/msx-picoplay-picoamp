@@ -97,6 +97,7 @@ typedef struct
 {
     char path[KEY_MAX];
     char song[URL_MAX], logo[URL_MAX];
+    DIR  pr_dir;                    // (the pruning's folder: below)
 } head_t;
 #define HEAD        A4(sizeof(head_t))
 static head_t  *hd;
@@ -170,7 +171,7 @@ bool pva_art_init(void)
     if (pva_arena_free() >= MEM_ONLINE + 512u && (own = pva_alloc(MEM_ONLINE))) on = true;
     if (!own) pva_log("covers: %u bytes free, online needs %u", (unsigned)pva_arena_free(), (unsigned)(MEM_ONLINE + 512u));
     else if (pva_net_ring_idle(MEM_SIZE)) on = true;
-    if (own) { place(own); memset(hd, 0, sizeof *hd); }
+    if (own) { place(own); memset(hd, 0, sizeof *hd); pva_art_recount(); }    // (the copies counted, their numbers known)
     rnd ^= pva_hal_millis() * 2654435761u;
     return on;
 }
@@ -230,12 +231,14 @@ static int jpg_out(JDEC *jd, void *bitmap, JRECT *r)
 
 // the JPEG (from m_src, or f at its place with f_left bytes) into cv->img
 static void show_none(void);
+static unsigned jpeg_gen;
 static bool jpeg(const char *what)
 {
     // (cv's picture is replaced: a cover in the making from it is no more)
     if (conv_to == logo_keep && logo_keep) conv_to = NULL;
     else if (state == PVA_COVER_MAKING) show_none();
     JDEC jd;
+    jpeg_gen++;                     // (work is TJpgDec's now: a pruning that kept its list there starts again)
     JRESULT r = jd_prepare(&jd, jpg_in, work, WORK_SIZE, NULL);
     if (r == JDR_OK)
     {
@@ -361,8 +364,117 @@ static void show_default(void)
 }
 
 // ---------------------------------------------------------------- the card's copies
-#define LGO_HEAD    12u             // "PVLG", version, kind, 0, 0, u32 the palette's hash; the cover, the picture's address
+#define LGO_HEAD    12u             // "PVLG", version, kind, u16 its number, u32 the palette's hash; the cover, the picture's address
 #define LGO_VER     2
+
+// ---------------- how many are kept ([cover] keeplogos 100, keepcovers 200; 0: all): each copy has a
+// number (the next one written: one more); when a folder has more, the oldest (the lowest numbers) go,
+// down to 90 %, a few a pass. (The card's dates are no use: the cartridge has no clock.) The list of the
+// oldest is in TJpgDec's work (free between pictures: when a picture comes, the pruning starts again).
+#define PR_CAND     32
+#define PR_STEP     4
+typedef struct { uint16_t seq; char name[13]; } pr_cand_t;
+typedef struct { FILINFO fi; pr_cand_t c[PR_CAND]; } pr_work_t;
+static int      pr_count[2] = { -1, -1 };   // the copies in LOGOS, COVERS (-1: not counted yet)
+static uint16_t pr_seq[2];                  // the next number
+static uint8_t  pr_need;                    // the folders to look at (bit 0 LOGOS, bit 1 COVERS)
+static uint8_t  pr_phase, pr_fd;            // 0 idle, 1 reading the folder, 2 removing
+#define pr_dir      (hd->pr_dir)
+static int      pr_n, pr_nc, pr_del, pr_di;
+static uint16_t pr_max;
+static unsigned pr_gen;
+static const char *const pr_name[2] = { "0:/PICOAMP/LOGOS", "0:/PICOAMP/COVERS" };
+_Static_assert(sizeof(pr_work_t) <= WORK_SIZE, "the pruning's list must fit in TJpgDec's work");
+
+static int pr_limit(int fd)
+{
+    char v[12];
+    int n = fd ? 200 : 100;
+    if (pva_cfg_get(fd ? "cover.keepcovers" : "cover.keeplogos", v, sizeof v)) n = atoi(v);
+    return n < 0 ? 0 : n;
+}
+
+static void pr_stop(void)
+{
+    if (pr_phase == 1) f_closedir(&pr_dir);
+    pr_phase = 0;
+}
+
+static void prune_step(void)
+{
+    if (!own || !work || !pva_card_writes()) { pr_need = 0; return; }
+    pr_work_t *w = (pr_work_t *)work;
+    if (pr_phase && pr_gen != jpeg_gen) pr_stop();          // (its list is gone: again)
+    if (!pr_phase)
+    {
+        if (!pr_need) return;
+        pr_fd = (pr_need & 1) ? 0 : 1;
+        if (f_opendir(&pr_dir, pr_name[pr_fd]) != FR_OK) { pr_need &= (uint8_t)~(1u << pr_fd); pr_count[pr_fd] = 0; return; }
+        pr_phase = 1;
+        pr_gen = jpeg_gen;
+        pr_n = pr_nc = 0;
+        pr_max = 0;
+    }
+    if (pr_phase == 1)
+    {
+        for (int k = 0; k < PR_STEP; k++)
+        {
+            if (f_readdir(&pr_dir, &w->fi) != FR_OK || !w->fi.fname[0])
+            {
+                f_closedir(&pr_dir);
+                pr_count[pr_fd] = pr_n;
+                if ((uint16_t)(pr_max + 1) > pr_seq[pr_fd]) pr_seq[pr_fd] = (uint16_t)(pr_max + 1);
+                int lim = pr_limit(pr_fd);
+                pr_del = lim && pr_n > lim ? pr_n - lim * 9 / 10 : 0;
+                if (pr_del > pr_nc) pr_del = pr_nc;
+                if (!pr_del) { pr_phase = 0; pr_need &= (uint8_t)~(1u << pr_fd); return; }
+                pr_phase = 2;
+                pr_di = 0;
+                return;
+            }
+            const char *nm = w->fi.altname[0] ? w->fi.altname : w->fi.fname;
+            size_t l = strlen(nm);
+            if ((w->fi.fattrib & AM_DIR) || l < 5 || l > 12 || strcmp(nm + l - 4, ".LGO")) continue;
+            char path[40];
+            snprintf(path, sizeof path, "%s/%s", pr_name[pr_fd], nm);
+            uint16_t seq = 0;                       // (unreadable, or before the numbers: the oldest)
+            if (f_open(f, path, FA_READ) == FR_OK)
+            {
+                uint8_t h[8];
+                UINT br = 0;
+                if (f_read(f, h, sizeof h, &br) == FR_OK && br == sizeof h && !memcmp(h, "PVLG", 4)) seq = (uint16_t)(h[6] | h[7] << 8);
+                f_close(f);
+            }
+            pr_n++;
+            if (seq > pr_max) pr_max = seq;
+            // the PR_CAND oldest, oldest first
+            int at = pr_nc;
+            while (at > 0 && w->c[at - 1].seq > seq) at--;
+            if (at >= PR_CAND) continue;
+            int last = pr_nc < PR_CAND ? pr_nc : PR_CAND - 1;
+            memmove(&w->c[at + 1], &w->c[at], (size_t)(last - at) * sizeof w->c[0]);
+            w->c[at].seq = seq;
+            snprintf(w->c[at].name, sizeof w->c[at].name, "%s", nm);
+            if (pr_nc < PR_CAND) pr_nc++;
+        }
+        return;
+    }
+    // removing
+    for (int k = 0; k < PR_STEP && pr_di < pr_del; k++, pr_di++)
+    {
+        char path[40];
+        snprintf(path, sizeof path, "%s/%s", pr_name[pr_fd], w->c[pr_di].name);
+        if (f_unlink(path) == FR_OK) pr_count[pr_fd]--;
+    }
+    if (pr_di < pr_del) return;
+    pva_log("cover: %d old copies removed from %s, %d left", pr_del, pr_name[pr_fd] + 11, pr_count[pr_fd]);
+    pr_phase = 0;
+    int lim = pr_limit(pr_fd);
+    if (!lim || pr_count[pr_fd] <= lim) pr_need &= (uint8_t)~(1u << pr_fd);   // (else: again)
+}
+
+// the copies counted again (at the start; the settings read: their limits may be lower)
+void pva_art_recount(void) { if (own) pr_need = 3; }
 
 static uint32_t pal_hash(void)
 {
@@ -383,8 +495,14 @@ static void card_write(const char *path, const uint8_t *from, const char *url)
     f_mkdir("0:/PICOAMP");
     f_mkdir("0:/PICOAMP/LOGOS");
     f_mkdir("0:/PICOAMP/COVERS");
+    int fd = strstr(path, "/LOGOS/") ? 0 : 1;
+    bool fresh = f_stat(path, NULL) != FR_OK;
     if (f_open(f, path, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
-    uint8_t h[LGO_HEAD] = { 'P', 'V', 'L', 'G', LGO_VER, have ? PVA_COVER_READY : PVA_COVER_NONE, 0, 0 };
+    uint16_t seq = pr_seq[fd]++;
+    uint8_t h[LGO_HEAD] = { 'P', 'V', 'L', 'G', LGO_VER, have ? PVA_COVER_READY : PVA_COVER_NONE, (uint8_t)seq, (uint8_t)(seq >> 8) };
+    if (fresh && pr_count[fd] >= 0) pr_count[fd]++;
+    int lim = pr_limit(fd);
+    if (pr_count[fd] < 0 || (lim && pr_count[fd] > lim)) pr_need |= (uint8_t)(1u << fd);
     uint32_t ph = pal_hash();
     memcpy(h + 8, &ph, 4);
     UINT bw;
@@ -804,6 +922,7 @@ uint8_t *pva_art_borrow(size_t *n)
     if (lent) return NULL;
     job_drop_all();
     show_none();
+    pr_stop();                          // (its list is in work: again afterwards)
     uint8_t *m = own;
     if (m) { m += HEAD; *n = MEM_ONLINE - HEAD; }       // (the head stays: where the covers came from)
     else if ((m = pva_net_ring_idle(MEM_SIZE))) *n = pva_net_capacity();
@@ -841,6 +960,7 @@ void pva_art_poll(void)
     if (lent) return;
     if (!on) return;
     job_poll();
+    if (pr_need || pr_phase) prune_step();
     bool fg = state == PVA_COVER_MAKING && conv_to == out, bg = conv_to && conv_to == logo_keep;
     if ((fg || bg) && cv && pva_cover_convert_step(cv))
     {
