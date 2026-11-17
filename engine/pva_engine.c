@@ -1049,6 +1049,7 @@ static int cmd_cfg_load(void)
         }
     }
     pva_cfg_load(t, got);
+    pva_art_recount();
     pva_clock_enable();
     alarm_apply();
     pva_log("settings: %u bytes", (unsigned)got);

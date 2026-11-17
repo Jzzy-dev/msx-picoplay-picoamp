@@ -349,7 +349,8 @@ typedef struct
     uint32_t    pos, len;           // a file: where the JPEG is in it (len 0: all of it)
     const uint8_t *p;               // a picture in memory (len bytes)
 } pva_art_src_t;
-bool    pva_art_source(pva_art_src_t *s);   // false: no cover (or one in the making)
+bool    pva_art_source(pva_art_src_t *s);
+void    pva_art_recount(void);              // the card's copies counted again (kept to [cover] keeplogos, keepcovers)   // false: no cover (or one in the making)
 
 void    pva_art_poll(void);
 int     pva_art_cmd(uint8_t code, const uint8_t *args);
