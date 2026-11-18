@@ -1990,6 +1990,9 @@ int main(int argc, char **argv)
                 f_closedir(&d_); } } } while (0)
             #define FILES(dir) ({ int n_ = 0; DIR d_; FILINFO f_; if (f_opendir(&d_, dir) == FR_OK) { \
                 while (f_readdir(&d_, &f_) == FR_OK && f_.fname[0]) n_++; f_closedir(&d_); } n_; })
+            #define CLEAR_COVERS() do { DIR d_; FILINFO f_; char fn_[300]; if (f_opendir(&d_, "0:/PICOAMP/COVERS") == FR_OK) { \
+                while (f_readdir(&d_, &f_) == FR_OK && f_.fname[0]) { snprintf(fn_, sizeof fn_, "0:/PICOAMP/COVERS/%s", f_.fname); f_unlink(fn_); } \
+                f_closedir(&d_); } } while (0)
             #define COVER_NOW() (cmd(PVA_C_COVER_GET, NULL, 0) == PVA_OK ? fnv_reply() : 0u)
             CLEAR_CARD();
             uint32_t g0 = host_esp_logo_gets, i0 = host_esp_itunes_asks, t0 = pva_hal_millis();
@@ -2059,6 +2062,46 @@ int main(int argc, char **argv)
                 }
                 read_status();
                 CHECK(same && st[PVA_ST_COVER_STATE] == PVA_COVER_READY, "the cover back; PIC_COVER then: the same one, nothing to do");
+            }
+            {
+                // the full screen cover while the songs change (as the ROM's pictures page does it: another
+                // generation, ready: PIC_COVER; made: PIC_CLOSE). Borrowing the memory stops a song's question,
+                // whose connection is still closing when the big one asks: it waits (it failed, and the next
+                // song's question stopped again: the old cover stayed for good)
+                CLEAR_COVERS();
+                char big_src[300] = "", want[300] = "";
+                uint8_t cgen = st[PVA_ST_COVER_GEN], ld = 0, zero = 0;
+                int fails = 0, songs_big = 0;
+                for (int f = 0; f < 750; f++)           // 15 s of 20 ms frames
+                {
+                    run_ms(20);
+                    read_status();
+                    if (ld == 0)
+                    {
+                        pva_art_src_t s;
+                        if (pva_art_source(&s) && pva_art_state() == PVA_COVER_READY) snprintf(want, sizeof want, "%s", s.s);
+                        if (st[PVA_ST_COVER_GEN] != cgen && st[PVA_ST_COVER_STATE] == PVA_COVER_READY)
+                        {
+                            cgen = st[PVA_ST_COVER_GEN];
+                            if (cmd(PVA_C_PIC_COVER, &zero, 1) == PVA_OK && reply[0] == 0) ld = 1;
+                        }
+                    }
+                    else
+                    {
+                        uint8_t mx = 6;
+                        if (cmd(PVA_C_PIC_GET, &mx, 1) != PVA_OK) break;
+                        if (reply[0] == 2 || reply[0] == 3)
+                        {
+                            if (reply[0] == 3) fails++;
+                            else { snprintf(big_src, sizeof big_src, "%s", want); if (strstr(want, "art.test")) songs_big++; }
+                            cmd(PVA_C_PIC_CLOSE, NULL, 0);
+                            ld = 0;
+                        }
+                    }
+                }
+                if (ld) cmd(PVA_C_PIC_CLOSE, NULL, 0);
+                CHECK(!fails && songs_big >= 1, "full screen: a new song's cover comes while the songs change (%d covers, %d failed)", songs_big, fails);
+                for (int w = 0; w < 200 && FILES("0:/PICOAMP/COVERS") < 3; w++) run_ms(50);
             }
             read_status();
             CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && host_esp_open_conns() == 1, "it played all along (%d connections)", host_esp_open_conns());
