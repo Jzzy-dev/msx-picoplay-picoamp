@@ -98,9 +98,9 @@ PicoAmp v1.0 is also published as third-party firmware in the PicoVerse reposito
 | File | What |
 |------|------|
 | `picoamp_wifi.uf2` | **PicoAmp**: flash it and the MSX2 boots into PICOAMP. With the ESP-01 WiFi (internet radio) |
-| `picoamp.uf2` | the same without WiFi (still v1.4) |
+| `picoamp.uf2` | the same without WiFi |
 | `picoplay_wifi.uf2` | **PicoPlay** firmware: Nextor (Sunrise IDE on the microSD), the 1 MB mapper, the engine and the WiFi, for SymbOS / MSX-DOS with `PICOPLAY.EXE`, `PICOAMP.COM`, `PVTEST.COM` |
-| `picoplay.uf2` | the same without WiFi (still v1.4) |
+| `picoplay.uf2` | the same without WiFi |
 | `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather, news, markets and pictures pages) |
 | `PICOPLAY.EXE` | the SymbOS player |
 | `PVTEST.COM` | the MSX-DOS test tool |
