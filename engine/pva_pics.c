@@ -314,11 +314,14 @@ static bool use_strip(void)
 
 static uint32_t big_sig;             // the full screen cover made last (0: none)
 static uint32_t cur_sig;
+static bool      jwait;           // the web was busy (a cover's question closing): asked when it is free
+static char     *jurl;
 
 static void pic_fail(uint8_t e, const char *why)
 {
     pva_log("picture: %s", why);
-    if (pst == P_FETCH) pva_web_abort();
+    if (pst == P_FETCH && !jwait) pva_web_abort();
+    jwait = false;
     if (pst == P_WORK && !m_src) f_close(fil);
     if (cur_sig) big_sig = 0;
     pst = P_ERROR;
@@ -328,7 +331,8 @@ static void pic_fail(uint8_t e, const char *why)
 static void stop(void)
 {
     if (pst == P_WORK && !m_src) f_close(fil);
-    if (pst == P_FETCH) pva_web_abort();
+    if (pst == P_FETCH && !jwait) pva_web_abort();
+    jwait = false;
     pst = P_IDLE;
     m_src = NULL;
 }
@@ -473,7 +477,8 @@ static int pic_cover(bool force)
         decode();
         return PVA_OK;
     }
-    // from the internet: the JPEG at the start of the region, the strip after it
+    // from the internet: the JPEG at the start of the region, the strip after it (no file open)
+    pst = P_IDLE;
     jbuf = region;
     jcap = (size_t)(mem_end - region) > STRIP_COVER + 4096u ? (size_t)(mem_end - region) - STRIP_COVER : 0;
     char *u = (char *)ring;             // (the ring is not used yet: the address there)
@@ -483,16 +488,29 @@ static int pic_cover(bool force)
     enc(u + strlen(PROXY_BIG), un - strlen(PROXY_BIG), src.s);
     jlen = 0;
     jbad = jdone = jok = false;
-    pva_web_no_lend();
-    if (pva_web_get(u, j_body, j_done) != PVA_OK) { pic_fail(PVA_PIC_E_OPEN, "the web is busy"); return PVA_OK; }
+    jurl = u;
     pst = P_FETCH;
     t_fetch = pva_hal_millis();
+    pva_web_no_lend();
+    jwait = pva_web_get(u, j_body, j_done) != PVA_OK;
+    // (busy: the covers' question that borrowing the memory stopped is still closing; it is waited for)
+    if (jwait && !pva_web_busy()) { pic_fail(PVA_PIC_E_OPEN, "no internet"); return PVA_OK; }
     pva_log("picture: the cover from %.40s", src.s);
     return PVA_OK;
 }
 
 static void fetch_poll(void)
 {
+    if (jwait)
+    {
+        if (pva_hal_millis() - t_fetch > FETCH_MS) { pic_fail(PVA_PIC_E_OPEN, "the web stayed busy"); return; }
+        if (pva_web_busy()) return;
+        pva_web_no_lend();
+        if (pva_web_get(jurl, j_body, j_done) != PVA_OK) { pic_fail(PVA_PIC_E_OPEN, "no internet"); return; }
+        jwait = false;
+        t_fetch = pva_hal_millis();
+        return;
+    }
     if (!jdone)
     {
         if (pva_hal_millis() - t_fetch > FETCH_MS) pic_fail(PVA_PIC_E_OPEN, "the cover did not come");
