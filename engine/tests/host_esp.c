@@ -32,6 +32,10 @@
 //   api.open-meteo.com (10.0.0.8)             /v1/forecast?...   offset and weather now
 //   query1/2.finance.yahoo.com (10.0.0.10/11) /v8/finance/spark?symbols=   prices (https only, 20 symbols)
 //   (these three and the Radio Browser send a Date header: host_esp_date_base + time)
+//   pc.test (10.0.0.14) port 8765: PicoAmp for Windows' MSX link
+//     /stream.mp3     as radio.test's, with "X-PicoAmp: 1" (icy-name "PicoAmp on PC")
+//     /cmd?k=...      a key (counted: host_esp_link_keys, host_esp_last_link_key)
+//     /cover.jpg?n=   art.jpg (counted: host_esp_link_covers)
 //   anything else: DNS error
 
 #include <stdio.h>
@@ -46,6 +50,8 @@ const char *host_esp_logo_dir = "assets";
 uint32_t host_esp_logo_gets;                // requests for a logo
 bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
 uint32_t host_esp_itunes_asks;              // questions to the iTunes search
+uint32_t host_esp_link_keys, host_esp_link_covers;   // the MSX link (pc.test)
+char     host_esp_last_link_key[40];
 char     host_esp_last_itunes[200];
 char     host_esp_last_wsrv[400];              // the last request to the image proxy
 uint8_t  host_esp_wifi_state = 2;           // NET_STATE answer, 2 = connected
@@ -737,6 +743,48 @@ static void serve(conn_t *c)
         api(c, path);
         return;
     }
+    if (c->ip[3] == 14)
+    {
+        // PicoAmp for Windows' MSX link
+        if (!strncmp(path, "/cmd?k=", 7))
+        {
+            host_esp_link_keys++;
+            snprintf(host_esp_last_link_key, sizeof host_esp_last_link_key, "%s", path + 7);
+            http_reply(c, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n", "ok\n");
+            return;
+        }
+        if (!strncmp(path, "/cover.jpg", 10))
+        {
+            host_esp_link_covers++;
+            char fn[300];
+            snprintf(fn, sizeof fn, "%s/art.jpg", host_esp_logo_dir);
+            FILE *fp = fopen(fn, "rb");
+            if (!fp) { http_reply(c, "HTTP/1.0 404 Not Found\r\n\r\n", NULL); return; }
+            static uint8_t im[65536];
+            size_t n = fread(im, 1, sizeof im, fp);
+            fclose(fp);
+            char hd[160];
+            snprintf(hd, sizeof hd, "HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", (unsigned)n);
+            bq_put(&c->out, hd, strlen(hd));
+            bq_put(&c->out, im, n);
+            c->kind = 3;
+            c->closed = true;
+            return;
+        }
+        if (!strncmp(path, "/stream.mp3", 11))
+        {
+            char hd[300];
+            snprintf(hd, sizeof hd, "HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\nicy-name: PicoAmp on PC\r\n%sX-PicoAmp: 1\r\n\r\n",
+                     icy_meta ? "icy-metaint: 8192\r\n" : "");
+            bq_put(&c->out, hd, strlen(hd));
+            c->kind = 1;
+            c->metaint = icy_meta ? 8192 : 0;
+            c->until_meta = c->metaint;
+            return;
+        }
+        http_reply(c, "HTTP/1.0 404 Not Found\r\n\r\n", NULL);
+        return;
+    }
     if (sec && !c->tls) { http_reply(c, "HTTP/1.1 400 Bad Request\r\n\r\n", NULL); return; }
     if (sec && !strcmp(path, "/go")) { host_esp_redirs++; http_reply(c, "HTTP/1.1 302 Found\r\nLocation: https://secure.test/stream.mp3\r\n\r\n", NULL); return; }
     if ((r1 && !strcmp(path, "/stream.mp3")) || (sec && !strcmp(path, "/stream.mp3")))
@@ -868,7 +916,7 @@ static int dns(const char *name, uint8_t *ip)
         { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } },
         { "news.test", { 10, 0, 0, 9 } }, { "feeds.finance.yahoo.com", { 10, 0, 0, 9 } },
         { "query1.finance.yahoo.com", { 10, 0, 0, 10 } }, { "query2.finance.yahoo.com", { 10, 0, 0, 11 } },
-        { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } } };
+        { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } }, { "pc.test", { 10, 0, 0, 14 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
     return -1;
 }
@@ -902,9 +950,9 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 13);
+            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 14);
             if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && a[3] <= 9 && host_esp_web_down)) known = false;
-            if (!slot || !known || (a[3] == 2 && port != 8000)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
+            if (!slot || !known || (a[3] == 2 && port != 8000) || (a[3] == 14 && port != 8765)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];
             memset(c, 0, sizeof *c);
             c->used = true;

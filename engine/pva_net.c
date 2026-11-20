@@ -169,6 +169,7 @@ static char    *line;               // LINE_MAX + 1
 static size_t   line_len;
 static bool     status_seen;
 static uint32_t metaint, meta_left_audio;
+static bool     picoamp;            // the station is PicoAmp for Windows (its MSX link: X-PicoAmp: 1)
 static uint32_t meta_len, meta_got;
 static char    *meta;               // META_KEEP + 1
 static char     station[PVA_ST_ALBUM_LEN];
@@ -332,6 +333,7 @@ static void header_line(void)
     while (*v == ' ' || *v == '\t') v++;
     if (starts_ci(line, "location") && !line[8]) snprintf(location, URL_MAX + 1, "%s", v);
     else if (starts_ci(line, "icy-metaint") && !line[11]) metaint = (uint32_t)atol(v);
+    else if (starts_ci(line, "x-picoamp") && !line[9]) picoamp = atoi(v) > 0;
     else if (starts_ci(line, "icy-name") && !line[8]) pva_copy_ascii(station, sizeof station, v, strlen(v));
     else if (starts_ci(line, "content-type") && !line[12])
     {
@@ -534,6 +536,7 @@ static void begin_connect(void)
     status_seen = false;
     line_len = 0;
     metaint = 0;
+    picoamp = false;
     location[0] = 0;
     body_playlist = false;
     bad_format = false;
@@ -1032,6 +1035,7 @@ const pva_net_stats_t *pva_net_stats(void)
 }
 
 const char *pva_net_station(void) { return station; }
+bool pva_net_picoamp(void) { return picoamp && s != S_IDLE && s != S_FAILED; }
 const char *pva_net_stream_title(void) { return title ? title : ""; }
 const char *pva_net_host(void) { return host; }
 const char *pva_net_url(void) { return url ? url : ""; }

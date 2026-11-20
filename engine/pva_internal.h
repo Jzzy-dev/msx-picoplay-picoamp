@@ -188,6 +188,7 @@ size_t pva_net_capacity(void);
 bool   pva_net_ended(void);                     // failed for good and the buffer is empty
 const pva_net_stats_t *pva_net_stats(void);
 const char *pva_net_station(void);              // icy-name (or "")
+bool        pva_net_picoamp(void);    // the station is PicoAmp for Windows (the MSX link): the keys go to it
 const char *pva_net_stream_title(void);         // StreamTitle (or "")
 const char *pva_net_host(void);
 
@@ -322,6 +323,7 @@ void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len
 void    pva_art_none(void);
 void    pva_art_station(const char *url, const char *uuid, const char *name);
 void    pva_art_song(const char *artist, const char *title);
+void    pva_art_song_direct(const char *img_url);    // the song's cover at this address (80 x 80 JPEG, no proxy): the MSX link
 bool    pva_art_online(void);
 uint8_t *pva_art_borrow(size_t *n);     // the covers' memory for the pictures (NULL: none); covers stop
 void    pva_art_giveback(void);         // and back: the cover of what plays is made again

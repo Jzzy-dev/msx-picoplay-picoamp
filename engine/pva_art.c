@@ -550,7 +550,7 @@ static int card_read(const char *path, char *url)
 
 // ---------------------------------------------------------------- online
 // a job: a question (Radio Browser or iTunes), the picture it names (through the proxy)
-enum { J_LOGO, J_SONG };
+enum { J_LOGO, J_SONG, J_DIRECT };    // J_DIRECT: a picture at an address (the MSX link's cover), no question
 enum { L_IDLE, L_ASK, L_LOOKUP, L_FETCH };
 #define RB_HOSTS    3
 static const char *const rb_host[RB_HOSTS] = { "all.api.radio-browser.info", "de1.api.radio-browser.info", "nl1.api.radio-browser.info" };
@@ -643,6 +643,18 @@ static bool question(void)
 static void job_start(void)
 {
     job_t *j = &jq[0];
+    if (j->kind == J_DIRECT)
+    {
+        snprintf(l_q, LQ_SIZE, "%s", j->url);
+        url_song[0] = 0;                // (no bigger one: the proxy cannot reach the PC)
+        img_len = 0;
+        img_bad = false;
+        l_way = 0xFF;
+        l_t0 = pva_hal_millis();
+        l_state = L_ASK;
+        pva_log("cover: from %.48s", j->url);
+        return;
+    }
     snprintf(l_key, sizeof l_key, "%s", j->kind == J_LOGO ? "favicon" : "artworkUrl100");
     l_way = 0;
     l_host = 0;
@@ -717,6 +729,8 @@ static void lk_done(bool ok)
     job_next();
 }
 
+static void station_fallback(void);
+
 static bool img_body(const uint8_t *p, size_t n)
 {
     if (l_state != L_FETCH) return true;
@@ -736,7 +750,8 @@ static void img_done(bool ok)
     {
         pva_log("cover: the picture did not come (%u bytes)", (unsigned)img_len);
         uint16_t http = pva_web_http();
-        if ((ok && !img_bad) || (http >= 400 && http < 500)) card_write(j.path, NULL, NULL);    // (the proxy answered: no picture there)
+        if (j.path[0] && ((ok && !img_bad) || (http >= 400 && http < 500))) card_write(j.path, NULL, NULL);    // (the proxy answered: no picture there)
+        if (j.kind == J_DIRECT && (shown == P_ONLINE || shown == P_NONE)) station_fallback();
         return;
     }
     // the picture arrived for the item that plays: shown if nothing better shows (a logo
@@ -884,6 +899,24 @@ void pva_art_song(const char *artist, const char *title)
     }
     if (online_cover(artist, title, false)) return;
     if (shown == P_ONLINE || shown == P_NONE) station_fallback();
+}
+
+// the MSX link: the song's cover from PicoAmp for Windows (made for the MSX: 80 x 80, baseline)
+void pva_art_song_direct(const char *img_url)
+{
+    if (lent) return;
+    if (!on || item != I_STREAM || !cv || !own || !set_up || !pva_hal_net_present()) return;
+    if (jn && (jq[jn - 1].kind == J_SONG || jq[jn - 1].kind == J_DIRECT))
+    {
+        if (jn == 1 && l_state != L_IDLE && l_inflight) pva_web_abort();
+        jn--;
+        if (!jn) l_state = L_IDLE;
+    }
+    job_t j;
+    memset(&j, 0, sizeof j);
+    j.kind = J_DIRECT;
+    snprintf(j.url, sizeof j.url, "%s", img_url);
+    job_add(&j);
 }
 
 // what shows, for a bigger picture of it

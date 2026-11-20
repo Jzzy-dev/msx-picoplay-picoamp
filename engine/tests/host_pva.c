@@ -2169,6 +2169,39 @@ int main(int argc, char **argv)
             read_status();
             CHECK(st[PVA_ST_STATE] == PVA_STATE_STOPPED && host_esp_open_conns() == 0, "stopped at once: nothing after it");
 
+            {
+                // the MSX link: a station that is PicoAmp for Windows (its reply: X-PicoAmp: 1). Pause, next and
+                // previous go to the PC (the station plays on), a song's cover comes from the PC (not iTunes)
+                extern uint32_t host_esp_link_keys, host_esp_link_covers;
+                extern char host_esp_last_link_key[40];
+                uint32_t k0 = host_esp_link_keys, c0 = host_esp_link_covers, i1 = host_esp_itunes_asks;
+                static const char pcs[] = "http://pc.test:8765/stream.mp3\0PicoAmp on PC\0";
+                CHECK(cmd(PVA_C_PLAY_URL, pcs, sizeof pcs) == PVA_OK, "the MSX link: the PC's station plays");
+                for (int w = 0; w < 400 && host_esp_link_covers == c0; w++) { run_ms(50); read_status(); }
+                for (int w = 0; w < 100; w++) { run_ms(50); read_status(); if (st[PVA_ST_COVER_STATE] == PVA_COVER_READY) break; }
+                CHECK(host_esp_link_covers > c0 && host_esp_itunes_asks == i1 && st[PVA_ST_COVER_STATE] == PVA_COVER_READY,
+                      "the song's cover from the PC (%u asked), not iTunes (%u)", host_esp_link_covers - c0, host_esp_itunes_asks - i1);
+                CHECK(cmd(PVA_C_NEXT, NULL, 0) == PVA_OK, "N");
+                for (int w = 0; w < 60 && host_esp_link_keys == k0; w++) run_ms(50);
+                CHECK(host_esp_link_keys == k0 + 1 && !strcmp(host_esp_last_link_key, "next"), "N went to the PC (%s)", host_esp_last_link_key);
+                CHECK(cmd(PVA_C_PAUSE, NULL, 0) == PVA_OK && cmd(PVA_C_PREV, NULL, 0) == PVA_OK, "SPACE, P");
+                for (int w = 0; w < 100 && host_esp_link_keys < k0 + 3; w++) run_ms(50);
+                read_status();
+                CHECK(host_esp_link_keys == k0 + 3 && !strcmp(host_esp_last_link_key, "prev"), "pause and P went to the PC, one after the other (%u, %s)",
+                      host_esp_link_keys - k0, host_esp_last_link_key);
+                CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "the station plays on (the PC paused)");
+                cmd(PVA_C_STOP, NULL, 0);
+                CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "another station");
+                run_ms(2000);
+                uint32_t k1 = host_esp_link_keys;
+                cmd(PVA_C_PAUSE, NULL, 0);
+                run_ms(500);
+                read_status();
+                CHECK(host_esp_link_keys == k1 && st[PVA_ST_STATE] == PVA_STATE_PAUSED, "another station: its keys stay here");
+                cmd(PVA_C_STOP, NULL, 0);
+                run_ms(300);
+            }
+
             // [cover] online=off: a default picture, nothing asked
             pva_cfg_set("cover.online", "off");
             CLEAR_CARD();

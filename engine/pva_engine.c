@@ -1650,6 +1650,54 @@ static int cmd_diag(void)
     return PVA_OK;
 }
 
+// ---------------------------------------------------------------- the MSX link
+// A station that is PicoAmp for Windows (its reply says X-PicoAmp: 1) plays what
+// that PC plays: pause, next and previous go to it (GET <its address>/cmd?k=...,
+// one after the other through the web client), and a song's cover comes from it
+// (/cover.jpg, made for the MSX there).
+#define RK_MAX 4
+static char    rk_q[RK_MAX][8];
+static uint8_t rk_n;
+static uint32_t rk_title_gen;
+
+static bool link_plays(void) { return state == PVA_STATE_PLAYING && pva_dec_is_stream() && pva_net_picoamp(); }
+
+// "http://192.168.1.20:8765/stream.mp3" -> "http://192.168.1.20:8765"
+static void link_base(char *o, size_t n)
+{
+    snprintf(o, n, "%s", pva_net_url());
+    char *p = strstr(o, "://");
+    p = p ? strchr(p + 3, '/') : NULL;
+    if (p) *p = 0;
+}
+
+static void link_key(const char *k)
+{
+    if (rk_n < RK_MAX) snprintf(rk_q[rk_n++], sizeof rk_q[0], "%s", k);
+    pva_log("msx link: %s", k);
+}
+
+static bool rk_body(const uint8_t *p, size_t n) { (void)p; (void)n; return true; }
+static void rk_done(bool ok) { if (!ok) pva_log("msx link: the key did not arrive (%u)", (unsigned)pva_web_error()); }
+
+static void link_poll(void)
+{
+    if (!rk_n) return;
+    if (!pva_net_picoamp()) { rk_n = 0; return; }
+    if (pva_web_busy()) return;
+    char u[URL_MAX_LEN + 24];
+    link_base(u, URL_MAX_LEN);
+    size_t l = strlen(u);
+    snprintf(u + l, sizeof u - l, "/cmd?k=%s", rk_q[0]);
+    pva_web_no_lend();
+    if (pva_web_get(u, rk_body, rk_done) == PVA_OK || !pva_web_busy())
+    {
+        // (sent, or no WiFi: gone either way)
+        memmove(rk_q, rk_q + 1, sizeof rk_q[0] * (size_t)(rk_n - 1));
+        rk_n--;
+    }
+}
+
 static int execute(uint8_t code)
 {
     // the music is the listener's again: the alarm stops ringing (and fading in)
@@ -1718,6 +1766,7 @@ static int execute(uint8_t code)
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
         case PVA_C_PAUSE:
+            if (link_plays()) { link_key("toggle"); return PVA_OK; }    // (the PC pauses: silence comes, the station stays)
             if (state == PVA_STATE_PLAYING) { state = PVA_STATE_PAUSED; pva_hal_audio_mute(true); }
             else if (state == PVA_STATE_PAUSED) { state = PVA_STATE_PLAYING; pva_hal_audio_mute(buffering); }
             else if (state == PVA_STATE_STOPPED && pl_count) return play_pos(pl_pos);
@@ -1728,10 +1777,12 @@ static int execute(uint8_t code)
             play_error = 0;
             return PVA_OK;
         case PVA_C_NEXT:
+            if (link_plays()) { link_key("next"); return PVA_OK; }
             if (!pl_count) return PVA_E_STATE;
             if (pl_pos + 1u < pl_count) return play_pos((uint16_t)(pl_pos + 1u));
             return play_pos(0);
         case PVA_C_PREV:
+            if (link_plays()) { link_key("prev"); return PVA_OK; }
             if (!pl_count) return PVA_E_STATE;
             if (pva_dec_active() && pva_dec_elapsed() >= 3u) return play_pos(pl_pos);
             return play_pos(pl_pos ? (uint16_t)(pl_pos - 1u) : (uint16_t)(pl_count - 1u));
@@ -1989,6 +2040,7 @@ bool pva_core1_poll(void)
     pva_news_poll();
     pva_markets_poll();
     sleep_alarm_poll();
+    link_poll();
     pva_win[PVA_R_WHERE] = PVA_W_STREAM;
     if (pva_net_active())
     {
@@ -1998,7 +2050,16 @@ bool pva_core1_poll(void)
         {
             shown_title_gen = ns->title_gen;
             split_stream_title(pva_net_stream_title());
-            pva_art_song(info.artist, info.title);      // its cover (online)
+            if (pva_net_picoamp())
+            {
+                // the MSX link: the cover of what the PC plays, from the PC
+                char u[URL_MAX_LEN + 32];
+                link_base(u, URL_MAX_LEN);
+                size_t l = strlen(u);
+                snprintf(u + l, sizeof u - l, "/cover.jpg?n=%u", (unsigned)++rk_title_gen);
+                pva_art_song_direct(u);
+            }
+            else pva_art_song(info.artist, info.title);      // its cover (online)
             status_dirty = true;
         }
         if (pva_dec_is_stream() && !given_station[0] && pva_net_station()[0] && strcmp(info.album, pva_net_station()))

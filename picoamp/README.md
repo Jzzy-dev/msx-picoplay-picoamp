@@ -116,6 +116,35 @@ engine 0.10), which the PicoAmp firmware allows because nobody else writes
 the card there. A message in the path line says what
 happened ("Added to the favourites", "Already a favourite", ...).
 
+### The PC's music: the MSX link
+
+[PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) can play what
+the PC plays on the MSX: Spotify (or another player it follows), its own
+files and stations. On the PC, **K** turns its MSX link on and shows its
+address, e.g. `http://192.168.1.20:8765/stream.mp3` (Windows may ask once
+whether PicoAmp may take connections on the network: allow it for private
+networks). Add that address to `RADIOFAV.M3U` on the card:
+
+```
+#EXTINF:-1,PicoAmp on the PC
+http://192.168.1.20:8765/stream.mp3
+```
+
+(the PC also gives these two lines at `http://<the PC>:8765/picoamp.m3u`).
+Play it from Internet radio/Favourites. It is an internet radio station of
+the PC: the sound (MP3, 160 kbit/s) plays on the MSX, the bars move on it,
+and the song shows as a station's song does. Because its reply says
+`X-PicoAmp: 1`, the engine (0.18) knows it is PicoAmp for Windows:
+
+* SPACE, N and P go to the PC (and through it to Spotify): pause and play,
+  the next and the previous song. The station plays on: while the PC pauses,
+  it sends silence.
+* A song's cover comes from the PC (the real album art, made there as the
+  MSX wants it: 80 x 80, baseline JPEG), not from the iTunes search.
+
+The MSX plays a few seconds behind the PC (its stream buffer), so turn the
+PC's own speakers down. The volume keys are the MSX's.
+
 ### Clock
 
 C opens a page with the time, digital or analog, for having the MSX on with
