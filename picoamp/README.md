@@ -151,8 +151,9 @@ and the song shows as a station's song does. Because its reply says
   full screen cover (Z) too, at 281 x 192.
 
 The MSX plays a few seconds behind the PC (its stream buffer), so turn the
-PC's own speakers down. The volume keys are the MSX's; muting PicoAmp on
-the PC mutes what it sends too.
+PC's own speakers down. The volume keys and M are the PC's (PicoAmp's, or
+Spotify's when it follows Spotify): the sound is the PC's, at its volume, so
+they work the same in both ways; the screen shows the PC's volume.
 
 ### Clock
 

@@ -1251,6 +1251,7 @@ static int play_pos(uint16_t pos)
 
 static void stop_playback(void)
 {
+    pva_dec_set_volume(muted ? 0 : volume);   // (the MSX link's volume was the PC's: this one's again)
     pva_art_none();
     if (pva_dec_is_stream() || pva_net_active()) pva_net_stop();
     buffering = false;
@@ -1686,7 +1687,7 @@ static bool link_plays(void)
 
 // ---- its screen (X-PicoAmp: 2): no sound here, the PC's bars, song, time and state, as lines
 //   V<24 levels, '0' + 0..31><VU left, right><64 scope samples, ' ' + (s + 128) / 3>
-//   T <elapsed ms> <length s> <p playing | a paused | s stopped>
+//   T <elapsed ms> <length s> <p playing | a paused | s stopped> [<volume> <muted 0/1>]
 //   S<artist> TAB <title> TAB <album>   (in the MSX's character set)
 typedef struct
 {
@@ -1721,11 +1722,13 @@ static void scr_line(void)
             break;
         case 'T':
         {
-            long e = 0, t = 0;
+            long e = 0, t = 0, v = -1, mu = 0;
             char c = 's';
             scr->num[scr->pos < sizeof scr->num ? scr->pos : sizeof scr->num - 1] = 0;
-            if (sscanf(scr->num, "%ld %ld %c", &e, &t, &c) >= 2)
+            if (sscanf(scr->num, "%ld %ld %c %ld %ld", &e, &t, &c, &v, &mu) >= 2)
             {
+                // (the PC's volume and mute: shown here, the MSX's own sound is off)
+                if (v >= 0 && v <= 100 && !(rk_n && !strncmp(rk_q[rk_n - 1], "vol&", 4))) { volume = (uint8_t)v; muted = mu != 0; }
                 scr->el_ms = (int32_t)e;
                 scr->at = pva_hal_millis();
                 scr->total = (uint16_t)(t > 65535 ? 65535 : t < 0 ? 0 : t);
@@ -1817,6 +1820,8 @@ static void link_base(char *o, size_t n)
 
 static void link_key(const char *k)
 {
+    // (a volume after a volume not sent yet: only the newest goes, the keys repeat fast)
+    if (rk_n && !strncmp(k, "vol&", 4) && !strncmp(rk_q[rk_n - 1], "vol&", 4)) rk_n--;
     if (rk_n < RK_MAX) snprintf(rk_q[rk_n++], sizeof rk_q[0], "%s", k);
     pva_log("msx link: %s", k);
 }
@@ -1952,11 +1957,29 @@ static int execute(uint8_t code)
             return pva_dec_seek((uint32_t)(args[0] | (args[1] << 8)));
         }
         case PVA_C_VOLUME:
+            if (link_plays())
+            {
+                // the PC's volume (Spotify's when it follows it): the sound is the PC's, at its volume
+                char k[16];
+                volume = args[0] > 100 ? 100 : args[0];
+                snprintf(k, sizeof k, "vol&v=%u", (unsigned)volume);
+                link_key(k);
+                status_dirty = true;
+                return PVA_OK;
+            }
             volume = args[0] > 100 ? 100 : args[0];
             pva_dec_set_volume(muted ? 0 : volume);
             if (fade_vol != 0xFF) fade_vol = 0xFE;     // (the fade sets it again)
             return PVA_OK;
         case PVA_C_MUTE:
+            if (link_plays())
+            {
+                muted = args[0] == 2 ? !muted : args[0] != 0;
+                link_key(muted ? "mute&on=1" : "mute&on=0");
+                status_dirty = true;
+                set_reply_byte(muted);
+                return PVA_OK;
+            }
             muted = args[0] == 2 ? !muted : args[0] != 0;
             pva_dec_set_volume(muted ? 0 : (fade_vol < 0xFE ? fade_vol : volume));
             status_dirty = true;

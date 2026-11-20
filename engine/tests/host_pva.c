@@ -2206,6 +2206,22 @@ int main(int argc, char **argv)
                 CHECK(!strcmp(host_esp_last_link_key, "repeat&on=1"), "repeat went to the PC (%s)", host_esp_last_link_key);
                 cmd_u8(PVA_C_MODE, 0);
                 for (int w = 0; w < 60 && host_esp_link_keys < k0 + 8; w++) run_ms(50);
+                // the volume and mute: the PC's (a volume pressed fast: only the newest goes)
+                read_status();
+                uint8_t vol0 = st[PVA_ST_VOLUME];
+                cmd_u8(PVA_C_VOLUME, 55);
+                cmd_u8(PVA_C_VOLUME, 50);
+                for (int w = 0; w < 60 && strncmp(host_esp_last_link_key, "vol&", 4); w++) run_ms(50);
+                run_ms(500);
+                read_status();
+                CHECK(!strcmp(host_esp_last_link_key, "vol&v=50") && st[PVA_ST_VOLUME] == 50, "the volume went to the PC (%s), shown here (%u)", host_esp_last_link_key, st[PVA_ST_VOLUME]);
+                CHECK(cmd_u8(PVA_C_MUTE, 2) == PVA_OK, "M");
+                for (int w = 0; w < 60 && strncmp(host_esp_last_link_key, "mute&", 5); w++) run_ms(50);
+                read_status();
+                CHECK(!strcmp(host_esp_last_link_key, "mute&on=1") && (st[PVA_ST_FLAGS] & PVA_F_MUTED), "mute went to the PC (%s), shown here", host_esp_last_link_key);
+                cmd_u8(PVA_C_MUTE, 2);
+                cmd_u8(PVA_C_VOLUME, vol0);
+                run_ms(500);
                 // the full screen cover: the PC's, made there at 281 x 192
                 {
                     extern uint32_t host_esp_link_big;
@@ -2243,6 +2259,7 @@ int main(int argc, char **argv)
                     CHECK(vz[PVA_VIZ_LEVEL] == 1 && vz[PVA_VIZ_LEVEL + 23] == 24 && vz[PVA_VIZ_VU] == 20 && vz[PVA_VIZ_VU + 1] == 21,
                           "its bars: %u .. %u, VU %u %u", vz[PVA_VIZ_LEVEL], vz[PVA_VIZ_LEVEL + 23], vz[PVA_VIZ_VU], vz[PVA_VIZ_VU + 1]);
                     CHECK(host_esp_link_covers > c1, "its song's cover from the PC");
+                    CHECK(st[PVA_ST_VOLUME] == 70 && !(st[PVA_ST_FLAGS] & PVA_F_MUTED), "the PC's volume shown here (%u)", st[PVA_ST_VOLUME]);
                     uint32_t k2 = host_esp_link_keys;
                     CHECK(cmd_u16(PVA_C_SEEK, 60) == PVA_OK, "SEEK 60");
                     for (int w = 0; w < 60 && host_esp_link_keys == k2; w++) run_ms(50);
