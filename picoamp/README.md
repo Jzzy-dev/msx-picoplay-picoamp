@@ -137,13 +137,16 @@ and the song shows as a station's song does. Because its reply says
 `X-PicoAmp: 1`, the engine (0.18) knows it is PicoAmp for Windows:
 
 * SPACE, N and P go to the PC (and through it to Spotify): pause and play,
-  the next and the previous song. The station plays on: while the PC pauses,
-  it sends silence.
+  the next and the previous song. `,` and `.` seek 10 seconds in the PC's
+  song, H and R switch its shuffle and repeat. The station plays on: while
+  the PC pauses, it sends silence.
 * A song's cover comes from the PC (the real album art, made there as the
-  MSX wants it: 80 x 80, baseline JPEG), not from the iTunes search.
+  MSX wants it: 80 x 80, baseline JPEG), not from the iTunes search; the
+  full screen cover (Z) too, at 281 x 192.
 
 The MSX plays a few seconds behind the PC (its stream buffer), so turn the
-PC's own speakers down. The volume keys are the MSX's.
+PC's own speakers down. The volume keys are the MSX's; muting PicoAmp on
+the PC mutes what it sends too.
 
 ### Clock
 

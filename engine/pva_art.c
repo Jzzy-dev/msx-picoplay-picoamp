@@ -646,7 +646,7 @@ static void job_start(void)
     if (j->kind == J_DIRECT)
     {
         snprintf(l_q, LQ_SIZE, "%s", j->url);
-        url_song[0] = 0;                // (no bigger one: the proxy cannot reach the PC)
+        url_keep(url_song, j->url, false);  // (the full screen's: the PC makes it too, pva_pics.c)
         img_len = 0;
         img_bad = false;
         l_way = 0xFF;

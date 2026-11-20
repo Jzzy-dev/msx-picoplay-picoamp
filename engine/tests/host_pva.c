@@ -2190,6 +2190,40 @@ int main(int argc, char **argv)
                 CHECK(host_esp_link_keys == k0 + 3 && !strcmp(host_esp_last_link_key, "prev"), "pause and P went to the PC, one after the other (%u, %s)",
                       host_esp_link_keys - k0, host_esp_last_link_key);
                 CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_NET_STATE] == PVA_NET_STREAM, "the station plays on (the PC paused)");
+                // seeking (the player asks for its time + 10 s: +10 goes to the PC), shuffle and repeat
+                CHECK(st[PVA_ST_FLAGS] & PVA_F_SEEKABLE, "it can seek (the PC's song)");
+                uint16_t el = st16(PVA_ST_ELAPSED);
+                CHECK(cmd_u16(PVA_C_SEEK, (uint16_t)(el + 10)) == PVA_OK, "SEEK +10");
+                for (int w = 0; w < 60 && host_esp_link_keys < k0 + 4; w++) run_ms(50);
+                CHECK(!strncmp(host_esp_last_link_key, "seek&s=", 7) && atoi(host_esp_last_link_key + 7) >= 9 && atoi(host_esp_last_link_key + 7) <= 10,
+                      "seeking went to the PC: %s", host_esp_last_link_key);
+                CHECK(cmd_u8(PVA_C_MODE, PVA_MODE_SHUFFLE) == PVA_OK, "shuffle on");
+                for (int w = 0; w < 60 && host_esp_link_keys < k0 + 5; w++) run_ms(50);
+                read_status();
+                CHECK(!strcmp(host_esp_last_link_key, "shuffle&on=1") && (st[PVA_ST_MODE] & PVA_MODE_SHUFFLE), "shuffle went to the PC (%s), and shows here", host_esp_last_link_key);
+                CHECK(cmd_u8(PVA_C_MODE, PVA_MODE_SHUFFLE | PVA_MODE_REPEAT_ALL) == PVA_OK, "repeat on");
+                for (int w = 0; w < 60 && host_esp_link_keys < k0 + 6; w++) run_ms(50);
+                CHECK(!strcmp(host_esp_last_link_key, "repeat&on=1"), "repeat went to the PC (%s)", host_esp_last_link_key);
+                cmd_u8(PVA_C_MODE, 0);
+                for (int w = 0; w < 60 && host_esp_link_keys < k0 + 8; w++) run_ms(50);
+                // the full screen cover: the PC's, made there at 281 x 192
+                {
+                    extern uint32_t host_esp_link_big;
+                    uint32_t b0 = host_esp_link_big;
+                    uint8_t one = 1;
+                    CHECK(cmd(PVA_C_PIC_COVER, &one, 1) == PVA_OK && reply_len == 1 && reply[0] == 0, "PIC_COVER: being made (%u)", reply_len ? reply[0] : 0xFF);
+                    int rows = 0, stp = 1;
+                    for (int w = 0; w < 400 && stp == 1; w++)
+                    {
+                        run_ms(20);
+                        uint8_t mx = 7;
+                        if (cmd(PVA_C_PIC_GET, &mx, 1) != PVA_OK) break;
+                        stp = reply[0];
+                        rows += reply[3];
+                    }
+                    CHECK(stp == 2 && rows == 192 && host_esp_link_big == b0 + 1, "the full screen cover from the PC (%d rows, state %d, %u asked)", rows, stp, host_esp_link_big - b0);
+                    cmd(PVA_C_PIC_CLOSE, NULL, 0);
+                }
                 cmd(PVA_C_STOP, NULL, 0);
                 CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "another station");
                 run_ms(2000);

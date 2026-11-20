@@ -1560,9 +1560,21 @@ void pva_engine_extra(uint8_t *out)
     pva_markets_state(&out[PVA_CK_MKT_STATE - PVA_CK_EXTRA]);
 }
 
+static bool link_plays(void);
+static void link_key(const char *k);
+
 static int cmd_mode(void)
 {
     uint8_t m = args[0] & (PVA_MODE_REPEAT_ALL | PVA_MODE_SHUFFLE | PVA_MODE_REPEAT_ONE);
+    if (link_plays())
+    {
+        // the PC's shuffle and repeat (kept here too: the player shows them)
+        uint8_t rep = PVA_MODE_REPEAT_ALL | PVA_MODE_REPEAT_ONE;
+        if ((m ^ mode) & PVA_MODE_SHUFFLE) link_key((m & PVA_MODE_SHUFFLE) ? "shuffle&on=1" : "shuffle&on=0");
+        if ((m ^ mode) & rep) link_key((m & PVA_MODE_REPEAT_ONE) ? "repeat&on=2" : (m & PVA_MODE_REPEAT_ALL) ? "repeat&on=1" : "repeat&on=0");
+        mode = m;
+        return PVA_OK;
+    }
     bool was = mode & PVA_MODE_SHUFFLE, now = m & PVA_MODE_SHUFFLE;
     mode = m;
     if (pl_count && now && !was)
@@ -1652,11 +1664,12 @@ static int cmd_diag(void)
 
 // ---------------------------------------------------------------- the MSX link
 // A station that is PicoAmp for Windows (its reply says X-PicoAmp: 1) plays what
-// that PC plays: pause, next and previous go to it (GET <its address>/cmd?k=...,
+// that PC plays: pause, next, previous, seeking (by the difference: the station's
+// time is not the song's), shuffle and repeat go to it (GET <its address>/cmd?k=...,
 // one after the other through the web client), and a song's cover comes from it
 // (/cover.jpg, made for the MSX there).
 #define RK_MAX 4
-static char    rk_q[RK_MAX][8];
+static char    rk_q[RK_MAX][16];
 static uint8_t rk_n;
 static uint32_t rk_title_gen;
 
@@ -1788,6 +1801,15 @@ static int execute(uint8_t code)
             return play_pos(pl_pos ? (uint16_t)(pl_pos - 1u) : (uint16_t)(pl_count - 1u));
         case PVA_C_SEEK:
         {
+            if (link_plays())
+            {
+                // (the player asks for its time +-10 s: the difference goes to the PC)
+                int d = (int)(args[0] | (args[1] << 8)) - (int)pva_dec_elapsed();
+                char k[16];
+                snprintf(k, sizeof k, "seek&s=%d", d < -999 ? -999 : d > 999 ? 999 : d);
+                link_key(k);
+                return PVA_OK;
+            }
             if (!pva_dec_active()) return PVA_E_STATE;
             if (!info.seekable) return PVA_E_STATE;
             return pva_dec_seek((uint32_t)(args[0] | (args[1] << 8)));
@@ -1873,7 +1895,7 @@ static void publish_status(void)
     if (strm) pva_dec_frame_info(&info);
     st8(PVA_ST_STATE, state);
     st8(PVA_ST_FLAGS, (uint8_t)((mounted ? PVA_F_MOUNTED : 0) | (info.tagged && active ? PVA_F_TAGS : 0) |
-                                (info.seekable && active ? PVA_F_SEEKABLE : 0) | (dir_open ? PVA_F_DIR_OPEN : 0) |
+                                ((info.seekable || link_plays()) && active ? PVA_F_SEEKABLE : 0) | (dir_open ? PVA_F_DIR_OPEN : 0) |
                                 (strm ? PVA_F_STREAM : 0) | (strm && buffering ? PVA_F_BUFFERING : 0) |
                                 (strm && pva_net_is_tls() ? PVA_F_TLS : 0) | (muted ? PVA_F_MUTED : 0)));
     st8(PVA_ST_VOLUME, volume);

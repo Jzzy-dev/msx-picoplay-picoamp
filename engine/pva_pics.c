@@ -484,8 +484,13 @@ static int pic_cover(bool force)
     char *u = (char *)ring;             // (the ring is not used yet: the address there)
     size_t un = RING_ROWS * OUT_W;
     if (!jcap || strlen(PROXY_BIG) + 3u * strlen(src.s) + 1u > un) { pic_fail(PVA_PIC_E_SIZE, "no room"); return PVA_OK; }
-    strcpy(u, PROXY_BIG);
-    enc(u + strlen(PROXY_BIG), un - strlen(PROXY_BIG), src.s);
+    if (pva_net_picoamp() && strstr(src.s, "/cover.jpg?"))
+        snprintf(u, un, "%s&w=281&h=192", src.s);   // the MSX link: the PC makes it (the proxy cannot reach it)
+    else
+    {
+        strcpy(u, PROXY_BIG);
+        enc(u + strlen(PROXY_BIG), un - strlen(PROXY_BIG), src.s);
+    }
     jlen = 0;
     jbad = jdone = jok = false;
     jurl = u;

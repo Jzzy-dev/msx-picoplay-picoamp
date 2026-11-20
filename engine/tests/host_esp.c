@@ -50,7 +50,7 @@ const char *host_esp_logo_dir = "assets";
 uint32_t host_esp_logo_gets;                // requests for a logo
 bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
 uint32_t host_esp_itunes_asks;              // questions to the iTunes search
-uint32_t host_esp_link_keys, host_esp_link_covers;   // the MSX link (pc.test)
+uint32_t host_esp_link_keys, host_esp_link_covers, host_esp_link_big;   // the MSX link (pc.test)
 char     host_esp_last_link_key[40];
 char     host_esp_last_itunes[200];
 char     host_esp_last_wsrv[400];              // the last request to the image proxy
@@ -756,6 +756,7 @@ static void serve(conn_t *c)
         if (!strncmp(path, "/cover.jpg", 10))
         {
             host_esp_link_covers++;
+            if (strstr(path, "w=281")) host_esp_link_big++;
             char fn[300];
             snprintf(fn, sizeof fn, "%s/art.jpg", host_esp_logo_dir);
             FILE *fp = fopen(fn, "rb");
