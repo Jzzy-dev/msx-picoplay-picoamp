@@ -882,6 +882,8 @@ static void gen(conn_t *c, uint32_t ms)
         char l[200];
         if (!c->meta_count || now_ms - c->scr_song_ms >= 8000)
         {
+            // (as the PC: at the start its cover's state first, C)
+            if (!c->meta_count) { int k = snprintf(l, sizeof l, "C%u\n", (unsigned)c->title_no + 1); bq_put(&c->out, l, (size_t)k); }
             // S<artist> TAB <title> TAB <album>
             const char *t = titles[c->title_no++ % 3], *d = strstr(t, " - ");
             int n = snprintf(l, sizeof l, "S%.*s\t%s\tThe Album\n", (int)(d - t), t, d + 3);
@@ -891,6 +893,13 @@ static void gen(conn_t *c, uint32_t ms)
             bq_put(&c->out, ly, sizeof ly - 1);
             c->scr_song_ms = now_ms;
             c->meta_count = 1;
+        }
+        if (c->meta_count == 1 && now_ms - c->scr_song_ms >= 1000)
+        {
+            // a second later: its cover is made there; and the PC's format line
+            int n = snprintf(l, sizeof l, "C%u\nFSPOTIFY 48.0KHZ\n", (unsigned)c->title_no);
+            bq_put(&c->out, l, (size_t)n);
+            c->meta_count = 2;
         }
         if (now_ms - c->scr_t_ms >= 500)
         {

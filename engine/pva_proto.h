@@ -325,6 +325,8 @@
 #define PVA_ST_COVER_GEN    185     // u8  +1 when the cover changes (engine 0.14)
 #define PVA_ST_COVER_STATE  186     // u8  PVA_COVER_xxx
 #define PVA_ST_PIC_SAVER    187     // u8  the screensaver after this many minutes ([pictures] saver; 0 off; engine 0.17)
+#define PVA_ST_FMT_TEXT     188     // char[22] the MSX link's screen mode: the PC's format line ("SPOTIFY 48.0KHZ"), else ""
+#define PVA_ST_FMT_TEXT_LEN 22
 #define PVA_EQ_BANDS        5
 #define PVA_EQ_MAX_DB       12
 

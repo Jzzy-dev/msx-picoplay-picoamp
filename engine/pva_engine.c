@@ -1719,6 +1719,9 @@ typedef struct
     uint32_t at;
     uint16_t total;
     bool     on, plays;
+    bool     has_c;                 // the PC says when its cover is made (C lines)
+    uint32_t cgen;
+    char     fmt[PVA_ST_FMT_TEXT_LEN];  // the PC's format line ("SPOTIFY 48.0KHZ")
 } scr_t;
 static scr_t *scr;                  // (the end of the stream ring, lent while the screen plays: no memory of its own)
 // (another stream, or none: the ring is the stream's again)
@@ -1735,6 +1738,17 @@ static uint32_t scr_elapsed(void)
     if (e < 0) e = 0;
     if (scr->total && e / 1000 > scr->total) e = scr->total * 1000;
     return (uint32_t)e / 1000u;
+}
+
+static void link_base(char *o, size_t n);
+// the PC's cover of what plays, fetched again
+static void scr_cover(void)
+{
+    char u[URL_MAX_LEN + 32];
+    link_base(u, URL_MAX_LEN);
+    size_t l = strlen(u);
+    snprintf(u + l, sizeof u - l, "/cover.jpg?n=%u", (unsigned)++rk_title_gen);
+    pva_art_song_direct(u);
 }
 
 static void scr_line(void)
@@ -1786,13 +1800,26 @@ static void scr_line(void)
                 memcpy(info.title, scr->t, sizeof info.title);
                 memcpy(info.artist, scr->a, sizeof info.artist);
                 memcpy(info.album, scr->al, sizeof info.album);
-                char u[URL_MAX_LEN + 32];
-                link_base(u, URL_MAX_LEN);
-                size_t l = strlen(u);
-                snprintf(u + l, sizeof u - l, "/cover.jpg?n=%u", (unsigned)++rk_title_gen);
-                pva_art_song_direct(u);
+                if (!scr->has_c) scr_cover();           // (a PC without C lines: its cover now, may be the last one)
                 status_dirty = true;
             }
+            break;
+        case 'C':
+        {
+            // the PC made the cover of what plays (a new one, or none: then the default picture)
+            scr->num[scr->pos < sizeof scr->num ? scr->pos : sizeof scr->num - 1] = 0;
+            uint32_t g = (uint32_t)strtoul(scr->num, NULL, 10);
+            if (!scr->has_c || g != scr->cgen)
+            {
+                scr->has_c = true;
+                scr->cgen = g;
+                scr_cover();
+            }
+            break;
+        }
+        case 'F':
+            scr->num[scr->pos < sizeof scr->fmt ? scr->pos : sizeof scr->fmt - 1] = 0;
+            if (strcmp(scr->fmt, scr->num)) { memcpy(scr->fmt, scr->num, sizeof scr->fmt); scr->fmt[sizeof scr->fmt - 1] = 0; status_dirty = true; }
             break;
     }
 }
@@ -1836,6 +1863,8 @@ static void scr_byte(uint8_t c)
             else if (i < PVA_VIZ_BANDS + 2 + PVA_VIZ_WAVE) scr->scope[i - PVA_VIZ_BANDS - 2] = (int8_t)((c - ' ') * 3 - 128);
             break;
         case 'T':
+        case 'C':
+        case 'F':
             if (i < sizeof scr->num - 1) scr->num[i] = (char)c;
             break;
         case 'S':
@@ -2173,13 +2202,13 @@ static void publish_status(void)
     bool active = pva_dec_active();
     bool strm = active && pva_dec_is_stream();
     if (strm) pva_dec_frame_info(&info);
+    bool screen = scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
     st8(PVA_ST_STATE, state);
     st8(PVA_ST_FLAGS, (uint8_t)((mounted ? PVA_F_MOUNTED : 0) | (info.tagged && active ? PVA_F_TAGS : 0) |
                                 ((info.seekable || link_plays()) && active ? PVA_F_SEEKABLE : 0) | (dir_open ? PVA_F_DIR_OPEN : 0) |
-                                (strm ? PVA_F_STREAM : 0) | (strm && buffering ? PVA_F_BUFFERING : 0) |
+                                (strm ? PVA_F_STREAM : 0) | (strm && buffering && !screen ? PVA_F_BUFFERING : 0) |
                                 (strm && pva_net_is_tls() ? PVA_F_TLS : 0) | (muted ? PVA_F_MUTED : 0)));
     st8(PVA_ST_VOLUME, volume);
-    bool screen = scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
     st16(PVA_ST_ELAPSED, screen ? (uint16_t)scr_elapsed() : active ? (uint16_t)pva_dec_elapsed() : 0);
     st16(PVA_ST_TOTAL, screen ? scr->total : active ? (uint16_t)info.total_seconds : 0);
     st16(PVA_ST_BITRATE, active ? (uint16_t)info.bitrate_kbps : 0);
@@ -2223,6 +2252,7 @@ static void publish_status(void)
     st8(PVA_ST_COVER_GEN, pva_art_gen());
     st8(PVA_ST_COVER_STATE, pva_art_state());
     st8(PVA_ST_PIC_SAVER, pva_pics_saver());
+    ststr(PVA_ST_FMT_TEXT, screen ? scr->fmt : "", PVA_ST_FMT_TEXT_LEN);
     st8(PVA_ST_DIR_STATE, dstate);
     st8(PVA_ST_DIR_ERR, derr);
     // display fields: coarse buffer level and rate, then the generation

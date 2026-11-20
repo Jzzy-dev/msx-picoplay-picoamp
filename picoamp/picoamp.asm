@@ -169,6 +169,7 @@ ST_ARTIST equ 80
 ST_ALBUM equ 120
 ST_FORMAT equ 160        ; 6 (PVA_DE_URL): a stream
 ST_BUFP  equ 163
+ST_FMTTXT equ 188       ; char[22] the PC's format line in the screen mode (engine 0.18)
 ST_DGEN  equ 173
 ST_DIRST equ 177
 ST_EQ    equ 179
@@ -2691,7 +2692,15 @@ draw_modes:
 ; "128K 44.1KHZ ST" (a stream: "128K 44.1KHZ ST HTTPS") or "BUFFERING 40%"
 fmt_format:
         ld de,linebuf
-        ld a,(st+ST_FLAGS)
+        ld a,(eng_minor)        ; the PC's screen (engine 0.18): its own format line
+        cp 18
+        jr c,.nf
+        ld a,(st+ST_FMTTXT)
+        or a
+        jr z,.nf
+        ld hl,st+ST_FMTTXT
+        jp strcpy
+.nf:    ld a,(st+ST_FLAGS)
         and F_BUFFER
         jr z,.f
         ld hl,txt_buffering
