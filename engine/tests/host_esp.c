@@ -894,7 +894,7 @@ static void gen(conn_t *c, uint32_t ms)
         }
         if (now_ms - c->scr_t_ms >= 500)
         {
-            int n = snprintf(l, sizeof l, "T %lu 200 %c 70 0\n", (unsigned long)(now_ms - c->scr_song_ms + 1000), host_esp_screen_paused ? 'a' : 'p');
+            int n = snprintf(l, sizeof l, "T %lu 200 %c 70 0\n", (unsigned long)(now_ms - c->scr_song_ms + 1000 + (getenv("HOST_ESP_T_PLUS") ? atol(getenv("HOST_ESP_T_PLUS")) : 0)), host_esp_screen_paused ? 'a' : 'p');
             bq_put(&c->out, l, (size_t)n);
             c->scr_t_ms = now_ms;
         }

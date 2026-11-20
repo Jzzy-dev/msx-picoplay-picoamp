@@ -1093,6 +1093,8 @@ draw_static:
         inc e
         pop bc
         djnz .t
+        ld a,#FF
+        ld (knob_pos),a         ; (no knob on it now: drawn where the time says)
         ld de,#0519
         ld hl,txt_level
         ld b,5
@@ -2753,10 +2755,15 @@ fmt_format:
         jr .pc
 
 draw_seek:
-        ; knob position 0..29 = elapsed * 29 / total (streams: the buffer fill)
+        ; knob position 0..29 = elapsed * 29 / total (streams: the buffer fill; the PC's
+        ; screen, a stream with a length: its song's time)
         ld a,(st+ST_FLAGS)
         and F_STREAM
         jr z,.file
+        ld hl,(st+ST_TOTAL)
+        ld a,h
+        or l
+        jr nz,.file
         ld a,(st+ST_BUFP)
         ld l,a
         ld h,0
@@ -6459,11 +6466,8 @@ click_bar:
         ld a,C_VOLUME
         jp cmd_u8
 
-click_seek:                     ; the seek bar: (total / 16) * (x - 8) / 15
-        ld a,(st+ST_FLAGS)
-        and F_STREAM
-        ret nz
-        ld hl,(st+ST_TOTAL)
+click_seek:                     ; the seek bar: (total / 16) * (x - 8) / 15 (streams have no total;
+        ld hl,(st+ST_TOTAL)     ; the PC's screen has)
         ld a,h
         or l
         ret z

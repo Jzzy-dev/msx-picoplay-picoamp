@@ -1907,6 +1907,7 @@ static void scr_poll(void)
         uint8_t *m = pva_net_ring_borrow(sizeof(scr_t) + 4u + sizeof(lyr_t));
         if (!m) return;
         scr = (scr_t *)(void *)m;
+        memset(m, 0, sizeof(scr_t) + 4u + sizeof(lyr_t));
         lyr = (lyr_t *)(void *)(m + ((sizeof(scr_t) + 3u) & ~(size_t)3u));
         lyr->gen = 1;
     }
