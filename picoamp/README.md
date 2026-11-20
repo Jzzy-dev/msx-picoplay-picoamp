@@ -98,6 +98,7 @@ PICOAMP shows "LOADING THE LIST...".
 | W | The weather page |
 | T | The news page |
 | $ | The market monitor |
+| L | The lyrics page (the PC's screen mode, engine 0.18) |
 | I | The pictures page and slideshow (`PICOAMP.ROM`, engine 0.17) |
 | F | Add the chosen station (or the one that plays) to the favourites |
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
@@ -137,6 +138,12 @@ the same way. Then the sound stays on the PC, and the MSX shows what it plays: t
 its time (and the seek bar), playing or paused, the cover and the bars, as the PC's own
 bars move (25 times a second, so they go with what you hear from the PC). The keys
 below work the same; `,` and `.` seek to a time in the song.
+**L** opens the lyrics page: the words of the PC's song, which PicoAmp for Windows finds on
+[LRCLIB](https://lrclib.net) and sends along. Synced lyrics follow the song: the line sung
+now is yellow on a light band, the ones sung grey, the ones to come white below. Plain
+lyrics (no timing) scroll through the song. Up/Down move a row, Left/Right ten rows,
+0 follows the song again, L (or ESC) goes back to the player. The page shows only in
+the screen mode, as only there the PC sends the words.
 Play it from Internet radio/Favourites. It is an internet radio station of
 the PC: the sound (MP3, 160 kbit/s) plays on the MSX, the bars move on it,
 and the song shows as a station's song does. Because its reply says

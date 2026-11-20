@@ -2260,6 +2260,21 @@ int main(int argc, char **argv)
                           "its bars: %u .. %u, VU %u %u", vz[PVA_VIZ_LEVEL], vz[PVA_VIZ_LEVEL + 23], vz[PVA_VIZ_VU], vz[PVA_VIZ_VU + 1]);
                     CHECK(host_esp_link_covers > c1, "its song's cover from the PC");
                     CHECK(st[PVA_ST_VOLUME] == 70 && !(st[PVA_ST_FLAGS] & PVA_F_MUTED), "the PC's volume shown here (%u)", st[PVA_ST_VOLUME]);
+                    {
+                        // its words (LYRICS): at about 4 s the line of 3 s (two rows) is sung
+                        uint8_t la[3] = { 0, 0, 5 };
+                        CHECK(cmd(PVA_C_LYRICS, la, 3) == PVA_OK && reply_len >= 8, "LYRICS");
+                        uint16_t rows = (uint16_t)(reply[2] | reply[3] << 8), now = (uint16_t)(reply[4] | reply[5] << 8);
+                        CHECK(reply[0] == PVA_LY_SYNCED && rows == 4 && now == 1 && reply[6] == 2,
+                              "synced, 4 rows, the line of now: row %u, %u rows (state %u)", now, reply[6], reply[0]);
+                        const uint8_t *r = reply + 8;
+                        char got[200] = "";
+                        for (int i = 0; i < 5; i++) { size_t l = strlen(got); snprintf(got + l, sizeof got - l, "%.*s|", r[0], (const char *)r + 1); r += 1 + r[0]; }
+                        CHECK(!strcmp(got, "First line|Second line, a long one that|goes on|Third line||"), "its rows: %s", got);
+                        uint8_t lb[3] = { 2, 0, 0 };
+                        cmd(PVA_C_LYRICS, lb, 3);
+                        CHECK(reply_len == 8, "only the head when no rows are asked for");
+                    }
                     uint32_t k2 = host_esp_link_keys;
                     CHECK(cmd_u16(PVA_C_SEEK, 60) == PVA_OK, "SEEK 60");
                     for (int w = 0; w < 60 && host_esp_link_keys == k2; w++) run_ms(50);

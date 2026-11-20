@@ -204,6 +204,18 @@
 #define PVA_C_PIC_CLOSE     0x57    // the pictures' memory back to the covers
 #define PVA_C_PIC_COVER     0x58    // args: u8 1 = again. The cover that shows, made for SCREEN 8 as PIC_SHOW (its rows: PIC_GET; then PIC_CLOSE).
                                     // reply: u8 0 it is being made, 1 it is the one made last, 2 there is none
+#define PVA_C_LYRICS        0x59    // args: u16 first row, u8 rows (20 at most; 0: only the head). The words of what the PC
+                                    // plays (the MSX link's screen, engine 0.18; the PC wraps them to 40 characters):
+                                    // reply: u8 PVA_LY_xxx, u8 gen (+1 when they change), u16 rows, u16 the row of now
+                                    // (the first row of the line sung now; not synced: where the song is; FFFFh none),
+                                    // u8 rows of the line sung now (0: none lit), u8 0, then per row u8 length, its text
+                                    // (in the MSX's character set)
+#define PVA_LY_NONE          0      // nothing plays from the PC
+#define PVA_LY_LOOKING       1
+#define PVA_LY_SYNCED        2
+#define PVA_LY_PLAIN         3
+#define PVA_LY_INSTRUMENTAL  4
+#define PVA_LY_NOT_FOUND     5
 #define PVA_PIC_E_OPEN       1
 #define PVA_PIC_E_FORMAT     2      // not a JPEG it reads (or broken)
 #define PVA_PIC_E_PROGRESSIVE 3     // a progressive JPEG (TJpgDec reads baseline ones)

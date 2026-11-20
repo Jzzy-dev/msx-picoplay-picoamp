@@ -123,6 +123,8 @@ uint8_t *pva_net_spare(size_t *size);   // stream RAM the ring does not use
 void   pva_net_lend_tls(bool on);     // a web request borrows the stream's TLS connection (the ESP-01 has one)
 bool   pva_net_tls_free(void);        // the stream holds none now
 bool   pva_net_is_tls(void);          // the stream's URL is https
+void   *pva_net_ring_borrow(size_t n);  // the ring's end for a stream that needs little of it (NULL: no); pva_net_ring_return()
+void    pva_net_ring_return(void);
 void   *pva_net_spare_take(size_t n);   // a piece of it for good (NULL: none left)
 void   *pva_net_ring_idle(size_t n);     // the stream ring while no stream plays (covers): NULL else
 uint8_t pva_dir_conn(void);     // the directory's

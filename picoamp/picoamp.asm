@@ -147,6 +147,7 @@ C_NINFO  equ #43
 C_NSORT  equ #44
 C_MUTE   equ #45
 C_COVSET equ #51                ; covers (engine 0.14)
+C_LYRICS equ #59                ; the MSX link's words (engine 0.18)
 C_COVGET equ #52
 W_CLOCK  equ #4D00
 
@@ -4257,7 +4258,11 @@ srch_go:
         db #5E,"E          EQ preset  Z      full screen",0
         db #5E,"F          favourite+ D, DEL favourite-",0
         db #5E,"/ or J     search     ?      this page",0
+    IFDEF ROMBUILD
+        db #5E,"C W T $ L  pages      ESC Q  quit",0
+    ELSE
         db #5E,"C W T $    pages      ESC Q  quit",0
+    ENDIF
         db #4E,"Equalizer: Left/Right band, Up/Down gain,",0
         db #4E,"           0 middle, G or ESC closes",0
         db #4E,"Search: type a part of a station's name,",0
@@ -6659,6 +6664,14 @@ keys:
         cp 'I'
         ld c,PG_PICS
         jp z,pg_enter
+        cp 'L'
+        ld c,PG_LYRICS
+        jp z,pg_enter
+    ENDIF
+    IFDEF LYRTEST
+        cp 'L'                  ; (the test build: the lyrics page in the COM file, in the markets' place)
+        ld c,PG_MARKETS
+        jp z,pg_enter
     ENDIF
         ld a,b
         ; fall through
@@ -6825,13 +6838,14 @@ eq_keys:
         jp keys_common
 
 ;------------------------------------------------------------------------------
-; pages in modules (clock.asm, weather.asm, news.asm, markets.asm): the one that shows is
+; pages in modules (clock.asm, weather.asm, news.asm, markets.asm, lyrics.asm): the one that shows is
 ; copied to MODBASE; it starts with its jump table
 PG_CLOCK   equ 1
 PG_WEATHER equ 2
 PG_NEWS    equ 3
 PG_MARKETS equ 4
 PG_PICS    equ 5
+PG_LYRICS  equ 6                ; (the ROM only)
 M_OPEN  equ MODBASE
 M_TICK  equ MODBASE+3           ; each main loop pass
 M_FRAME equ MODBASE+6           ; a new picture from the engine
@@ -6904,6 +6918,8 @@ mod_tab:        dw mod_clock_src, mod_clock_end-mod_clock
     IFDEF ROMBUILD
                 dw mod_pic_src, mod_pic_end-mod_pic
                 db 2            ; (in the weather's bank, after it; the ROM only)
+                dw mod_lyr_src, mod_lyr_end-mod_lyr
+                db 1            ; (in the clock's bank, after the help; the ROM only)
     ENDIF
 
 ; ini_save: the settings to PICOAMP.INI. The engine writes the file where no
@@ -7429,6 +7445,10 @@ mod_clock_src:
     IFDEF ROMBUILD
 help_text:                      ; (the ROM: in bank 1, help_open switches it in)
         HELP_TEXT
+mod_lyr_src:                    ; (bank 1 as well; the ROM only)
+        DISP MODBASE
+        include "lyrics.asm"
+        ENT
     ENDIF
     IFDEF ROMBUILD
         ds #8000-$,#FF
@@ -7452,10 +7472,20 @@ mod_news_src:
         DISP MODBASE
         include "news.asm"
         ENT
+    IFDEF LYRTEST
+RG0SAV   equ #F3DF                ; (markets.asm has it)
+mod_mk_src:                     ; (the test build: the lyrics page instead of the markets)
+        DISP MODBASE
+mod_mk:
+        include "lyrics.asm"
+mod_mk_end:
+        ENT
+    ELSE
 mod_mk_src:                     ; (bank 3 as well)
         DISP MODBASE
         include "markets.asm"
         ENT
+    ENDIF
 mod_file_end:
     IFDEF ROMBUILD
         ds #8000-$,#FF          ; the ROM: 64 KB
@@ -7525,6 +7555,7 @@ MOD_MAX         equ ckb - MODBASE
         assert mod_mk_end - mod_mk <= MOD_MAX
     IFDEF ROMBUILD
         assert mod_pic_end - mod_pic <= MOD_MAX
+        assert mod_lyr_end - mod_lyr <= MOD_MAX
     ENDIF
         assert MOD_MAX >= 6400              ; (room for the modules to grow a little)
         assert 8*82*8 >= FAV_MAX + 1

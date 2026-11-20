@@ -886,6 +886,9 @@ static void gen(conn_t *c, uint32_t ms)
             const char *t = titles[c->title_no++ % 3], *d = strstr(t, " - ");
             int n = snprintf(l, sizeof l, "S%.*s\t%s\tThe Album\n", (int)(d - t), t, d + 3);
             bq_put(&c->out, l, (size_t)n);
+            // its words: synced, one line in two rows
+            static const char ly[] = "Ls\nR1000\tFirst line\nR3000\tSecond line, a long one that\nR3000\tgoes on\nR6000\tThird line\nL.\n";
+            bq_put(&c->out, ly, sizeof ly - 1);
             c->scr_song_ms = now_ms;
             c->meta_count = 1;
         }

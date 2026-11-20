@@ -1249,8 +1249,11 @@ static int play_pos(uint16_t pos)
     return r;
 }
 
+static void scr_reset(void);
+
 static void stop_playback(void)
 {
+    scr_reset();
     pva_dec_set_volume(muted ? 0 : volume);   // (the MSX link's volume was the PC's: this one's again)
     pva_art_none();
     if (pva_dec_is_stream() || pva_net_active()) pva_net_stop();
@@ -1689,6 +1692,21 @@ static bool link_plays(void)
 //   V<24 levels, '0' + 0..31><VU left, right><64 scope samples, ' ' + (s + 128) / 3>
 //   T <elapsed ms> <length s> <p playing | a paused | s stopped> [<volume> <muted 0/1>]
 //   S<artist> TAB <title> TAB <album>   (in the MSX's character set)
+//   L<s synced | p plain | i instrumental | n none | l looking | - nothing>  the words begin (rows follow)
+//   R<ms, -1 not synced> TAB <a row of words>                                one row (40 characters at most)
+//   L.                                                                       the words end
+#define LY_ROWS  200
+#define LY_POOL  6000
+typedef struct { int32_t ms; uint16_t off; uint8_t len; } ly_row_t;
+typedef struct
+{
+    ly_row_t row[LY_ROWS];
+    char     pool[LY_POOL];
+    uint16_t n, used;
+    uint8_t  state, gen;
+} lyr_t;
+static lyr_t *lyr;                  // (as the screen's)
+
 typedef struct
 {
     uint8_t  lv[PVA_VIZ_BANDS], vu[2];
@@ -1702,8 +1720,14 @@ typedef struct
     uint16_t total;
     bool     on, plays;
 } scr_t;
-static scr_t *scr;                  // (in the arena)
-static void scr_reset(void) { if (scr) scr->on = false; }
+static scr_t *scr;                  // (the end of the stream ring, lent while the screen plays: no memory of its own)
+// (another stream, or none: the ring is the stream's again)
+static void scr_reset(void)
+{
+    scr = NULL;
+    lyr = NULL;
+    pva_net_ring_return();
+}
 
 static uint32_t scr_elapsed(void)
 {
@@ -1719,6 +1743,23 @@ static void scr_line(void)
     {
         case 'V':
             if (scr->pos >= PVA_VIZ_BANDS + 2 + PVA_VIZ_WAVE) pva_viz_set(scr->lv, scr->vu, scr->scope);
+            break;
+        case 'L':
+            if (!lyr) break;
+            if (scr->num[0] == '.') { lyr->gen++; break; }          // (complete: the player takes them)
+            lyr->state = scr->num[0] == 's' ? PVA_LY_SYNCED : scr->num[0] == 'p' ? PVA_LY_PLAIN : scr->num[0] == 'i' ? PVA_LY_INSTRUMENTAL
+                       : scr->num[0] == 'n' ? PVA_LY_NOT_FOUND : scr->num[0] == 'l' ? PVA_LY_LOOKING : PVA_LY_NONE;
+            lyr->n = lyr->used = 0;
+            lyr->gen++;
+            break;
+        case 'R':
+            // (its text went to the pool as it came; here the row is counted)
+            if (lyr && scr->field == 1 && lyr->n < LY_ROWS)
+            {
+                ly_row_t *r = &lyr->row[lyr->n];
+                r->len = (uint8_t)(lyr->used - r->off);
+                lyr->n++;
+            }
             break;
         case 'T':
         {
@@ -1764,12 +1805,31 @@ static void scr_byte(uint8_t c)
         scr->kind = c;
         scr->pos = 0;
         scr->field = 0;
+        scr->num[0] = 0;
         if (c == 'S') { scr->t[0] = scr->a[0] = scr->al[0] = 0; }
         return;
     }
     uint16_t i = scr->pos++;
     switch (scr->kind)
     {
+        case 'L':
+            if (i == 0) scr->num[0] = (char)c;
+            break;
+        case 'R':
+            if (!lyr || lyr->n >= LY_ROWS) break;
+            if (scr->field == 0)
+            {
+                if (c == '\t')
+                {
+                    scr->num[i < sizeof scr->num ? i : sizeof scr->num - 1] = 0;
+                    lyr->row[lyr->n].ms = (int32_t)atol(scr->num);
+                    lyr->row[lyr->n].off = lyr->used;
+                    scr->field = 1;
+                }
+                else if (i < sizeof scr->num - 1) scr->num[i] = (char)c;
+            }
+            else if (lyr->used < LY_POOL && lyr->used - lyr->row[lyr->n].off < 60) lyr->pool[lyr->used++] = (char)c;
+            break;
         case 'V':
             if (i < PVA_VIZ_BANDS) scr->lv[i] = (uint8_t)(c - '0');
             else if (i < PVA_VIZ_BANDS + 2) scr->vu[i - PVA_VIZ_BANDS] = (uint8_t)(c - '0');
@@ -1789,10 +1849,67 @@ static void scr_byte(uint8_t c)
     }
 }
 
+// LYRICS: the words, the row of now, the rows asked for (see pva_proto.h)
+static int cmd_lyrics(void)
+{
+    bool on = lyr && scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
+    uint16_t first = (uint16_t)(args[0] | (args[1] << 8));
+    uint8_t want = args[2] > 20 ? 20 : args[2];
+    uint8_t st_ = on ? lyr->state : PVA_LY_NONE;
+    uint16_t n = on && (st_ == PVA_LY_SYNCED || st_ == PVA_LY_PLAIN) ? lyr->n : 0;
+    uint16_t now = 0xFFFF;
+    uint8_t lit = 0;
+    if (n && st_ == PVA_LY_SYNCED)
+    {
+        // the last row begun (its time passed), back to the first of its line (the rows of one time)
+        int32_t e = scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
+        for (uint16_t i = 0; i < n && lyr->row[i].ms <= e; i++) if (lyr->row[i].ms >= 0) now = i;
+        if (now != 0xFFFF)
+        {
+            int32_t ms = lyr->row[now].ms;
+            while (now && lyr->row[now - 1].ms == ms) now--;
+            for (uint16_t i = now; i < n && lyr->row[i].ms == ms; i++) lit++;
+        }
+    }
+    else if (n && scr->total)
+    {
+        // not synced: where the song is, in rows
+        uint32_t e = scr_elapsed();
+        now = (uint16_t)((uint32_t)n * e / scr->total);
+        if (now >= n) now = (uint16_t)(n - 1);
+    }
+    uint8_t *o = reply;
+    o[0] = st_;
+    o[1] = on ? lyr->gen : 0;
+    o[2] = (uint8_t)n; o[3] = (uint8_t)(n >> 8);
+    o[4] = (uint8_t)now; o[5] = (uint8_t)(now >> 8);
+    o[6] = lit;
+    o[7] = 0;
+    uint32_t k = 8;
+    for (uint16_t i = 0; i < want; i++)
+    {
+        uint16_t r = (uint16_t)(first + i);
+        if (r >= n) { o[k++] = 0; continue; }
+        uint8_t l = lyr->row[r].len > 42 ? 42 : lyr->row[r].len;
+        o[k++] = l;
+        memcpy(o + k, lyr->pool + lyr->row[r].off, l);
+        k += l;
+    }
+    reply_len = k;
+    return PVA_OK;
+}
+
 // the screen's lines as they come (the decoder does not run: there is no sound)
 static void scr_poll(void)
 {
-    if (!scr) return;
+    if (!scr)
+    {
+        uint8_t *m = pva_net_ring_borrow(sizeof(scr_t) + 4u + sizeof(lyr_t));
+        if (!m) return;
+        scr = (scr_t *)(void *)m;
+        lyr = (lyr_t *)(void *)(m + ((sizeof(scr_t) + 3u) & ~(size_t)3u));
+        lyr->gen = 1;
+    }
     if (!scr->on)
     {
         scr->on = true;
@@ -1987,6 +2104,8 @@ static int execute(uint8_t code)
             return PVA_OK;
         case PVA_C_MODE:
             return cmd_mode();
+        case PVA_C_LYRICS:
+            return cmd_lyrics();
         case PVA_C_BALANCE:
             balance = args[0] > 100 ? 100 : args[0];
             pva_dec_set_balance(balance);
@@ -2156,7 +2275,6 @@ void pva_core1_init(void)
 {
     pva_hal_install_fault_handler();
     args = pva_alloc(PVA_ARGS_SIZE);
-    scr = pva_alloc(sizeof *scr);
     st_new = pva_alloc(PVA_STATUS_SIZE);
     st_pub = pva_alloc(PVA_STATUS_SIZE);
     m3u_file = pva_alloc(sizeof(FIL));
