@@ -159,6 +159,8 @@ static uint8_t to_level(float power_rel)
     return (uint8_t)v;
 }
 
+static const int8_t *pub_scope;     // (the MSX link's screen: its samples instead of ours)
+
 static void publish(bool silent)
 {
     volatile uint8_t *w = pva_win + PVA_R_VIZ;
@@ -176,11 +178,27 @@ static void publish(bool silent)
     uint32_t p = (wpos + RING - PVA_VIZ_WAVE * 4u) % RING;
     for (unsigned i = 0; i < PVA_VIZ_WAVE; i++)
     {
-        int v = silent ? 0 : ring[(p + i * 4u) % RING] / 256;
+        int v = pub_scope ? pub_scope[i] : silent ? 0 : ring[(p + i * 4u) % RING] / 256;
         w[PVA_VIZ_SCOPE + i] = (uint8_t)(int8_t)v;
     }
     seq = (uint8_t)(seq + 2u);
     w[PVA_VIZ_SEQ] = seq;
+}
+
+// the MSX link's screen: what the PC's bars show, sent from there
+// (its arrays are the caller's, in the arena: no static RAM here, the heap is small)
+static const uint8_t *ext_lv, *ext_vu;
+static const int8_t  *ext_scope;
+static uint32_t ext_ms;
+static bool     ext;
+
+void pva_viz_set(const uint8_t *levels, const uint8_t *vu_lr, const int8_t *scope)
+{
+    ext_lv = levels;
+    ext_vu = vu_lr;
+    ext_scope = scope;
+    ext_ms = pva_hal_millis();
+    ext = true;
 }
 
 void pva_viz_poll(bool playing)
@@ -189,6 +207,24 @@ void pva_viz_poll(bool playing)
     uint32_t now = pva_hal_millis();
     if (now - last_ms < UPDATE_MS) return;
     last_ms = now;
+    if (ext && now - ext_ms < 500u)
+    {
+        // the PC's (as its bars are: they rise and fall there; the peaks are made here)
+        for (unsigned b = 0; b < PVA_VIZ_BANDS; b++)
+        {
+            level[b] = ext_lv[b] > PVA_VIZ_MAX ? PVA_VIZ_MAX : ext_lv[b];
+            if (level[b] >= peak[b]) { peak[b] = level[b]; hold[b] = PEAK_HOLD; }
+            else if (hold[b]) hold[b]--;
+            else if (peak[b]) peak[b]--;
+        }
+        vu[0] = ext_vu[0];
+        vu[1] = ext_vu[1];
+        pub_scope = ext_scope;
+        publish(true);
+        pub_scope = NULL;
+        return;
+    }
+    ext = false;
     // the decoder works in bursts: with too few new samples keep what is shown
     // (zeroing the VU there made it flicker); stopped or paused, everything falls
     if (playing && fed < N / 2) return;

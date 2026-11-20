@@ -36,6 +36,9 @@
 //     /stream.mp3     as radio.test's, with "X-PicoAmp: 1" (icy-name "PicoAmp on PC")
 //     /cmd?k=...      a key (counted: host_esp_link_keys, host_esp_last_link_key)
 //     /cover.jpg?n=   art.jpg (counted: host_esp_link_covers)
+//     /screen         its screen (X-PicoAmp: 2): a V line every 40 ms (band b at level b + 1), a T line
+//                     every 500 ms (host_esp_screen_ms from the start, 200 s long, playing unless
+//                     host_esp_screen_paused), and an S line at once and every 8 s (the next of titles[])
 //   anything else: DNS error
 
 #include <stdio.h>
@@ -51,6 +54,7 @@ uint32_t host_esp_logo_gets;                // requests for a logo
 bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
 uint32_t host_esp_itunes_asks;              // questions to the iTunes search
 uint32_t host_esp_link_keys, host_esp_link_covers, host_esp_link_big;   // the MSX link (pc.test)
+bool     host_esp_screen_paused;
 char     host_esp_last_link_key[40];
 char     host_esp_last_itunes[200];
 char     host_esp_last_wsrv[400];              // the last request to the image proxy
@@ -169,6 +173,7 @@ typedef struct
     bool     closed;            // server closed (after the data in 'out')
     uint32_t stall_until;
     bq_t     pend;              // kind 4: reply that trickles out at host_esp_api_bps
+    uint32_t scr_ms, scr_t_ms, scr_song_ms;   // kind 5: the MSX link's screen (pc.test/screen): when it last sent
 } conn_t;
 static conn_t conns[5];         // 1..4
 
@@ -772,6 +777,17 @@ static void serve(conn_t *c)
             c->closed = true;
             return;
         }
+        if (!strncmp(path, "/screen", 7))
+        {
+            static const char hd[] = "HTTP/1.0 200 OK\r\nContent-Type: text/x-picoamp-screen\r\nicy-name: PicoAmp on PC\r\nX-PicoAmp: 2\r\n\r\n";
+            bq_put(&c->out, hd, sizeof hd - 1);
+            c->kind = 5;
+            c->scr_ms = c->scr_t_ms = 0;
+            c->scr_song_ms = now_ms;
+            c->title_no = 0;
+            c->meta_count = 0;
+            return;
+        }
         if (!strncmp(path, "/stream.mp3", 11))
         {
             char hd[300];
@@ -858,6 +874,38 @@ static void gen(conn_t *c, uint32_t ms)
         bq_put(&c->out, c->pend.b, k);
         bq_drop(&c->pend, k);
         if (!c->pend.len) c->closed = true;
+        return;
+    }
+    if (c->kind == 5 && !c->closed)
+    {
+        // the MSX link's screen: lines, in time
+        char l[200];
+        if (!c->meta_count || now_ms - c->scr_song_ms >= 8000)
+        {
+            // S<artist> TAB <title> TAB <album>
+            const char *t = titles[c->title_no++ % 3], *d = strstr(t, " - ");
+            int n = snprintf(l, sizeof l, "S%.*s\t%s\tThe Album\n", (int)(d - t), t, d + 3);
+            bq_put(&c->out, l, (size_t)n);
+            c->scr_song_ms = now_ms;
+            c->meta_count = 1;
+        }
+        if (now_ms - c->scr_t_ms >= 500)
+        {
+            int n = snprintf(l, sizeof l, "T %lu 200 %c\n", (unsigned long)(now_ms - c->scr_song_ms + 1000), host_esp_screen_paused ? 'a' : 'p');
+            bq_put(&c->out, l, (size_t)n);
+            c->scr_t_ms = now_ms;
+        }
+        if (now_ms - c->scr_ms >= 40)
+        {
+            int n = 0;
+            l[n++] = 'V';
+            for (int b = 0; b < 24; b++) l[n++] = (char)('0' + b + 1);
+            l[n++] = '0' + 20; l[n++] = '0' + 21;
+            for (int i = 0; i < 64; i++) l[n++] = (char)(' ' + (i * 4 + 128 - 128 + 1) / 3);
+            l[n++] = '\n';
+            bq_put(&c->out, l, (size_t)n);
+            c->scr_ms = now_ms;
+        }
         return;
     }
     if (c->kind != 1 && c->kind != 2) return;

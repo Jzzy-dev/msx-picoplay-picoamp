@@ -130,7 +130,13 @@ networks). Add that address to `RADIOFAV.M3U` on the card:
 http://192.168.1.20:8765/stream.mp3
 ```
 
-(the PC also gives these two lines at `http://<the PC>:8765/picoamp.m3u`).
+(the PC also gives these lines at `http://<the PC>:8765/picoamp.m3u`).
+
+**Or as the PC's screen and remote** (engine 0.18): add `http://192.168.1.20:8765/screen`
+the same way. Then the sound stays on the PC, and the MSX shows what it plays: the song,
+its time (and the seek bar), playing or paused, the cover and the bars, as the PC's own
+bars move (25 times a second, so they go with what you hear from the PC). The keys
+below work the same; `,` and `.` seek to a time in the song.
 Play it from Internet radio/Favourites. It is an internet radio station of
 the PC: the sound (MP3, 160 kbit/s) plays on the MSX, the bars move on it,
 and the song shows as a station's song does. Because its reply says

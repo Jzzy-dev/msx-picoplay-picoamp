@@ -1137,6 +1137,8 @@ static void split_stream_title(const char *t)
     }
 }
 
+static void scr_reset(void);
+
 static int open_stream(const char *entry)
 {
     char u[URL_MAX_LEN + 1];
@@ -1158,6 +1160,7 @@ static int open_stream(const char *entry)
     }
     int r = pva_net_start(u);
     if (r != PVA_OK) return r;
+    scr_reset();
     if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
     pva_art_station(u, uuid, given_station);    // its logo (online: it comes when it comes)
     r = pva_dec_open_stream(&info);
@@ -1562,6 +1565,7 @@ void pva_engine_extra(uint8_t *out)
 
 static bool link_plays(void);
 static void link_key(const char *k);
+static void link_base(char *o, size_t n);
 
 static int cmd_mode(void)
 {
@@ -1673,7 +1677,134 @@ static char    rk_q[RK_MAX][16];
 static uint8_t rk_n;
 static uint32_t rk_title_gen;
 
-static bool link_plays(void) { return state == PVA_STATE_PLAYING && pva_dec_is_stream() && pva_net_picoamp(); }
+// (the screen: also while the PC pauses)
+static bool link_plays(void)
+{
+    uint8_t k = pva_net_picoamp();
+    return (state == PVA_STATE_PLAYING || (state == PVA_STATE_PAUSED && k == 2)) && pva_dec_is_stream() && k;
+}
+
+// ---- its screen (X-PicoAmp: 2): no sound here, the PC's bars, song, time and state, as lines
+//   V<24 levels, '0' + 0..31><VU left, right><64 scope samples, ' ' + (s + 128) / 3>
+//   T <elapsed ms> <length s> <p playing | a paused | s stopped>
+//   S<artist> TAB <title> TAB <album>   (in the MSX's character set)
+typedef struct
+{
+    uint8_t  lv[PVA_VIZ_BANDS], vu[2];
+    int8_t   scope[PVA_VIZ_WAVE];
+    char     t[PVA_ST_TITLE_LEN], a[PVA_ST_ARTIST_LEN], al[PVA_ST_ALBUM_LEN];
+    char     num[32];
+    uint8_t  kind, field;
+    uint16_t pos;
+    int32_t  el_ms;
+    uint32_t at;
+    uint16_t total;
+    bool     on, plays;
+} scr_t;
+static scr_t *scr;                  // (in the arena)
+static void scr_reset(void) { if (scr) scr->on = false; }
+
+static uint32_t scr_elapsed(void)
+{
+    int32_t e = scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
+    if (e < 0) e = 0;
+    if (scr->total && e / 1000 > scr->total) e = scr->total * 1000;
+    return (uint32_t)e / 1000u;
+}
+
+static void scr_line(void)
+{
+    switch (scr->kind)
+    {
+        case 'V':
+            if (scr->pos >= PVA_VIZ_BANDS + 2 + PVA_VIZ_WAVE) pva_viz_set(scr->lv, scr->vu, scr->scope);
+            break;
+        case 'T':
+        {
+            long e = 0, t = 0;
+            char c = 's';
+            scr->num[scr->pos < sizeof scr->num ? scr->pos : sizeof scr->num - 1] = 0;
+            if (sscanf(scr->num, "%ld %ld %c", &e, &t, &c) >= 2)
+            {
+                scr->el_ms = (int32_t)e;
+                scr->at = pva_hal_millis();
+                scr->total = (uint16_t)(t > 65535 ? 65535 : t < 0 ? 0 : t);
+                scr->plays = c == 'p';
+                uint8_t ns = c == 'p' ? PVA_STATE_PLAYING : PVA_STATE_PAUSED;    // (stopped there: paused here, the station stays)
+                if (state != PVA_STATE_STOPPED && ns != state) state = ns;
+                status_dirty = true;
+            }
+            break;
+        }
+        case 'S':
+            if (strcmp(scr->t, info.title) || strcmp(scr->a, info.artist) || strcmp(scr->al, info.album))
+            {
+                memcpy(info.title, scr->t, sizeof info.title);
+                memcpy(info.artist, scr->a, sizeof info.artist);
+                memcpy(info.album, scr->al, sizeof info.album);
+                char u[URL_MAX_LEN + 32];
+                link_base(u, URL_MAX_LEN);
+                size_t l = strlen(u);
+                snprintf(u + l, sizeof u - l, "/cover.jpg?n=%u", (unsigned)++rk_title_gen);
+                pva_art_song_direct(u);
+                status_dirty = true;
+            }
+            break;
+    }
+}
+
+static void scr_byte(uint8_t c)
+{
+    if (c == '\n') { scr_line(); scr->kind = 0; return; }
+    if (!scr->kind)
+    {
+        scr->kind = c;
+        scr->pos = 0;
+        scr->field = 0;
+        if (c == 'S') { scr->t[0] = scr->a[0] = scr->al[0] = 0; }
+        return;
+    }
+    uint16_t i = scr->pos++;
+    switch (scr->kind)
+    {
+        case 'V':
+            if (i < PVA_VIZ_BANDS) scr->lv[i] = (uint8_t)(c - '0');
+            else if (i < PVA_VIZ_BANDS + 2) scr->vu[i - PVA_VIZ_BANDS] = (uint8_t)(c - '0');
+            else if (i < PVA_VIZ_BANDS + 2 + PVA_VIZ_WAVE) scr->scope[i - PVA_VIZ_BANDS - 2] = (int8_t)((c - ' ') * 3 - 128);
+            break;
+        case 'T':
+            if (i < sizeof scr->num - 1) scr->num[i] = (char)c;
+            break;
+        case 'S':
+        {
+            if (c == '\t') { scr->field++; scr->pos = 0; break; }
+            char *f = scr->field == 0 ? scr->a : scr->field == 1 ? scr->t : scr->field == 2 ? scr->al : NULL;
+            size_t n = scr->field == 0 ? sizeof scr->a : scr->field == 1 ? sizeof scr->t : sizeof scr->al;
+            if (f && i + 1u < n) { f[i] = (char)c; f[i + 1] = 0; }
+            break;
+        }
+    }
+}
+
+// the screen's lines as they come (the decoder does not run: there is no sound)
+static void scr_poll(void)
+{
+    if (!scr) return;
+    if (!scr->on)
+    {
+        scr->on = true;
+        scr->kind = 0;
+        buffering = false;
+        pva_hal_audio_mute(true);
+        status_dirty = true;
+        pva_log("msx link: the PC's screen");
+    }
+    uint8_t b[64];
+    size_t n;
+    for (int k = 0; k < 8 && (n = pva_net_read(b, sizeof b)) > 0; k++)
+        for (size_t i = 0; i < n; i++) scr_byte(b[i]);
+    if (pva_net_ended()) { scr->on = false; track_ended(); }
+}
 
 // "http://192.168.1.20:8765/stream.mp3" -> "http://192.168.1.20:8765"
 static void link_base(char *o, size_t n)
@@ -1803,10 +1934,16 @@ static int execute(uint8_t code)
         {
             if (link_plays())
             {
-                // (the player asks for its time +-10 s: the difference goes to the PC)
-                int d = (int)(args[0] | (args[1] << 8)) - (int)pva_dec_elapsed();
+                // the screen: the PC's time, so where to; the sound: the station's time is not the song's,
+                // so the difference to the player's (it asks for its time +-10 s)
                 char k[16];
-                snprintf(k, sizeof k, "seek&s=%d", d < -999 ? -999 : d > 999 ? 999 : d);
+                int to = (int)(args[0] | (args[1] << 8));
+                if (pva_net_picoamp() == 2) snprintf(k, sizeof k, "seek&to=%d", to);
+                else
+                {
+                    int d = to - (int)pva_dec_elapsed();
+                    snprintf(k, sizeof k, "seek&s=%d", d < -999 ? -999 : d > 999 ? 999 : d);
+                }
                 link_key(k);
                 return PVA_OK;
             }
@@ -1899,8 +2036,9 @@ static void publish_status(void)
                                 (strm ? PVA_F_STREAM : 0) | (strm && buffering ? PVA_F_BUFFERING : 0) |
                                 (strm && pva_net_is_tls() ? PVA_F_TLS : 0) | (muted ? PVA_F_MUTED : 0)));
     st8(PVA_ST_VOLUME, volume);
-    st16(PVA_ST_ELAPSED, active ? (uint16_t)pva_dec_elapsed() : 0);
-    st16(PVA_ST_TOTAL, active ? (uint16_t)info.total_seconds : 0);
+    bool screen = scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
+    st16(PVA_ST_ELAPSED, screen ? (uint16_t)scr_elapsed() : active ? (uint16_t)pva_dec_elapsed() : 0);
+    st16(PVA_ST_TOTAL, screen ? scr->total : active ? (uint16_t)info.total_seconds : 0);
     st16(PVA_ST_BITRATE, active ? (uint16_t)info.bitrate_kbps : 0);
     st16(PVA_ST_RATE, active ? (uint16_t)(info.sample_rate / 10u) : 0);
     st8(PVA_ST_CHANNELS, active ? info.channels : 0);
@@ -1995,6 +2133,7 @@ void pva_core1_init(void)
 {
     pva_hal_install_fault_handler();
     args = pva_alloc(PVA_ARGS_SIZE);
+    scr = pva_alloc(sizeof *scr);
     st_new = pva_alloc(PVA_STATUS_SIZE);
     st_pub = pva_alloc(PVA_STATUS_SIZE);
     m3u_file = pva_alloc(sizeof(FIL));
@@ -2093,7 +2232,9 @@ bool pva_core1_poll(void)
     }
 
     pva_win[PVA_R_WHERE] = PVA_W_DECODE;
-    if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
+    if (ready && state != PVA_STATE_STOPPED && pva_dec_is_stream() && pva_net_picoamp() == 2)
+        scr_poll();                     // the MSX link's screen
+    else if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
     {
         // wait until the buffer has 'prefill' bytes (or the stream gave up)
         size_t b = pva_net_buffered();

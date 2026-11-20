@@ -2225,6 +2225,42 @@ int main(int argc, char **argv)
                     cmd(PVA_C_PIC_CLOSE, NULL, 0);
                 }
                 cmd(PVA_C_STOP, NULL, 0);
+                run_ms(300);
+                {
+                    // the PC's screen (X-PicoAmp: 2): no sound here; the PC's bars, song, time and state; the keys
+                    extern bool host_esp_screen_paused;
+                    static const char scs[] = "http://pc.test:8765/screen\0PicoAmp on PC (screen)\0";
+                    uint32_t c1 = host_esp_link_covers;
+                    CHECK(cmd(PVA_C_PLAY_URL, scs, sizeof scs) == PVA_OK, "the PC's screen");
+                    run_ms(3000);
+                    read_status();
+                    uint8_t vz[256];
+                    for (int i = 0; i < 256; i++) vz[i] = rd((uint16_t)(PVA_WIN_BASE + PVA_R_VIZ + i));
+                    CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_TITLE), "Song A") && !strcmp(ststr(PVA_ST_ARTIST), "Artist One")
+                          && !strcmp(ststr(PVA_ST_ALBUM), "The Album"), "its song: '%s' '%s' '%s'", ststr(PVA_ST_ARTIST), ststr(PVA_ST_TITLE), ststr(PVA_ST_ALBUM));
+                    CHECK(st16(PVA_ST_ELAPSED) >= 3 && st16(PVA_ST_ELAPSED) <= 5 && st16(PVA_ST_TOTAL) == 200 && (st[PVA_ST_FLAGS] & PVA_F_SEEKABLE),
+                          "its time: %u of %u s, seekable", st16(PVA_ST_ELAPSED), st16(PVA_ST_TOTAL));
+                    CHECK(vz[PVA_VIZ_LEVEL] == 1 && vz[PVA_VIZ_LEVEL + 23] == 24 && vz[PVA_VIZ_VU] == 20 && vz[PVA_VIZ_VU + 1] == 21,
+                          "its bars: %u .. %u, VU %u %u", vz[PVA_VIZ_LEVEL], vz[PVA_VIZ_LEVEL + 23], vz[PVA_VIZ_VU], vz[PVA_VIZ_VU + 1]);
+                    CHECK(host_esp_link_covers > c1, "its song's cover from the PC");
+                    uint32_t k2 = host_esp_link_keys;
+                    CHECK(cmd_u16(PVA_C_SEEK, 60) == PVA_OK, "SEEK 60");
+                    for (int w = 0; w < 60 && host_esp_link_keys == k2; w++) run_ms(50);
+                    CHECK(!strcmp(host_esp_last_link_key, "seek&to=60"), "seeking: the PC's time, so where to (%s)", host_esp_last_link_key);
+                    host_esp_screen_paused = true;
+                    run_ms(1200);
+                    read_status();
+                    CHECK(st[PVA_ST_STATE] == PVA_STATE_PAUSED, "the PC pauses: paused here too (%u)", st[PVA_ST_STATE]);
+                    CHECK(cmd(PVA_C_PAUSE, NULL, 0) == PVA_OK, "SPACE while paused");
+                    for (int w = 0; w < 60 && host_esp_link_keys == k2 + 1; w++) run_ms(50);
+                    CHECK(!strcmp(host_esp_last_link_key, "toggle"), "it goes to the PC (%s)", host_esp_last_link_key);
+                    host_esp_screen_paused = false;
+                    run_ms(9000);
+                    read_status();
+                    CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_TITLE), "Song B"), "the next song: '%s'", ststr(PVA_ST_TITLE));
+                    cmd(PVA_C_STOP, NULL, 0);
+                    run_ms(300);
+                }
                 CHECK(cmd(PVA_C_PLAY_URL, a1, sizeof a1) == PVA_OK, "another station");
                 run_ms(2000);
                 uint32_t k1 = host_esp_link_keys;

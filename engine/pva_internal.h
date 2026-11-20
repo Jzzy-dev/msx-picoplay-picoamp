@@ -188,7 +188,7 @@ size_t pva_net_capacity(void);
 bool   pva_net_ended(void);                     // failed for good and the buffer is empty
 const pva_net_stats_t *pva_net_stats(void);
 const char *pva_net_station(void);              // icy-name (or "")
-bool        pva_net_picoamp(void);    // the station is PicoAmp for Windows (the MSX link): the keys go to it
+uint8_t     pva_net_picoamp(void);    // the station is PicoAmp for Windows (the MSX link): 1 its sound, 2 its screen (0 no): the keys go to it
 const char *pva_net_stream_title(void);         // StreamTitle (or "")
 const char *pva_net_host(void);
 
@@ -203,6 +203,9 @@ void pva_viz_init(void);
 void pva_viz_feed(const int16_t *stereo, uint32_t frames, uint32_t rate);
 void pva_viz_poll(bool playing);
 void pva_viz_get(uint8_t *levels, uint8_t *peaks, uint8_t *vu_lr);
+// the bars from elsewhere (the MSX link's screen: the PC's): levels 0..31 (PVA_VIZ_BANDS), VU, 64 scope samples;
+// shown for 0.5 s; the arrays stay the caller's (they are read until then)
+void pva_viz_set(const uint8_t *levels, const uint8_t *vu_lr, const int8_t *scope);
 
 // streaming JSON (pva_json.c)
 #define PVA_JSON_DEPTH      6
