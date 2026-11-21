@@ -1050,7 +1050,8 @@ bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAIL
 
 uint8_t *pva_net_spare(size_t *size) { *size = spare_size; return spare; }
 
-// the end of the ring, n bytes, for a stream that needs little of it (the MSX link's screen: lines, no sound);
+// the end of the ring, n bytes, for a stream that needs little of it (the MSX link's screen: lines, no sound),
+// or the lyrics (a file plays, or a stream that leaves room);
 // what is in the ring stays (moved to its front). Given back by pva_net_ring_return() and with the next stream.
 static size_t ring_full;            // the ring's size while a piece of it is lent (0: none is)
 
@@ -1063,10 +1064,14 @@ void *pva_net_ring_borrow(size_t n)
 {
     n = (n + 3u) & ~(size_t)3u;
     if (!ring || ring_full || ring_size < n + RING_MIN / 2u || ring_count > ring_size - n - 4096u) return NULL;
-    // the unread bytes to the front: the ring turned (three reversals)
-    reverse(0, ring_tail);
-    reverse(ring_tail, ring_size);
-    reverse(0, ring_size);
+    // the unread bytes to the front: the ring turned (three reversals; none to keep: not touched, a
+    // cover may be made at its start while a file plays)
+    if (ring_count)
+    {
+        reverse(0, ring_tail);
+        reverse(ring_tail, ring_size);
+        reverse(0, ring_size);
+    }
     ring_tail = 0;
     ring_head = ring_count;
     ring_full = ring_size;

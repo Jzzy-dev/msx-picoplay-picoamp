@@ -117,6 +117,19 @@ engine 0.10), which the PicoAmp firmware allows because nobody else writes
 the card there. A message in the path line says what
 happened ("Added to the favourites", "Already a favourite", ...).
 
+### Lyrics
+
+**L** (ROM, engine 0.18) opens the lyrics page for what plays: a file on the card, an internet
+radio station's song (when the station names it), or the PC's song through the MSX link. The
+engine asks [LRCLIB](https://lrclib.net) (a free, open lyrics database; no account) over the
+WiFi: a file by its artist, title, album and length, a station's song by its artist and title.
+Synced lyrics follow the song: the line sung now is yellow on a light band, the ones sung grey,
+the ones to come white below; plain lyrics (no timing) scroll through a file. Up/Down move a
+row, Left/Right ten rows, 0 follows the song again, L (or ESC) goes back to the player. A
+station's song is timed from when its title came, so its lines may be a little early or late.
+The words are looked for when the page is open and the song changes; they are kept in the
+stream's memory (no card writes). With the PC's screen (`/screen`) the PC sends them instead.
+
 ### The PC's music: the MSX link
 
 [PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) links the MSX to what the
@@ -140,9 +153,8 @@ knows it is the PC.
 **`/screen`: the MSX as the PC's screen and remote.** The sound stays on the PC; the MSX
 shows what it plays, in step with it: the song, its time and the seek bar, playing or
 paused, the cover (when the PC has made it), the PC's format line (`SPOTIFY 48.0KHZ`) and
-the bars, as the PC's own bars move (25 times a second). **L** opens the lyrics page: the
-words of the PC's song, which PicoAmp for Windows finds on [LRCLIB](https://lrclib.net)
-and sends along. Synced lyrics follow the song: the line sung now is yellow on a light
+the bars, as the PC's own bars move (25 times a second). **L** opens the lyrics page (see Lyrics) with the
+words of the PC's song, which PicoAmp for Windows finds on LRCLIB and sends along. Synced lyrics follow the song: the line sung now is yellow on a light
 band, the ones sung grey, the ones to come white below; plain lyrics (no timing) scroll
 through the song. Up/Down move a row, Left/Right ten rows, 0 follows the song again, L (or
 ESC) goes back to the player.

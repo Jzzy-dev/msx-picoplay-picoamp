@@ -1754,12 +1754,57 @@ typedef struct
     char     fmt[PVA_ST_FMT_TEXT_LEN];  // the PC's format line ("SPOTIFY 48.0KHZ")
 } scr_t;
 static scr_t *scr;                  // (the end of the stream ring, lent while the screen plays: no memory of its own)
+
+// ---- the words of what plays here (a file, a station): from LRCLIB, as PicoAmp for Windows has them
+//   /api/get?artist_name=&track_name=&album_name=&duration=   a file with its length
+//   /api/search?track_name=&artist_name= (q=)                 else, or when that found nothing: the best it finds
+// The reply is read as it comes (an answer of many songs is big): the first synced lyrics of the right length
+// end it; plain ones are kept until then. Its rows (40 characters, ASCII) go where the screen's go.
+#define LY_LINE  160
+typedef struct
+{
+    uint32_t hash;                  // the song looked for (0: none)
+    uint16_t want_s;                // its length (0: not known)
+    uint8_t  step;                  // 0 nothing to do, 1 ask /api/get, 2 ask /api/search, 3 asked
+    uint8_t  best;                  // what is in the rows: 0 nothing, 1 plain, 2 synced, 3 instrumental
+    uint8_t  cur;                   // the string being read: 0 another, 1 plain, 2 synced (rows reset)
+    bool     done, expect_key, in_str, is_key, esc;
+    uint8_t  depth, uhex, u8need;
+    uint32_t arr, ucp, u8cp;        // (arr: a bit per depth, 1 an array)
+    int32_t  obj_dur;               // the object's duration (-1: not given)
+    bool     obj_instr, arr_tried_search;
+    char     key[24], num[12];
+    uint8_t  klen, nlen;
+    char     line[LY_LINE];
+    uint8_t  llen;
+    char     q[3][100];             // artist, title, album (URL-encoded on asking)
+} lyo_t;
+static lyo_t   *lyo;
+static bool     ly_fetching;        // a request of lyo's runs
+static uint32_t song_at_ms;         // when the station's song began (its title came)
+
 // (another stream, or none: the ring is the stream's again)
 static void scr_reset(void)
 {
+    if (ly_fetching) { pva_web_abort(); ly_fetching = false; }
     scr = NULL;
     lyr = NULL;
+    lyo = NULL;
     pva_net_ring_return();
+}
+
+// the screen's, the words' memory: the end of the stream ring (lent while a file plays, or a stream that leaves room)
+static bool link_mem(void)
+{
+    if (scr) return true;
+    size_t a = (sizeof(scr_t) + 3u) & ~(size_t)3u, b = (sizeof(lyr_t) + 3u) & ~(size_t)3u;
+    uint8_t *m = pva_net_ring_borrow(a + b + sizeof(lyo_t));
+    if (!m) return false;
+    scr = (scr_t *)(void *)m;
+    lyr = (lyr_t *)(void *)(m + a);
+    lyo = (lyo_t *)(void *)(m + a + b);
+    lyr->gen = 1;
+    return true;
 }
 
 static uint32_t scr_elapsed(void)
@@ -1909,9 +1954,268 @@ static void scr_byte(uint8_t c)
 }
 
 // LYRICS: the words, the row of now, the rows asked for (see pva_proto.h)
+// a row of words (ASCII, at most 40), with its time
+static void ly_row(int32_t ms, const char *t, uint8_t n)
+{
+    if (lyr->n >= LY_ROWS || lyr->used + n > LY_POOL) return;
+    ly_row_t *r = &lyr->row[lyr->n++];
+    r->ms = ms;
+    r->off = lyr->used;
+    r->len = n;
+    memcpy(lyr->pool + lyr->used, t, n);
+    lyr->used = (uint16_t)(lyr->used + n);
+}
+
+// a line of the lyrics read: "[01:02.50] words" (synced) or "words"; long ones in rows of 40 (at the spaces)
+static void ly_line_done(void)
+{
+    char *t = lyo->line;
+    t[lyo->llen] = 0;
+    lyo->llen = 0;
+    int32_t ms = -1;
+    if (lyo->cur == 2)
+    {
+        // its time (the first of its tags); a line without one ("[ar: ...]", text) is not a sung one
+        bool any = false;
+        while (*t == '[')
+        {
+            unsigned m = 0, sec = 0, fr = 0, fd = 0;
+            const char *c = t + 1;
+            bool ok = *c >= '0' && *c <= '9';
+            while (*c >= '0' && *c <= '9') m = m * 10u + (unsigned)(*c++ - '0');
+            if (ok && *c == ':') c++; else ok = false;
+            if (ok) { while (*c >= '0' && *c <= '9') sec = sec * 10u + (unsigned)(*c++ - '0'); }
+            if (ok && (*c == '.' || *c == ':')) { c++; while (*c >= '0' && *c <= '9') { if (fd < 3) { fr = fr * 10u + (unsigned)(*c - '0'); fd++; } c++; } }
+            while (fd && fd < 3) { fr *= 10u; fd++; }
+            const char *e = strchr(t, ']');
+            if (!e) break;
+            if (ok && *c == ']' && !any) { ms = (int32_t)((m * 60u + sec) * 1000u + fr); any = true; }
+            t = (char *)e + 1;
+        }
+        if (!any) return;
+    }
+    while (*t == ' ') t++;
+    size_t len = strlen(t);
+    while (len && t[len - 1] == ' ') len--;
+    size_t off = 0;
+    do
+    {
+        size_t take = len - off;
+        if (take > 40)
+        {
+            take = 40;
+            size_t sp = take;
+            while (sp > 0 && t[off + sp] != ' ') sp--;
+            if (sp > 0) take = sp;
+        }
+        ly_row(ms, t + off, (uint8_t)take);
+        off += take;
+        while (off < len && t[off] == ' ') off++;
+    } while (off < len);
+}
+
+static void ly_cp(uint32_t cp)
+{
+    if (!lyo->cur) return;
+    if (cp == '\n') { ly_line_done(); return; }
+    if (cp == '\r') return;
+    char a = cp == '\t' ? ' ' : pva_fold_ascii(cp);
+    if (a && lyo->llen < LY_LINE - 1) lyo->line[lyo->llen++] = a;
+}
+
+static bool ly_dur_ok(void)
+{
+    if (!lyo->want_s || lyo->obj_dur < 0) return true;
+    int32_t d = lyo->obj_dur - (int32_t)lyo->want_s;
+    return d >= -10 && d <= 10;
+}
+
+static void ly_value_end(void)
+{
+    if (!lyo->nlen) return;
+    lyo->num[lyo->nlen] = 0;
+    if (!strcmp(lyo->key, "duration")) lyo->obj_dur = (int32_t)strtol(lyo->num, NULL, 10);
+    else if (!strcmp(lyo->key, "instrumental")) lyo->obj_instr = !strcmp(lyo->num, "true");
+    lyo->nlen = 0;
+}
+
+// the answer as it comes
+static void ly_byte(char ch)
+{
+    uint8_t c = (uint8_t)ch;
+    lyo_t *L = lyo;
+    if (L->in_str)
+    {
+        uint32_t cp;
+        if (L->uhex)
+        {
+            int v = c >= '0' && c <= '9' ? c - '0' : (c | 32) >= 'a' && (c | 32) <= 'f' ? (c | 32) - 'a' + 10 : 0;
+            L->ucp = (L->ucp << 4) | (uint32_t)v;
+            if (--L->uhex) return;
+            cp = L->ucp >= 0xD800 && L->ucp < 0xE000 ? '?' : L->ucp;
+        }
+        else if (L->esc)
+        {
+            L->esc = false;
+            if (c == 'u') { L->uhex = 4; L->ucp = 0; return; }
+            cp = c == 'n' ? '\n' : c == 't' ? '\t' : c == 'r' ? '\r' : c == 'b' || c == 'f' ? ' ' : c;
+        }
+        else if (c == '\\') { L->esc = true; return; }
+        else if (c == '"')
+        {
+            L->in_str = false;
+            if (L->is_key) { L->key[L->klen] = 0; return; }
+            if (L->cur)
+            {
+                if (L->llen) ly_line_done();
+                L->best = L->cur;
+                if (L->cur == 2) L->done = true;
+                L->cur = 0;
+            }
+            return;
+        }
+        else if (c >= 0x80)
+        {
+            // UTF-8
+            if (c >= 0xC0) { L->u8need = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1; L->u8cp = c & (c >= 0xF0 ? 7u : c >= 0xE0 ? 15u : 31u); return; }
+            if (!L->u8need) return;
+            L->u8cp = (L->u8cp << 6) | (c & 63u);
+            if (--L->u8need) return;
+            cp = L->u8cp;
+        }
+        else cp = c;
+        if (L->is_key) { if (L->klen < sizeof L->key - 1 && cp < 0x80) L->key[L->klen++] = (char)cp; }
+        else ly_cp(cp);
+        return;
+    }
+    bool in_obj = L->depth && !((L->arr >> (L->depth - 1)) & 1u);
+    switch (c)
+    {
+        case '"':
+            L->in_str = true;
+            L->is_key = in_obj && L->expect_key;
+            if (L->is_key) { L->klen = 0; break; }
+            // a string value: the lyrics? (the rows start again for them)
+            L->cur = 0;
+            if (!strcmp(L->key, "syncedLyrics") && L->best < 2 && ly_dur_ok()) L->cur = 2;
+            else if (!strcmp(L->key, "plainLyrics") && (L->best == 0 || L->best == 3)) L->cur = 1;
+            if (L->cur) { lyr->n = lyr->used = 0; L->llen = 0; }
+            break;
+        case ':': L->expect_key = false; L->nlen = 0; break;
+        case ',': ly_value_end(); L->expect_key = in_obj; break;
+        case '{':
+        case '[':
+            if (L->depth < 31) { if (c == '[') L->arr |= 1u << L->depth; else L->arr &= ~(1u << L->depth); }
+            L->depth++;
+            L->expect_key = c == '{';
+            if (c == '{') { L->obj_dur = -1; L->obj_instr = false; L->key[0] = 0; }
+            break;
+        case '}':
+        case ']':
+            ly_value_end();
+            if (c == '}' && L->obj_instr && L->best == 0) L->best = 3;
+            if (L->depth) L->depth--;
+            L->expect_key = false;
+            break;
+        default:
+            if (c > ' ' && L->nlen < sizeof L->num - 1) L->num[L->nlen++] = (char)c;
+            else if (c <= ' ') ly_value_end();
+            break;
+    }
+}
+
+static bool ly_body(const uint8_t *p, size_t n)
+{
+    if (!lyo) return true;
+    for (size_t i = 0; i < n && !lyo->done; i++) ly_byte((char)p[i]);
+    return lyo->done;
+}
+
+static void ly_done(bool ok)
+{
+    ly_fetching = false;
+    if (!lyo || lyo->step != 3) return;
+    if (ok && lyo->best == 0 && pva_web_http() >= 500) ok = false;
+    if (lyo->best == 0 && lyo->want_s && lyo->q[0][0] && !lyo->arr_tried_search)
+    {
+        lyo->arr_tried_search = true;
+        lyo->step = 2;          // (the one song was not there: the search)
+        return;
+    }
+    lyo->step = 0;
+    lyr->state = lyo->best == 2 ? PVA_LY_SYNCED : lyo->best == 1 ? PVA_LY_PLAIN : lyo->best == 3 ? PVA_LY_INSTRUMENTAL : PVA_LY_NOT_FOUND;
+    if (lyo->best == 3 || lyo->best == 0) lyr->n = lyr->used = 0;
+    lyr->gen++;
+    pva_log("lyrics: %s, %u rows", lyo->best == 2 ? "synced" : lyo->best == 1 ? "plain" : lyo->best == 3 ? "instrumental" : ok ? "none" : "no answer",
+            (unsigned)lyr->n);
+}
+
+// the song now (a file's, a station's): looked for when it changes and the lyrics page asks
+static void ly_want(void)
+{
+    if (state == PVA_STATE_STOPPED || !info.title[0] || (pva_dec_is_stream() && !info.artist[0])) { if (lyo->hash) { lyo->hash = 0; lyo->step = 0; lyr->state = PVA_LY_NONE; lyr->n = lyr->used = 0; lyr->gen++; } return; }
+    uint32_t h = 2166136261u;
+    for (const char *c = info.artist; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+    h = (h ^ 1u) * 16777619u;
+    for (const char *c = info.title; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+    if (!h) h = 1;
+    if (h == lyo->hash) return;
+    if (ly_fetching) { pva_web_abort(); ly_fetching = false; }
+    lyo->hash = h;
+    lyo->want_s = pva_dec_is_stream() ? 0 : (uint16_t)info.total_seconds;
+    snprintf(lyo->q[0], sizeof lyo->q[0], "%s", info.artist);
+    snprintf(lyo->q[1], sizeof lyo->q[1], "%s", info.title);
+    snprintf(lyo->q[2], sizeof lyo->q[2], "%s", pva_dec_is_stream() ? "" : info.album);
+    lyo->arr_tried_search = false;
+    lyo->step = lyo->want_s && info.artist[0] ? 1 : 2;
+    lyo->best = 0;
+    lyr->state = PVA_LY_LOOKING;
+    lyr->n = lyr->used = 0;
+    lyr->gen++;
+}
+
+// (in the loop) ask LRCLIB when there is something to ask and the web is free
+static void ly_poll(void)
+{
+    if (!lyo || (lyo->step != 1 && lyo->step != 2) || ly_fetching || pva_web_busy()) return;
+    if (!pva_hal_net_present()) { lyo->step = 0; lyr->state = PVA_LY_NOT_FOUND; lyr->gen++; return; }
+    char a[300], t[300], al[300], u[1000];
+    pva_dir_urlenc(a, sizeof a, lyo->q[0]);
+    pva_dir_urlenc(t, sizeof t, lyo->q[1]);
+    pva_dir_urlenc(al, sizeof al, lyo->q[2]);
+    if (lyo->step == 1)
+        snprintf(u, sizeof u, "https://lrclib.net/api/get?artist_name=%s&track_name=%s&album_name=%s&duration=%u", a, t, al, (unsigned)lyo->want_s);
+    else if (lyo->q[0][0]) snprintf(u, sizeof u, "https://lrclib.net/api/search?track_name=%s&artist_name=%s", t, a);
+    else snprintf(u, sizeof u, "https://lrclib.net/api/search?q=%s", t);
+    // the reader from the start
+    lyo->done = lyo->in_str = lyo->is_key = lyo->esc = lyo->expect_key = false;
+    lyo->depth = lyo->uhex = lyo->u8need = lyo->klen = lyo->nlen = lyo->llen = lyo->cur = 0;
+    lyo->arr = 0;
+    lyo->key[0] = 0;
+    lyo->obj_dur = -1;
+    lyo->obj_instr = false;
+    lyo->step = 3;
+    if (pva_web_get(u, ly_body, ly_done) == PVA_OK) ly_fetching = true;
+    else { lyo->step = 0; lyr->state = PVA_LY_NOT_FOUND; lyr->gen++; }
+}
+
+// the song's time now, in ms (a station: since its title came)
+static int32_t ly_song_ms(void)
+{
+    if (pva_dec_is_stream()) return (int32_t)(pva_hal_millis() - song_at_ms);
+    return (int32_t)pva_dec_elapsed_ms();
+}
+
 static int cmd_lyrics(void)
 {
-    bool on = lyr && scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
+    bool scr_on = lyr && scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
+    bool own = false;
+    if (!scr_on && state != PVA_STATE_STOPPED && pva_net_picoamp() != 2 && link_mem())
+    {
+        ly_want();
+        own = true;
+    }
+    bool on = scr_on || own;
     uint16_t first = (uint16_t)(args[0] | (args[1] << 8));
     uint8_t want = args[2] > 20 ? 20 : args[2];
     uint8_t st_ = on ? lyr->state : PVA_LY_NONE;
@@ -1921,7 +2225,7 @@ static int cmd_lyrics(void)
     if (n && st_ == PVA_LY_SYNCED)
     {
         // the last row begun (its time passed), back to the first of its line (the rows of one time)
-        int32_t e = scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
+        int32_t e = own ? ly_song_ms() : scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
         for (uint16_t i = 0; i < n && lyr->row[i].ms <= e; i++) if (lyr->row[i].ms >= 0) now = i;
         if (now != 0xFFFF)
         {
@@ -1930,11 +2234,11 @@ static int cmd_lyrics(void)
             for (uint16_t i = now; i < n && lyr->row[i].ms == ms; i++) lit++;
         }
     }
-    else if (n && scr->total)
+    else if (n && (own ? info.total_seconds && !pva_dec_is_stream() : scr->total))
     {
         // not synced: where the song is, in rows
-        uint32_t e = scr_elapsed();
-        now = (uint16_t)((uint32_t)n * e / scr->total);
+        uint32_t e = own ? pva_dec_elapsed() : scr_elapsed(), tot = own ? info.total_seconds : scr->total;
+        now = (uint16_t)((uint32_t)n * e / tot);
         if (now >= n) now = (uint16_t)(n - 1);
     }
     uint8_t *o = reply;
@@ -1961,17 +2265,13 @@ static int cmd_lyrics(void)
 // the screen's lines as they come (the decoder does not run: there is no sound)
 static void scr_poll(void)
 {
-    if (!scr)
-    {
-        uint8_t *m = pva_net_ring_borrow(sizeof(scr_t) + 4u + sizeof(lyr_t));
-        if (!m) return;
-        scr = (scr_t *)(void *)m;
-        memset(m, 0, sizeof(scr_t) + 4u + sizeof(lyr_t));
-        lyr = (lyr_t *)(void *)(m + ((sizeof(scr_t) + 3u) & ~(size_t)3u));
-        lyr->gen = 1;
-    }
+    if (!link_mem()) return;
     if (!scr->on)
     {
+        lyr->state = PVA_LY_NONE;
+        lyr->n = lyr->used = 0;
+        lyr->gen++;
+        lyo->hash = 0;
         scr->on = true;
         scr->kind = 0;
         buffering = false;
@@ -2402,6 +2702,7 @@ bool pva_core1_poll(void)
     pva_win[PVA_R_WHERE] = PVA_W_RADIO;
     radio_poll();
     pva_web_poll();
+    ly_poll();
     pva_clock_poll();
     pva_news_poll();
     pva_markets_poll();
@@ -2416,6 +2717,7 @@ bool pva_core1_poll(void)
         {
             shown_title_gen = ns->title_gen;
             split_stream_title(pva_net_stream_title());
+            song_at_ms = pva_hal_millis();
             if (pva_net_picoamp())
             {
                 // the MSX link: the cover of what the PC plays, from the PC

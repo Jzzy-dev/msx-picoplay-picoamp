@@ -45,7 +45,9 @@ Player or another player it follows, or its own files and stations): the song, i
 seek bar, the cover, the bars in step with the PC, and **L** a lyrics page whose lines light
 up as they are sung (from LRCLIB, through the PC). Pause, next, previous, seek, shuffle,
 repeat, volume and mute go to the PC. Or the PC's sound plays on the MSX as an internet
-radio station. See `picoamp/README.md`, section The PC's music: the MSX link.
+radio station. **L** shows the lyrics of the MSX's own music too: a file on the card or an internet
+radio station's song, from LRCLIB over the WiFi. See `picoamp/README.md`, sections Lyrics and The PC's
+music: the MSX link.
 
 **v1.5** (engine 0.17; tried on a PicoVerse 2350 as the cartridge ROM): pictures and covers.
 **I** opens a picture browser for the JPEGs on the card (folders and pictures only): Enter shows

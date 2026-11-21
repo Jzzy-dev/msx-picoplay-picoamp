@@ -53,6 +53,8 @@ const char *host_esp_logo_dir = "assets";
 uint32_t host_esp_logo_gets;                // requests for a logo
 bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
 uint32_t host_esp_itunes_asks;              // questions to the iTunes search
+uint32_t host_esp_lrclib_asks;              // questions to LRCLIB
+char     host_esp_last_lrclib[300];
 uint32_t host_esp_link_keys, host_esp_link_covers, host_esp_link_big;   // the MSX link (pc.test)
 bool     host_esp_screen_paused;
 char     host_esp_last_link_key[40];
@@ -741,6 +743,30 @@ static void serve(conn_t *c)
             http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n", "\n\n\n{\n \"resultCount\":0,\n \"results\": []\n}\n");
         return;
     }
+    if (c->ip[3] == 15)
+    {
+        // LRCLIB: /api/get finds nothing; /api/search: plain lyrics first (no synced), then the synced ones
+        host_esp_lrclib_asks++;
+        snprintf(host_esp_last_lrclib, sizeof host_esp_last_lrclib, "%s", path);
+        if (!strncmp(path, "/api/get?", 9))
+        {
+            http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\r\n",
+                       "{\"code\":404,\"name\":\"TrackNotFound\",\"message\":\"Failed to find specified track\"}");
+            return;
+        }
+        const char *t = strstr(path, "track_name=");
+        char tn[64] = "";
+        if (t) { t += 11; size_t k = 0; while (*t && *t != '&' && k < sizeof tn - 1) { if (!strncmp(t, "%20", 3)) { tn[k++] = ' '; t += 3; } else tn[k++] = *t++; } tn[k] = 0; }
+        char b[2000];
+        snprintf(b, sizeof b,
+                 "[{\"id\":1,\"trackName\":\"%s\",\"duration\":180.0,\"instrumental\":false,\"plainLyrics\":\"Plain one\\nPlain two\",\"syncedLyrics\":null},"
+                 "{\"id\":2,\"trackName\":\"%s\",\"duration\":200.0,\"instrumental\":false,\"plainLyrics\":\"x\","
+                 "\"syncedLyrics\":\"[ar: Someone]\\n[00:00.50] First line of %s\\n[00:02.00][00:30.00] Second line, a rather long one that does not fit on one row\\n"
+                 "[00:04.00] Caf\\u00e9 \\\"quoted\\\"\\n[00:06.00]\\n[00:08.5] Last line\"},"
+                 "{\"id\":3,\"trackName\":\"later\",\"syncedLyrics\":\"[00:01.00] not this one\"}]", tn, tn, tn);
+        http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n", b);
+        return;
+    }
     if (c->ip[3] == 4 || c->ip[3] == 5)
     {
         if (host_esp_api_http_silent && !c->tls) return;
@@ -977,7 +1003,8 @@ static int dns(const char *name, uint8_t *ip)
         { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } },
         { "news.test", { 10, 0, 0, 9 } }, { "feeds.finance.yahoo.com", { 10, 0, 0, 9 } },
         { "query1.finance.yahoo.com", { 10, 0, 0, 10 } }, { "query2.finance.yahoo.com", { 10, 0, 0, 11 } },
-        { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } }, { "pc.test", { 10, 0, 0, 14 } } };
+        { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } }, { "pc.test", { 10, 0, 0, 14 } },
+        { "lrclib.net", { 10, 0, 0, 15 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
     return -1;
 }
@@ -1011,7 +1038,7 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 14);
+            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 15);
             if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && a[3] <= 9 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000) || (a[3] == 14 && port != 8765)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];

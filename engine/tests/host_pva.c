@@ -2431,6 +2431,42 @@ int main(int argc, char **argv)
         cmd(PVA_C_STOP, NULL, 0);
         run_ms(1000);
     }
+    printf("[lyrics of a station's song, from LRCLIB]\n");
+    {
+        extern uint32_t host_esp_lrclib_asks;
+        extern char host_esp_last_lrclib[300];
+        static const char a1[] = "http://radio.test/stream.mp3\0";
+        cmd(PVA_C_PLAY_URL, a1, sizeof a1);
+        for (int w = 0; w < 300 && !ststr(PVA_ST_ARTIST)[0]; w++) { run_ms(50); read_status(); }
+        uint8_t la[3] = { 0, 0, 8 };
+        uint32_t a0 = host_esp_lrclib_asks;
+        int lst = -1;
+        char song[64];
+        snprintf(song, sizeof song, "%s", ststr(PVA_ST_TITLE));
+        for (int w = 0; w < 200; w++)
+        {
+            cmd(PVA_C_LYRICS, la, sizeof la);
+            lst = reply[0];
+            if (lst == PVA_LY_SYNCED || lst == PVA_LY_NOT_FOUND || lst == PVA_LY_PLAIN) break;
+            run_ms(50);
+        }
+        char rows[600] = "";
+        size_t k = 8, o = 0;
+        unsigned n = reply[2] | (reply[3] << 8);
+        for (unsigned i = 0; i < 8 && i < n; i++) { uint8_t l = reply[k++]; o += (size_t)snprintf(rows + o, sizeof rows - o, "%s%.*s", i ? "|" : "", l, (char *)reply + k); k += l; }
+        char want[400];
+        snprintf(want, sizeof want, "First line of %s|Second line, a rather long one that does|not fit on one row|Cafe \"quoted\"||Last line", song);
+        CHECK(lst == PVA_LY_SYNCED && n == 6 && !strcmp(rows, want), "synced, %u rows: %s (state %d)", n, rows, lst);
+        CHECK(host_esp_lrclib_asks == a0 + 1 && strstr(host_esp_last_lrclib, "/api/search?track_name="), "one search: %s", host_esp_last_lrclib);
+        uint16_t now = (uint16_t)(reply[4] | (reply[5] << 8));
+        CHECK(now != 0xFFFF && now < 3, "the row of now (%u, %u lit)", now, reply[6]);
+        cmd(PVA_C_LYRICS, la, sizeof la);
+        CHECK(host_esp_lrclib_asks == a0 + 1, "not asked again for the same song");
+        cmd(PVA_C_STOP, NULL, 0);
+        run_ms(500);
+        cmd(PVA_C_LYRICS, la, sizeof la);
+        CHECK(reply[0] == PVA_LY_NONE, "stopped: none (%u)", reply[0]);
+    }
     CHECK(cmd(PVA_C_LOG, NULL, 0) == PVA_OK && strstr((char *)reply, "stream:"), "the log tells the story:\n%s", reply);
     run_ms(100);
     CHECK(host_esp_open_conns() == 0 && !host_esp_owned() && host_esp_opens == host_esp_closes,

@@ -406,9 +406,9 @@ txt_ly_head:     db " LYRICS",0
 txt_ly_sync:     db "SYNCED",0
 txt_ly_plain:    db "NOT SYNCED",0
 txt_ly_blank:    db 0
-txt_ly_src:      db " Words: LRCLIB.net (through the PC)",0
+txt_ly_src:      db " Words: LRCLIB.net",0
 txt_ly_keys:     db " Up/Down Left/Right move, 0 follow, L back",0
-txt_ly_none:     db "Lyrics: play the PC's /screen station",0
+txt_ly_none:     db "Play a song to see its words",0
 txt_ly_looking:  db "Looking for the words...",0
 txt_ly_instr:    db "Instrumental: no words",0
 txt_ly_notfound: db "LRCLIB has no words for this song",0

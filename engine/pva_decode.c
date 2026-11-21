@@ -709,6 +709,11 @@ uint32_t pva_dec_elapsed(void)
     return seek_base_s + (rate ? (uint32_t)(samples_out / rate) : 0u);
 }
 
+uint32_t pva_dec_elapsed_ms(void)
+{
+    return seek_base_s * 1000u + (rate ? (uint32_t)((uint64_t)samples_out * 1000u / rate) : 0u);
+}
+
 int pva_dec_seek(uint32_t seconds)
 {
     if (!format || !file_open || stream) return PVA_E_STATE;
