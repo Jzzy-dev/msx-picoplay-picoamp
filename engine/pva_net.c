@@ -1060,9 +1060,16 @@ static void reverse(size_t a, size_t b)
     while (a + 1 < b) { uint8_t t = ring[a]; ring[a] = ring[b - 1]; ring[b - 1] = t; a++; b--; }
 }
 
-void *pva_net_ring_borrow(size_t n)
+void *pva_net_ring_borrow(size_t n, bool make_room)
 {
     n = (n + 3u) & ~(size_t)3u;
+    // (a full buffer: its oldest bytes go, a moment of the stream skipped; the decoder finds its frames again)
+    if (make_room && ring && !ring_full && ring_size >= n + RING_MIN / 2u && ring_count > ring_size - n - 4096u)
+    {
+        size_t d = ring_count - (ring_size - n - 4096u);
+        ring_tail = (ring_tail + d) % ring_size;
+        ring_count -= d;
+    }
     if (!ring || ring_full || ring_size < n + RING_MIN / 2u || ring_count > ring_size - n - 4096u) return NULL;
     // the unread bytes to the front: the ring turned (three reversals; none to keep: not touched, a
     // cover may be made at its start while a file plays)

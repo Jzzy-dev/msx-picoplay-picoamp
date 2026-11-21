@@ -1801,11 +1801,11 @@ static void scr_reset(void)
 }
 
 // the screen's, the words' memory: the end of the stream ring (lent while a file plays, or a stream that leaves room)
-static bool link_mem(void)
+static bool link_mem_room(bool make_room)
 {
     if (scr) return true;
     size_t a = (sizeof(scr_t) + 3u) & ~(size_t)3u, b = (sizeof(lyr_t) + 3u) & ~(size_t)3u;
-    uint8_t *m = pva_net_ring_borrow(a + b + sizeof(lyo_t));
+    uint8_t *m = pva_net_ring_borrow(a + b + sizeof(lyo_t), make_room);
     if (!m) return false;
     scr = (scr_t *)(void *)m;
     lyr = (lyr_t *)(void *)(m + a);
@@ -1813,6 +1813,7 @@ static bool link_mem(void)
     lyr->gen = 1;
     return true;
 }
+static bool link_mem(void) { return link_mem_room(false); }
 
 static uint32_t scr_elapsed(void)
 {
@@ -2162,7 +2163,8 @@ static void ly_done(bool ok)
 // the song now (a file's, a station's): looked for when it changes and the lyrics page asks
 static void ly_want(void)
 {
-    if (state == PVA_STATE_STOPPED || !info.title[0] || (pva_dec_is_stream() && !info.artist[0])) { if (lyo->hash) { lyo->hash = 0; lyo->step = 0; lyr->state = PVA_LY_NONE; lyr->n = lyr->used = 0; lyr->gen++; } return; }
+    // (a station: a song's title, not only its name; "Artist - Title", or a title alone: then searched by it)
+    if (state == PVA_STATE_STOPPED || !info.title[0] || (pva_dec_is_stream() && !info.artist[0] && (!shown_title_gen || !strcmp(info.title, info.album)))) { if (lyo->hash) { lyo->hash = 0; lyo->step = 0; lyr->state = PVA_LY_NONE; lyr->n = lyr->used = 0; lyr->gen++; } return; }
     uint32_t h = 2166136261u;
     for (const char *c = info.artist; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
     h = (h ^ 1u) * 16777619u;
@@ -2222,7 +2224,8 @@ static int cmd_lyrics(void)
 {
     bool scr_on = lyr && scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
     bool own = false;
-    if (!scr_on && state != PVA_STATE_STOPPED && pva_net_picoamp() != 2 && link_mem())
+    ly_used = true;                         // (from now on a stream keeps the words' memory from its start)
+    if (!scr_on && state != PVA_STATE_STOPPED && pva_net_picoamp() != 2 && link_mem_room(true))
     {
         ly_want();
         own = true;
