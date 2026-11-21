@@ -163,6 +163,8 @@ In both:
   281 x 192.
 * The volume keys and M are the PC's (PicoAmp's own, or the followed player's in
   Windows's mixer), and the screen shows the PC's volume.
+* The equalizer and balance are the PC's sound's: they show **EQ REMOTE** and do not
+  change while the link plays (yours are kept and come back after it).
 
 ### Clock
 

@@ -169,6 +169,7 @@ ST_ARTIST equ 80
 ST_ALBUM equ 120
 ST_FORMAT equ 160        ; 6 (PVA_DE_URL): a stream
 ST_BUFP  equ 163
+ST_LINK  equ 210        ; u8 the MSX link plays (1 sound, 2 screen; engine 0.18)
 ST_FMTTXT equ 188       ; char[22] the PC's format line in the screen mode (engine 0.18)
 ST_DGEN  equ 173
 ST_DIRST equ 177
@@ -2430,7 +2431,17 @@ eq_select:                      ; A = band 0-4, 5 = balance
         call area_out_col
         jp draw_eq_info
 
+; the MSX link plays (engine 0.18): its sound is the PC's, the equalizer and balance stay as they are (NZ)
+; (older engines leave the byte 0; A is kept, HL not)
+eq_locked:
+        ld hl,st+ST_LINK
+        inc (hl)
+        dec (hl)
+        ret
+
 eq_set_gain:                    ; A = band, C = gain
+        call eq_locked
+        ret nz
         ld (er_band),a
         ld e,a
         ld d,0
@@ -2458,6 +2469,8 @@ eq_send:
         jp draw_eq_name
 
 eq_set_bal:                     ; C = 0..100
+        call eq_locked
+        ret nz
         ld a,(eqbal)
         cp c
         ret z
@@ -2515,6 +2528,8 @@ eq_reset:                       ; 0: the chosen one back to the middle
 
 ; E: the next equalizer preset (the same ones as PicoPlay)
 next_eq:
+        call eq_locked
+        ret nz
         ld a,(eq_preset)
         inc a
         cp 8
@@ -2662,7 +2677,11 @@ draw_info:
         call draw_modes
         ld hl,st+ST_EQ
         call find_eq
-        call draw_eq_name
+        call eq_locked          ; (the MSX link: EQ REMOTE)
+        jr z,.eqn
+        ld a,9
+        ld (eq_preset),a
+.eqn:   call draw_eq_name
         jp draw_volume
 
 draw_modes:
@@ -2692,10 +2711,7 @@ draw_modes:
 ; "128K 44.1KHZ ST" (a stream: "128K 44.1KHZ ST HTTPS") or "BUFFERING 40%"
 fmt_format:
         ld de,linebuf
-        ld a,(eng_minor)        ; the PC's screen (engine 0.18): its own format line
-        cp 18
-        jr c,.nf
-        ld a,(st+ST_FMTTXT)
+        ld a,(st+ST_FMTTXT)     ; the PC's screen (engine 0.18; older ones leave it 0): its format line
         or a
         jr z,.nf
         ld hl,st+ST_FMTTXT
@@ -7223,7 +7239,7 @@ pl_cols:        db 2,3,4,6,7,8,9,10,11,12,13,15
 
 eq_tab:         db 0,0,0,0,0, 5,2,-2,3,5, -1,3,4,2,-1, 3,1,-1,2,4, 3,0,-1,1,3, -4,-1,4,3,-2, 8,4,0,0,0, 6,2,0,1,5
 eq_names:       db "EQ FLAT",0,0,0, "EQ ROCK",0,0,0, "EQ POP",0,0,0,0, "EQ JAZZ",0,0,0, "EQ CLASS",0,0
-                db "EQ VOICE",0,0, "EQ BASS",0,0,0, "EQ LOUD",0,0,0, "EQ OWN",0,0,0,0
+                db "EQ VOICE",0,0, "EQ BASS",0,0,0, "EQ LOUD",0,0,0, "EQ OWN",0,0,0,0, "EQ REMOTE",0
 eq_lab:         db " 60",0, "250",0, " 1K",0, " 4K",0, "12K",0
 eq_hz:          db "60 HZ",0,0,0, "250 HZ",0,0, "1 KHZ",0,0,0, "4 KHZ",0,0,0, "12 KHZ",0,0
 ; the band of each cell of the equalizer picture (FF: none)

@@ -2259,6 +2259,16 @@ int main(int argc, char **argv)
                     CHECK(vz[PVA_VIZ_LEVEL] == 1 && vz[PVA_VIZ_LEVEL + 23] == 24 && vz[PVA_VIZ_VU] == 20 && vz[PVA_VIZ_VU + 1] == 21,
                           "its bars: %u .. %u, VU %u %u", vz[PVA_VIZ_LEVEL], vz[PVA_VIZ_LEVEL + 23], vz[PVA_VIZ_VU], vz[PVA_VIZ_VU + 1]);
                     CHECK(host_esp_link_covers == c1 + 1, "its song's cover from the PC, once: when the PC made it (%u)", host_esp_link_covers - c1);
+                    {
+                        int8_t e0[PVA_EQ_BANDS], rk[PVA_EQ_BANDS] = { 5, 2, -2, 3, 5 }, now[PVA_EQ_BANDS];
+                        pva_eq_get(e0);
+                        cmd(PVA_C_EQ, (const uint8_t *)rk, sizeof rk);
+                        read_status();
+                        pva_eq_get(now);
+                        CHECK(st[PVA_ST_LINK] == 2 && !now[0] && !now[4] && (int8_t)st[PVA_ST_EQ] == 5,
+                              "the link: the EQ stays flat here, the one set is kept (link %u, %d, shown %d)", st[PVA_ST_LINK], now[0], (int8_t)st[PVA_ST_EQ]);
+                        cmd(PVA_C_EQ, (const uint8_t *)e0, sizeof e0);
+                    }
                     CHECK(!strcmp(ststr(PVA_ST_FMT_TEXT), "SPOTIFY 48.0KHZ") && !(st[PVA_ST_FLAGS] & PVA_F_BUFFERING),
                           "the PC's format line, not buffering ('%s')", ststr(PVA_ST_FMT_TEXT));
                     CHECK(st[PVA_ST_VOLUME] == 70 && !(st[PVA_ST_FLAGS] & PVA_F_MUTED), "the PC's volume shown here (%u)", st[PVA_ST_VOLUME]);

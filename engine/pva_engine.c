@@ -1681,6 +1681,36 @@ static char    rk_q[RK_MAX][16];
 static uint8_t rk_n;
 static uint32_t rk_title_gen;
 
+// the MSX link's sound is the PC's: no equalizer or balance here while it plays (the user's are kept
+// and come back after it; set meanwhile, they are kept for then)
+static bool    link_remote;
+static int8_t  user_eq[PVA_EQ_BANDS];
+static uint8_t user_balance = 50;
+
+static uint8_t link_now(void) { return state != PVA_STATE_STOPPED && pva_dec_is_stream() ? pva_net_picoamp() : 0; }
+
+static void link_sound(void)
+{
+    bool r = link_now() != 0;
+    if (r == link_remote) return;
+    link_remote = r;
+    if (r)
+    {
+        static const int8_t flat[PVA_EQ_BANDS];
+        pva_eq_get(user_eq);
+        user_balance = balance;
+        pva_eq_set(flat);
+        pva_dec_set_balance(50);
+    }
+    else
+    {
+        pva_eq_set(user_eq);
+        balance = user_balance;
+        pva_dec_set_balance(balance);
+    }
+    status_dirty = true;
+}
+
 // (the screen: also while the PC pauses)
 static bool link_plays(void)
 {
@@ -2137,11 +2167,13 @@ static int execute(uint8_t code)
         case PVA_C_LYRICS:
             return cmd_lyrics();
         case PVA_C_BALANCE:
+            if (link_remote) { user_balance = args[0] > 100 ? 100 : args[0]; return PVA_OK; }
             balance = args[0] > 100 ? 100 : args[0];
             pva_dec_set_balance(balance);
             status_dirty = true;
             return PVA_OK;
         case PVA_C_EQ:
+            if (link_remote) { memcpy(user_eq, args, sizeof user_eq); return PVA_OK; }
             pva_eq_set((const int8_t *)args);
             status_dirty = true;
             return PVA_OK;
@@ -2245,10 +2277,11 @@ static void publish_status(void)
     }
     {
         int8_t g[PVA_EQ_BANDS];
-        pva_eq_get(g);
+        if (link_remote) memcpy(g, user_eq, sizeof g); else pva_eq_get(g);
         for (int i = 0; i < PVA_EQ_BANDS; i++) st8(PVA_ST_EQ + (uint32_t)i, (uint8_t)g[i]);
     }
-    st8(PVA_ST_BALANCE, balance);
+    st8(PVA_ST_BALANCE, link_remote ? user_balance : balance);
+    st8(PVA_ST_LINK, link_now());
     st8(PVA_ST_COVER_GEN, pva_art_gen());
     st8(PVA_ST_COVER_STATE, pva_art_state());
     st8(PVA_ST_PIC_SAVER, pva_pics_saver());
@@ -2404,6 +2437,7 @@ bool pva_core1_poll(void)
     }
 
     pva_win[PVA_R_WHERE] = PVA_W_DECODE;
+    link_sound();
     if (ready && state != PVA_STATE_STOPPED && pva_dec_is_stream() && pva_net_picoamp() == 2)
         scr_poll();                     // the MSX link's screen
     else if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)

@@ -327,6 +327,7 @@
 #define PVA_ST_PIC_SAVER    187     // u8  the screensaver after this many minutes ([pictures] saver; 0 off; engine 0.17)
 #define PVA_ST_FMT_TEXT     188     // char[22] the MSX link's screen mode: the PC's format line ("SPOTIFY 48.0KHZ"), else ""
 #define PVA_ST_FMT_TEXT_LEN 22
+#define PVA_ST_LINK         210     // u8  the MSX link plays: 1 the PC's sound, 2 its screen (0 not); the EQ and balance are the PC's then
 #define PVA_EQ_BANDS        5
 #define PVA_EQ_MAX_DB       12
 
