@@ -15,7 +15,13 @@
 ;   row 23      the keys
 ;
 ; Keys: Up/Down a row, Left/Right ten rows (they stay moved until the next
-; song; 0 follows the song again), L, ESC, Enter, BS back; the playback keys.
+; song; 0 follows the song again), Enter: the line in the middle (row 9) is
+; sung now (synced by hand: a station joined in a song, or off), [ ] the time
+; -/+ 0.5 s, R look again; L, ESC, BS back (Enter too when not synced); the
+; playback keys.
+;
+; The words of the MSX's own music (a file, a station's song) the engine asks
+; LRCLIB for itself (engine 0.18).
 ;==============================================================================
 
 LY_TOP   equ 2                  ; the first row of the words
@@ -27,6 +33,7 @@ LY_COL   equ WHITE*16+NAVY
 LY_SUNG  equ GREY*16+NAVY
 LY_LIT   equ YELLOW*16+BLUE_D
 LY_ASK   equ 6                  ; interrupts between the engine's answers
+LY_CUR   equ WHITE*16+BLUE_D    ; the line in the middle, to sync to (not timed, or moved)
 
 mod_lyr:
         jp ly_open              ; the jump table (M_OPEN ...)
@@ -44,6 +51,7 @@ ly_open:
         ld a,#FF
         ld (ly_gen),a           ; (the words come with the first pass)
         ld (ly_st),a
+        ld (ly_unt),a
         ld hl,0
         ld (ly_man),hl
         ld hl,#8000
@@ -80,9 +88,15 @@ ly_keys:
         cp 27
         jp z,fs_close
         cp 13
-        jp z,fs_close
+        jr z,ly_enter
         cp 8
         jp z,fs_close
+        cp '['
+        ld hl,-5
+        jr z,ly_nudge
+        cp ']'
+        ld hl,5
+        jr z,ly_nudge
         cp 30                   ; up
         ld hl,-1
         jr z,ly_move
@@ -100,6 +114,8 @@ ly_keys:
         and #DF
         cp 'L'
         jp z,fs_close
+        cp 'R'
+        jr z,ly_again
         cp 'Z'
         jp z,fs_close
         cp 'G'
@@ -109,7 +125,41 @@ ly_keys:
         ld a,b
         jp keys_common
 
+; Enter: synced, the line in the middle is sung now; else back
+ly_enter:
+        ld a,(ly_st)
+        cp LY_SYNC
+        jp nz,fs_close
+        ld hl,(ly_top)
+        ld de,LY_NOW
+        add hl,de
+        ld a,h
+        rla
+        ret c                   ; (before the first)
+        ld a,#82
+        jr ly_act
+ly_nudge:
+        ld a,#83
+        jr ly_act
+ly_again:
+        ld hl,0
+        ld a,#81
+; ly_act: the engine's action A with HL; then the words follow the song again
+ly_act:
+        ld (args),hl
+        ld (args+2),a
+        ld a,C_LYRICS
+        ld bc,3
+        call cmd
+        ld hl,#8000
+        ld (ly_top),hl
+        ; fall through
+
 ; Up/Down/Left/Right: the words moved (HL rows) from where the song is
+ly_follow0:
+        ld hl,0
+        ld (ly_man),hl
+        jr ly_ask
 ly_move:
         ld de,(ly_man)
         add hl,de
@@ -160,7 +210,17 @@ ly_ask:
         ld (ly_man),hl
         ld hl,#8000
         ld (ly_top),hl          ; (all rows again)
-.same:  ld a,(ly_st)
+.same:  ld a,(reply+7)          ; not timed (a station joined in a song)
+        and 1
+        ld c,a
+        ld a,(ly_unt)
+        cp c
+        jr z,.u
+        ld a,c
+        ld (ly_unt),a
+        ld a,#FE
+        ld (ly_st),a            ; (the head again)
+.u:     ld a,(ly_st)
         cp b
         jr z,.st
         ld a,b
@@ -304,7 +364,23 @@ ly_rows:
 
 ; ly_colour: C = the colours of row (ly_i): lit (the line sung now), sung (before it), to come
 ly_colour:
-        ld c,LY_COL
+        ld a,(ly_st)            ; synced, not timed or moved: the middle's line to sync to
+        cp LY_SYNC
+        jr nz,.nc
+        ld a,(ly_unt)
+        ld hl,(ly_man)
+        or h
+        or l
+        jr z,.nc
+        ld hl,(ly_top)
+        ld de,LY_NOW
+        add hl,de
+        ld de,(ly_i)
+        or a
+        sbc hl,de
+        ld c,LY_CUR
+        ret z
+.nc:    ld c,LY_COL
         ld a,(ly_lit)
         or a
         ret z                   ; (none lit: not synced, or before the first line)
@@ -330,7 +406,14 @@ ly_state:
         ld a,(ly_st)
         ld hl,txt_ly_sync
         cp LY_SYNC
+        jr nz,.h0
+        ld a,(ly_unt)
+        or a
+        ld a,LY_SYNC
         jr z,.h
+        ld hl,txt_ly_unt
+        jr .h
+.h0:
         ld hl,txt_ly_plain
         cp LY_PLAIN
         jr z,.h
@@ -406,14 +489,16 @@ txt_ly_head:     db " LYRICS",0
 txt_ly_sync:     db "SYNCED",0
 txt_ly_plain:    db "NOT SYNCED",0
 txt_ly_blank:    db 0
-txt_ly_src:      db " Words: LRCLIB.net",0
-txt_ly_keys:     db " Up/Down Left/Right move, 0 follow, L back",0
+txt_ly_unt:      db "ENTER: SYNC",0
+txt_ly_src:      db " Words: LRCLIB.net           R: look again",0
+txt_ly_keys:     db " Arrows, 0 follow, Enter sync, [ ] time",0
 txt_ly_none:     db "Play a song to see its words",0
 txt_ly_looking:  db "Looking for the words...",0
 txt_ly_instr:    db "Instrumental: no words",0
 txt_ly_notfound: db "LRCLIB has no words for this song",0
 txt_ly_old:      db "The lyrics need engine 0.18",0
 ly_gen:          db 0
+ly_unt:          db 0
 ly_st:           db 0
 ly_lit:          db 0
 ly_t:            dw 0

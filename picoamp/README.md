@@ -125,10 +125,15 @@ engine asks [LRCLIB](https://lrclib.net) (a free, open lyrics database; no accou
 WiFi: a file by its artist, title, album and length, a station's song by its artist and title.
 Synced lyrics follow the song: the line sung now is yellow on a light band, the ones sung grey,
 the ones to come white below; plain lyrics (no timing) scroll through a file. Up/Down move a
-row, Left/Right ten rows, 0 follows the song again, L (or ESC) goes back to the player. A
-station's song is timed from when its title came, so its lines may be a little early or late.
-The words are looked for when the page is open and the song changes; they are kept in the
-stream's memory (no card writes). With the PC's screen (`/screen`) the PC sends them instead.
+row, Left/Right ten rows, 0 follows the song again, L (or ESC) goes back to the player.
+
+A station's song that begins while it plays is timed from when its title came. When you tune
+in during a song, nobody knows how far it is: the header says ENTER: SYNC and no line is lit.
+Move the line that is sung now into the middle (it shows on a band) and press **Enter**: the
+words follow from there. Enter does the same any time the timing is off, and `[` / `]` move
+it 0.5 s back or on. **R** looks for the words again (also done by itself 20 s after LRCLIB
+did not answer). The words are looked for when the page is open and the song changes; they
+are kept in the stream's memory (no card writes). With the PC's screen (`/screen`) the PC sends them instead.
 
 ### The PC's music: the MSX link
 

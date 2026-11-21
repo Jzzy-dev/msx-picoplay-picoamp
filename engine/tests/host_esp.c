@@ -763,7 +763,7 @@ static void serve(conn_t *c)
                  "{\"id\":2,\"trackName\":\"%s\",\"duration\":200.0,\"instrumental\":false,\"plainLyrics\":\"x\","
                  "\"syncedLyrics\":\"[ar: Someone]\\n[00:00.50] First line of %s\\n[00:02.00][00:30.00] Second line, a rather long one that does not fit on one row\\n"
                  "[00:04.00] Caf\\u00e9 \\\"quoted\\\"\\n[00:06.00]\\n[00:08.5] Last line\"},"
-                 "{\"id\":3,\"trackName\":\"later\",\"syncedLyrics\":\"[00:01.00] not this one\"}]", tn, tn, tn);
+                 "{\"id\":3,\"trackName\":\"later\",\"syncedLyrics\":\"[00:01.00] not this one\\n[00:03.00] second\\n[00:05.00] third\\n[00:07.00] fourth\\n[00:09.00] fifth\"}]", tn, tn, tn);
         http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n", b);
         return;
     }

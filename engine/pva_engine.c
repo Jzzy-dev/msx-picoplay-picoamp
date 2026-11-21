@@ -1137,6 +1137,8 @@ static void split_stream_title(const char *t)
     }
 }
 
+static bool link_mem(void);
+static bool ly_used;
 static void scr_reset(void);
 
 static int open_stream(const char *entry)
@@ -1161,6 +1163,7 @@ static int open_stream(const char *entry)
     int r = pva_net_start(u);
     if (r != PVA_OK) return r;
     scr_reset();
+    if (ly_used) link_mem();                // (the words' memory now, while the ring is empty)
     if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
     pva_art_station(u, uuid, given_station);    // its logo (online: it comes when it comes)
     r = pva_dec_open_stream(&info);
@@ -1772,7 +1775,8 @@ typedef struct
     uint8_t  depth, uhex, u8need;
     uint32_t arr, ucp, u8cp;        // (arr: a bit per depth, 1 an array)
     int32_t  obj_dur;               // the object's duration (-1: not given)
-    bool     obj_instr, arr_tried_search;
+    bool     obj_instr, arr_tried_search, untimed;
+    uint32_t retry_at;              // no answer: asked again from then (0: not)
     char     key[24], num[12];
     uint8_t  klen, nlen;
     char     line[LY_LINE];
@@ -1782,6 +1786,9 @@ typedef struct
 static lyo_t   *lyo;
 static bool     ly_fetching;        // a request of lyo's runs
 static uint32_t song_at_ms;         // when the station's song began (its title came)
+static bool     song_untimed;       // (its title was the stream's first: it began before, when is not known)
+static int32_t  ly_off_ms;          // the words' time moved (synced by hand, [ ])
+static bool     ly_used;            // the lyrics page was used: the words' memory is kept from a stream's start
 
 // (another stream, or none: the ring is the stream's again)
 static void scr_reset(void)
@@ -1839,6 +1846,7 @@ static void scr_line(void)
             lyr->state = scr->num[0] == 's' ? PVA_LY_SYNCED : scr->num[0] == 'p' ? PVA_LY_PLAIN : scr->num[0] == 'i' ? PVA_LY_INSTRUMENTAL
                        : scr->num[0] == 'n' ? PVA_LY_NOT_FOUND : scr->num[0] == 'l' ? PVA_LY_LOOKING : PVA_LY_NONE;
             lyr->n = lyr->used = 0;
+            ly_off_ms = 0;
             lyr->gen++;
             break;
         case 'R':
@@ -2143,6 +2151,7 @@ static void ly_done(bool ok)
         return;
     }
     lyo->step = 0;
+    lyo->retry_at = !ok && lyo->best == 0 ? (pva_hal_millis() + 20000u) | 1u : 0;
     lyr->state = lyo->best == 2 ? PVA_LY_SYNCED : lyo->best == 1 ? PVA_LY_PLAIN : lyo->best == 3 ? PVA_LY_INSTRUMENTAL : PVA_LY_NOT_FOUND;
     if (lyo->best == 3 || lyo->best == 0) lyr->n = lyr->used = 0;
     lyr->gen++;
@@ -2162,6 +2171,9 @@ static void ly_want(void)
     if (h == lyo->hash) return;
     if (ly_fetching) { pva_web_abort(); ly_fetching = false; }
     lyo->hash = h;
+    ly_off_ms = 0;
+    lyo->untimed = pva_dec_is_stream() && song_untimed;
+    lyo->retry_at = 0;
     lyo->want_s = pva_dec_is_stream() ? 0 : (uint16_t)info.total_seconds;
     snprintf(lyo->q[0], sizeof lyo->q[0], "%s", info.artist);
     snprintf(lyo->q[1], sizeof lyo->q[1], "%s", info.title);
@@ -2216,16 +2228,40 @@ static int cmd_lyrics(void)
         own = true;
     }
     bool on = scr_on || own;
-    uint16_t first = (uint16_t)(args[0] | (args[1] << 8));
-    uint8_t want = args[2] > 20 ? 20 : args[2];
+    if (own)
+    {
+        ly_used = true;
+        // no answer: asked again after a while
+        if (lyo->retry_at && (int32_t)(pva_hal_millis() - lyo->retry_at) >= 0 && lyr->state == PVA_LY_NOT_FOUND) { lyo->hash = 0; ly_want(); }
+    }
+    int32_t raw = !on ? 0 : own ? ly_song_ms() : scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
+    // the page's actions (args[2] >= 0x80): 0x81 look again, 0x82 the row args[0..1] is sung now, 0x83 the time by args[0] x 100 ms
+    if (on && args[2] >= 0x80)
+    {
+        uint8_t act = args[2];
+        args[2] = 0;
+        if (act == 0x81 && own) { lyo->hash = 0; ly_want(); }
+        else if (act == 0x82)
+        {
+            uint16_t r = (uint16_t)(args[0] | (args[1] << 8));
+            if (r < lyr->n && lyr->row[r].ms >= 0) { ly_off_ms = lyr->row[r].ms - raw; if (own) lyo->untimed = false; }
+        }
+        else if (act == 0x83) { ly_off_ms += (int32_t)(int8_t)args[0] * 100; if (own) lyo->untimed = false; }
+        args[0] = args[1] = 0;
+    }
+    bool untimed = own && lyo->untimed;
+    uint16_t first;
+    uint8_t want;
+    first = (uint16_t)(args[0] | (args[1] << 8));
+    want = args[2] > 20 ? 20 : args[2];
     uint8_t st_ = on ? lyr->state : PVA_LY_NONE;
     uint16_t n = on && (st_ == PVA_LY_SYNCED || st_ == PVA_LY_PLAIN) ? lyr->n : 0;
     uint16_t now = 0xFFFF;
     uint8_t lit = 0;
-    if (n && st_ == PVA_LY_SYNCED)
+    if (n && st_ == PVA_LY_SYNCED && !untimed)
     {
         // the last row begun (its time passed), back to the first of its line (the rows of one time)
-        int32_t e = own ? ly_song_ms() : scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
+        int32_t e = raw + ly_off_ms;
         for (uint16_t i = 0; i < n && lyr->row[i].ms <= e; i++) if (lyr->row[i].ms >= 0) now = i;
         if (now != 0xFFFF)
         {
@@ -2247,7 +2283,7 @@ static int cmd_lyrics(void)
     o[2] = (uint8_t)n; o[3] = (uint8_t)(n >> 8);
     o[4] = (uint8_t)now; o[5] = (uint8_t)(now >> 8);
     o[6] = lit;
-    o[7] = 0;
+    o[7] = untimed && st_ == PVA_LY_SYNCED ? 1 : 0;      // 1: synced, but when the song began is not known (sync it by hand)
     uint32_t k = 8;
     for (uint16_t i = 0; i < want; i++)
     {
@@ -2715,6 +2751,7 @@ bool pva_core1_poll(void)
         const pva_net_stats_t *ns = pva_net_stats();
         if (ns->title_gen != shown_title_gen && pva_dec_is_stream())
         {
+            song_untimed = shown_title_gen == 0;
             shown_title_gen = ns->title_gen;
             split_stream_title(pva_net_stream_title());
             song_at_ms = pva_hal_millis();

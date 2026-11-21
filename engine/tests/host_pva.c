@@ -2459,9 +2459,23 @@ int main(int argc, char **argv)
         CHECK(lst == PVA_LY_SYNCED && n == 6 && !strcmp(rows, want), "synced, %u rows: %s (state %d)", n, rows, lst);
         CHECK(host_esp_lrclib_asks == a0 + 1 && strstr(host_esp_last_lrclib, "/api/search?track_name="), "one search: %s", host_esp_last_lrclib);
         uint16_t now = (uint16_t)(reply[4] | (reply[5] << 8));
-        CHECK(now != 0xFFFF && now < 3, "the row of now (%u, %u lit)", now, reply[6]);
+        CHECK(now == 0xFFFF && reply[7] == 1, "joined in the song: when it began is not known (row %u, flags %u)", now, reply[7]);
+        uint8_t sy[3] = { 3, 0, 0x82 };         // row 3 ("Cafe") is sung now
+        cmd(PVA_C_LYRICS, sy, sizeof sy);
+        cmd(PVA_C_LYRICS, la, sizeof la);
+        now = (uint16_t)(reply[4] | (reply[5] << 8));
+        CHECK(now == 3 && reply[6] == 1 && reply[7] == 0, "synced by hand: row %u lit (%u), flags %u", now, reply[6], reply[7]);
+        uint8_t nu[3] = { (uint8_t)-15, 0, 0x83 };   // 1.5 s back: 2.5 s, row 1 (2.0 s, two rows)
+        cmd(PVA_C_LYRICS, nu, sizeof nu);
+        cmd(PVA_C_LYRICS, la, sizeof la);
+        now = (uint16_t)(reply[4] | (reply[5] << 8));
+        CHECK(now == 1 && reply[6] == 2, "1.5 s back: row %u, %u lit", now, reply[6]);
         cmd(PVA_C_LYRICS, la, sizeof la);
         CHECK(host_esp_lrclib_asks == a0 + 1, "not asked again for the same song");
+        uint8_t rt[3] = { 0, 0, 0x81 };
+        cmd(PVA_C_LYRICS, rt, sizeof rt);
+        for (int w = 0; w < 200; w++) { cmd(PVA_C_LYRICS, la, sizeof la); if (reply[0] == PVA_LY_SYNCED) break; run_ms(50); }
+        CHECK(host_esp_lrclib_asks == a0 + 2 && reply[0] == PVA_LY_SYNCED, "R: looked for again (%u asks)", host_esp_lrclib_asks - a0);
         cmd(PVA_C_STOP, NULL, 0);
         run_ms(500);
         cmd(PVA_C_LYRICS, la, sizeof la);
