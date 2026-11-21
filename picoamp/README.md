@@ -104,7 +104,7 @@ PICOAMP shows "LOADING THE LIST...".
 | D or DEL | Remove the chosen station from the favourites (in Internet radio/Favourites) |
 | / or J | Search the station directory by name |
 | ? | The help page with all the keys (any key closes it); the credits at its bottom change colour on the beat of the music |
-| ESC / Q | Quit to MSX-DOS (the music keeps playing) |
+| ESC / Q | Quit to MSX-DOS (the music keeps playing). The ROM: Q only (to BASIC); ESC only closes pages there |
 
 ### Favourites
 

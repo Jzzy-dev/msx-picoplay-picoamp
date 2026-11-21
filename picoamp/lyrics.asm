@@ -210,8 +210,7 @@ ly_ask:
         ld (ly_man),hl
         ld hl,#8000
         ld (ly_top),hl          ; (all rows again)
-.same:  ld a,(reply+7)          ; not timed (a station joined in a song)
-        and 1
+.same:  ld a,(reply+7)          ; not timed (a station joined in a song: bit 0), [ ]'s moves (bits 1-7)
         ld c,a
         ld a,(ly_unt)
         cp c
@@ -368,6 +367,7 @@ ly_colour:
         cp LY_SYNC
         jr nz,.nc
         ld a,(ly_unt)
+        and 1
         ld hl,(ly_man)
         or h
         or l
@@ -408,10 +408,53 @@ ly_state:
         cp LY_SYNC
         jr nz,.h0
         ld a,(ly_unt)
-        or a
-        ld a,LY_SYNC
-        jr z,.h
+        and 1
         ld hl,txt_ly_unt
+        jr nz,.h1
+        ld hl,txt_ly_sync
+        ld a,(ly_unt)           ; moved with [ ]: "SYNCED -1.5S"
+        sra a
+        or a
+        jr z,.h1
+        ld de,ly_hb+6
+        ld c,'+'
+        jp p,.pl
+        neg
+        ld c,'-'
+.pl:    ex de,hl
+        ld (hl),' '
+        inc hl
+        ld (hl),c
+        inc hl
+        ld e,a                  ; |n| / 2 seconds, n odd: .5
+        srl a
+        ld b,'0'-1
+.t:     inc b
+        sub 10
+        jr nc,.t
+        add a,'0'+10
+        ld c,a
+        ld a,b
+        cp '0'
+        jr z,.u1
+        ld (hl),a
+        inc hl
+.u1:    ld (hl),c
+        inc hl
+        ld (hl),'.'
+        inc hl
+        ld a,e
+        and 1
+        ld a,'0'
+        jr z,.f
+        ld a,'5'
+.f:     ld (hl),a
+        inc hl
+        ld (hl),'S'
+        inc hl
+        ld (hl),0
+        ld hl,ly_hb
+.h1:    ld a,LY_SYNC
         jr .h
 .h0:
         ld hl,txt_ly_plain
@@ -487,6 +530,7 @@ ly_ctext:
 
 txt_ly_head:     db " LYRICS",0
 txt_ly_sync:     db "SYNCED",0
+ly_hb:           db "SYNCED +12.5S",0
 txt_ly_plain:    db "NOT SYNCED",0
 txt_ly_blank:    db 0
 txt_ly_unt:      db "ENTER: SYNC",0

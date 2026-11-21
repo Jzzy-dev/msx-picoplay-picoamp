@@ -1788,6 +1788,7 @@ static bool     ly_fetching;        // a request of lyo's runs
 static uint32_t song_at_ms;         // when the station's song began (its title came)
 static bool     song_untimed;       // (its title was the stream's first: it began before, when is not known)
 static int32_t  ly_off_ms;          // the words' time moved (synced by hand, [ ])
+static int32_t  ly_nudge_ms;        // of it, by [ ] since (shown in the head)
 static bool     ly_used;            // the lyrics page was used: the words' memory is kept from a stream's start
 
 // (another stream, or none: the ring is the stream's again)
@@ -1847,7 +1848,7 @@ static void scr_line(void)
             lyr->state = scr->num[0] == 's' ? PVA_LY_SYNCED : scr->num[0] == 'p' ? PVA_LY_PLAIN : scr->num[0] == 'i' ? PVA_LY_INSTRUMENTAL
                        : scr->num[0] == 'n' ? PVA_LY_NOT_FOUND : scr->num[0] == 'l' ? PVA_LY_LOOKING : PVA_LY_NONE;
             lyr->n = lyr->used = 0;
-            ly_off_ms = 0;
+            ly_off_ms = ly_nudge_ms = 0;
             lyr->gen++;
             break;
         case 'R':
@@ -2173,7 +2174,7 @@ static void ly_want(void)
     if (h == lyo->hash) return;
     if (ly_fetching) { pva_web_abort(); ly_fetching = false; }
     lyo->hash = h;
-    ly_off_ms = 0;
+    ly_off_ms = ly_nudge_ms = 0;
     lyo->untimed = pva_dec_is_stream() && song_untimed;
     lyo->retry_at = 0;
     lyo->want_s = pva_dec_is_stream() ? 0 : (uint16_t)info.total_seconds;
@@ -2247,9 +2248,14 @@ static int cmd_lyrics(void)
         else if (act == 0x82)
         {
             uint16_t r = (uint16_t)(args[0] | (args[1] << 8));
-            if (r < lyr->n && lyr->row[r].ms >= 0) { ly_off_ms = lyr->row[r].ms - raw; if (own) lyo->untimed = false; }
+            if (r < lyr->n && lyr->row[r].ms >= 0) { ly_off_ms = lyr->row[r].ms - raw; ly_nudge_ms = 0; if (own) lyo->untimed = false; }
         }
-        else if (act == 0x83) { ly_off_ms += (int32_t)(int8_t)args[0] * 100; if (own) lyo->untimed = false; }
+        else if (act == 0x83)
+        {
+            ly_off_ms += (int32_t)(int8_t)args[0] * 100;
+            ly_nudge_ms += (int32_t)(int8_t)args[0] * 100;
+            if (own) lyo->untimed = false;
+        }
         args[0] = args[1] = 0;
     }
     bool untimed = own && lyo->untimed;
@@ -2286,7 +2292,13 @@ static int cmd_lyrics(void)
     o[2] = (uint8_t)n; o[3] = (uint8_t)(n >> 8);
     o[4] = (uint8_t)now; o[5] = (uint8_t)(now >> 8);
     o[6] = lit;
-    o[7] = untimed && st_ == PVA_LY_SYNCED ? 1 : 0;      // 1: synced, but when the song began is not known (sync it by hand)
+    {
+        // bit 0: synced, but when the song began is not known (sync it by hand); bits 1-7: [ ]'s moves, 0.5 s each (signed)
+        int32_t h = ly_nudge_ms >= 0 ? (ly_nudge_ms + 250) / 500 : -((-ly_nudge_ms + 250) / 500);
+        if (h > 63) h = 63;
+        if (h < -64) h = -64;
+        o[7] = (uint8_t)((untimed && st_ == PVA_LY_SYNCED ? 1 : 0) | (uint8_t)((uint8_t)h << 1));
+    }
     uint32_t k = 8;
     for (uint16_t i = 0; i < want; i++)
     {

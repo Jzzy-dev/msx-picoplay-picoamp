@@ -2469,7 +2469,7 @@ int main(int argc, char **argv)
         cmd(PVA_C_LYRICS, nu, sizeof nu);
         cmd(PVA_C_LYRICS, la, sizeof la);
         now = (uint16_t)(reply[4] | (reply[5] << 8));
-        CHECK(now == 1 && reply[6] == 2, "1.5 s back: row %u, %u lit", now, reply[6]);
+        CHECK(now == 1 && reply[6] == 2 && (int8_t)reply[7] >> 1 == -3, "1.5 s back: row %u, %u lit, shown %d x 0.5 s", now, reply[6], (int8_t)reply[7] >> 1);
         cmd(PVA_C_LYRICS, la, sizeof la);
         CHECK(host_esp_lrclib_asks == a0 + 1, "not asked again for the same song");
         uint8_t rt[3] = { 0, 0, 0x81 };

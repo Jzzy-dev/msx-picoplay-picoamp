@@ -15,7 +15,7 @@
 ;       V spectrum / oscilloscope / cover, G equalizer screen, E next preset,
 ;       Z full screen pictures, F / D (DEL) add / remove a favourite,
 ;       / or J search the station directory, ? the help page,
-;       ESC or Q quit (the music keeps playing).
+;       ESC or Q quit (the music keeps playing; the ROM: Q only, ESC closes pages).
 ; Equalizer screen: Left/Right choose a band (or the balance), Up/Down set
 ;       it, 0 back to the middle, E next preset, G / ESC / Enter close.
 ; Mouse (either port): click a list entry to select it, click it again to
@@ -4291,7 +4291,7 @@ srch_go:
         db #5E,"F          favourite+ D, DEL favourite-",0
         db #5E,"/ or J     search     ?      this page",0
     IFDEF ROMBUILD
-        db #5E,"C W T $ L  pages      ESC Q  quit",0
+        db #5E,"C W T $ L  pages      Q      quit",0
     ELSE
         db #5E,"C W T $    pages      ESC Q  quit",0
     ENDIF
@@ -6632,8 +6632,10 @@ keys:
         or a
         ld a,b
         jp nz,eq_keys
-        cp 27
+    IFNDEF ROMBUILD
+        cp 27                   ; (the ROM: ESC closes pages only, Q quits)
         jp z,quit
+    ENDIF
         cp 127
         jp z,fav_del
         cp '?'
