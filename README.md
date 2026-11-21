@@ -38,6 +38,15 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="1940" height="1077" alt="albumartGMinplayer" src="https://github.com/user-attachments/assets/f9548d79-87b0-4363-a985-586a295efe3e" /> | <img width="1788" height="1393" alt="albumartGMfullscreen" src="https://github.com/user-attachments/assets/6e9cab43-1431-47ba-baef-7b5dfe3cc10e" /> |
 
+**v1.6** (engine 0.18; tried on a PicoVerse 2350 as the cartridge ROM with PicoAmp for Windows):
+the MSX link. With [PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) on a PC in the
+same network, the MSX becomes the screen and remote of what the PC plays (Spotify, the Media
+Player or another player it follows, or its own files and stations): the song, its time and
+seek bar, the cover, the bars in step with the PC, and **L** a lyrics page whose lines light
+up as they are sung (from LRCLIB, through the PC). Pause, next, previous, seek, shuffle,
+repeat, volume and mute go to the PC. Or the PC's sound plays on the MSX as an internet
+radio station. See `picoamp/README.md`, section The PC's music: the MSX link.
+
 **v1.5** (engine 0.17; tried on a PicoVerse 2350 as the cartridge ROM): pictures and covers.
 **I** opens a picture browser for the JPEGs on the card (folders and pictures only): Enter shows
 one full screen in SCREEN 8 (256 colours, dithered, any size of baseline JPEG, the music plays
@@ -91,7 +100,7 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(v1.0; `bin/picoamp_wifi.uf2` here is v1.5).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.6).
 
 ## Downloads (`bin/`)
 
@@ -101,11 +110,11 @@ PicoAmp v1.0 is also published as third-party firmware in the PicoVerse reposito
 | `picoamp.uf2` | the same without WiFi |
 | `picoplay_wifi.uf2` | **PicoPlay** firmware: Nextor (Sunrise IDE on the microSD), the 1 MB mapper, the engine and the WiFi, for SymbOS / MSX-DOS with `PICOPLAY.EXE`, `PICOAMP.COM`, `PVTEST.COM` |
 | `picoplay.uf2` | the same without WiFi |
-| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather, news, markets and pictures pages) |
+| `PICOAMP.COM`, `PICOAMP.ROM` | the MSX2 player for MSX-DOS, and as a cartridge ROM (64 KB: four banks, the program and its clock, weather, news, markets, lyrics and pictures pages) |
 | `PICOPLAY.EXE` | the SymbOS player |
 | `PVTEST.COM` | the MSX-DOS test tool |
 | `RADIO.M3U` | a few internet radio stations to start with |
-| `loadrom.exe` | Cristiano's LoadROM tool (Windows) with the two extra modes: `-pa` PicoAmp, `-p1` PicoPlay (add `-w` for WiFi). It builds the v1.5 firmware |
+| `loadrom.exe` | Cristiano's LoadROM tool (Windows) with the two extra modes: `-pa` PicoAmp, `-p1` PicoPlay (add `-w` for WiFi). It builds the v1.5 firmware; the `.uf2` files here are v1.6 (see Building to make the tool yourself) |
 | `SHA256SUMS` | checksums |
 
 Flash a `.uf2` as any PicoVerse firmware: hold BOOTSEL, plug in USB, and copy the file to the

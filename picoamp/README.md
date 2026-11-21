@@ -119,48 +119,50 @@ happened ("Added to the favourites", "Already a favourite", ...).
 
 ### The PC's music: the MSX link
 
-[PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) can play what
-the PC plays on the MSX: Spotify (or another player it follows), its own
-files and stations. On the PC, **K** turns its MSX link on and shows its
-address, e.g. `http://192.168.1.20:8765/stream.mp3` (Windows may ask once
-whether PicoAmp may take connections on the network: allow it for private
-networks). Add that address to `RADIOFAV.M3U` on the card:
+[PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) links the MSX to what the
+PC plays: Spotify, the Media Player or another player it follows, or its own files and
+stations. On the PC, **K** turns its MSX link on and shows its address, e.g.
+`http://192.168.1.20:8765/` (Windows may ask once whether PicoAmp may take connections on
+the network: allow it for private networks). There are two ways to use it; add either or
+both to `RADIOFAV.M3U` on the card and play them from Internet radio/Favourites:
 
 ```
-#EXTINF:-1,PicoAmp on the PC
+#EXTINF:-1,PicoAmp on the PC: screen and remote
+http://192.168.1.20:8765/screen
+#EXTINF:-1,PicoAmp on the PC: the sound
 http://192.168.1.20:8765/stream.mp3
 ```
 
-(the PC also gives these lines at `http://<the PC>:8765/picoamp.m3u`).
+(the PC also gives these lines at `http://<the PC>:8765/picoamp.m3u`). Both need engine 0.18
+(this repository's v1.6 firmware); the station's reply says `X-PicoAmp`, so the engine
+knows it is the PC.
 
-**Or as the PC's screen and remote** (engine 0.18): add `http://192.168.1.20:8765/screen`
-the same way. Then the sound stays on the PC, and the MSX shows what it plays: the song,
-its time (and the seek bar), playing or paused, the cover and the bars, as the PC's own
-bars move (25 times a second, so they go with what you hear from the PC). The keys
-below work the same; `,` and `.` seek to a time in the song.
-**L** opens the lyrics page: the words of the PC's song, which PicoAmp for Windows finds on
-[LRCLIB](https://lrclib.net) and sends along. Synced lyrics follow the song: the line sung
-now is yellow on a light band, the ones sung grey, the ones to come white below. Plain
-lyrics (no timing) scroll through the song. Up/Down move a row, Left/Right ten rows,
-0 follows the song again, L (or ESC) goes back to the player. The page shows only in
-the screen mode, as only there the PC sends the words.
-Play it from Internet radio/Favourites. It is an internet radio station of
-the PC: the sound (MP3, 160 kbit/s) plays on the MSX, the bars move on it,
-and the song shows as a station's song does. Because its reply says
-`X-PicoAmp: 1`, the engine (0.18) knows it is PicoAmp for Windows:
+**`/screen`: the MSX as the PC's screen and remote.** The sound stays on the PC; the MSX
+shows what it plays, in step with it: the song, its time and the seek bar, playing or
+paused, the cover (when the PC has made it), the PC's format line (`SPOTIFY 48.0KHZ`) and
+the bars, as the PC's own bars move (25 times a second). **L** opens the lyrics page: the
+words of the PC's song, which PicoAmp for Windows finds on [LRCLIB](https://lrclib.net)
+and sends along. Synced lyrics follow the song: the line sung now is yellow on a light
+band, the ones sung grey, the ones to come white below; plain lyrics (no timing) scroll
+through the song. Up/Down move a row, Left/Right ten rows, 0 follows the song again, L (or
+ESC) goes back to the player.
 
-* SPACE, N and P go to the PC (and through it to Spotify): pause and play,
-  the next and the previous song. `,` and `.` seek 10 seconds in the PC's
-  song, H and R switch its shuffle and repeat. The station plays on: while
-  the PC pauses, it sends silence.
-* A song's cover comes from the PC (the real album art, made there as the
-  MSX wants it: 80 x 80, baseline JPEG), not from the iTunes search; the
-  full screen cover (Z) too, at 281 x 192.
+**`/stream.mp3`: the PC's sound on the MSX.** An internet radio station of the PC: the
+sound (MP3, 160 kbit/s) plays on the MSX, the bars move on it, and the song shows as a
+station's song does. The MSX plays a few seconds behind the PC (its stream buffer), so
+turn the PC's own speakers down.
 
-The MSX plays a few seconds behind the PC (its stream buffer), so turn the
-PC's own speakers down. The volume keys and M are the PC's (PicoAmp's, or
-Spotify's when it follows Spotify): the sound is the PC's, at its volume, so
-they work the same in both ways; the screen shows the PC's volume.
+In both:
+
+* SPACE, N and P go to the PC (and through it to its player): pause and play, the next
+  and the previous song. `,` and `.` seek 10 seconds in the PC's song (in the screen
+  mode a click on the seek bar too), H and R switch its shuffle and repeat. The stream
+  plays on: while the PC pauses, it sends silence.
+* A song's cover comes from the PC (the real album art, made there as the MSX wants it:
+  80 x 80, baseline JPEG), not from the iTunes search; the full screen cover (Z) too, at
+  281 x 192.
+* The volume keys and M are the PC's (PicoAmp's own, or the followed player's in
+  Windows's mixer), and the screen shows the PC's volume.
 
 ### Clock
 
@@ -691,8 +693,8 @@ after it has reported standing still once.
 
 ### Page modules
 
-The clock, weather, news and markets pages are modules (`clock.asm`, `weather.asm`,
-`news.asm`, `markets.asm`): each is assembled to run at the ticker strips' buffer (7 KB in
+The clock, weather, news, markets and lyrics pages are modules (`clock.asm`, `weather.asm`,
+`news.asm`, `markets.asm`, `lyrics.asm`): each is assembled to run at the ticker strips' buffer (7 KB in
 page 2, free while a page shows) and copied there when the page opens. Each
 starts with a table of jumps (open, tick, frame, keys, info, click, leave)
 that the main program calls. In the COM file they come after the program; in
