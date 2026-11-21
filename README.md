@@ -38,6 +38,10 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="1940" height="1077" alt="albumartGMinplayer" src="https://github.com/user-attachments/assets/f9548d79-87b0-4363-a985-586a295efe3e" /> | <img width="1788" height="1393" alt="albumartGMfullscreen" src="https://github.com/user-attachments/assets/6e9cab43-1431-47ba-baef-7b5dfe3cc10e" /> |
 
+| Lyrics | Connected Spotify |
+|---|---|
+| <img width="2068" height="2262" alt="Picture1" src="https://github.com/user-attachments/assets/efd2d146-1bb1-4904-94c4-b3e852ee332e" /> | <img width="1195" height="1119" alt="PIcoAmpWinlyrics" src="https://github.com/user-attachments/assets/95dddcd8-2f98-4449-ae9b-a03dbd54854f" /> |
+
 **v1.6** (engine 0.18; tried on a PicoVerse 2350 as the cartridge ROM with PicoAmp for Windows):
 the MSX link. With [PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) on a PC in the
 same network, the MSX becomes the screen and remote of what the PC plays (Spotify, the Media
