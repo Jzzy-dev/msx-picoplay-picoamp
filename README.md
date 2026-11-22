@@ -42,7 +42,7 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="2068" height="2262" alt="Picture1" src="https://github.com/user-attachments/assets/efd2d146-1bb1-4904-94c4-b3e852ee332e" /> | <img width="1195" height="1119" alt="PIcoAmpWinlyrics" src="https://github.com/user-attachments/assets/95dddcd8-2f98-4449-ae9b-a03dbd54854f" /> |
 
-**v1.7** (engine 0.19; so far in the host test only): Sonos. **Internet radio/Sonos** finds
+**v1.7** (engine 0.19; tried on a PicoVerse 2350 with Sonos speakers): Sonos. **Internet radio/Sonos** finds
 the Sonos speakers in the network (over the ESP-01) and lists the rooms; Enter makes the
 MSX the screen and remote of one, as the MSX link does for the PC, without a PC: the song,
 its time, playing or paused, the cover, the lyrics (L), and SPACE, N, P, seeking, shuffle,
@@ -115,6 +115,20 @@ colours that turn with the music, a small spectrum. The choices are kept in
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
 (v1.0; `bin/picoamp_wifi.uf2` here is v1.7).
+
+## Spotify, other players and Sonos
+
+PicoAmp on the MSX can be the screen and remote of music that plays somewhere else:
+
+* **Sonos, on its own** (v1.7): Internet radio/Sonos lists the rooms of the house. Enter on one
+  shows its song, time, cover and lyrics, and SPACE, N, P, seeking, shuffle, repeat, the volume
+  and mute go to the room. No PC, no account: the engine talks to the speakers over the ESP-01.
+  The sound stays on the speakers. See `picoamp/README.md`, section Sonos.
+* **Spotify and other players of a PC, through [PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp)**
+  (v1.6): the PC follows Spotify, the Media Player, VLC, the TIDAL and SoundCloud apps or a browser
+  (or a Sonos room, too), and its MSX link (**K**) gives the MSX the song, the cover, the bars, the
+  lyrics and the keys (`http://<the PC>:8765/screen`), or the PC's sound itself as a station
+  (`/stream.mp3`). See `picoamp/README.md`, section The PC's music: the MSX link.
 
 ## Downloads (`bin/`)
 
