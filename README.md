@@ -42,6 +42,14 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="2068" height="2262" alt="Picture1" src="https://github.com/user-attachments/assets/efd2d146-1bb1-4904-94c4-b3e852ee332e" /> | <img width="1195" height="1119" alt="PIcoAmpWinlyrics" src="https://github.com/user-attachments/assets/95dddcd8-2f98-4449-ae9b-a03dbd54854f" /> |
 
+**v1.7** (engine 0.19; so far in the host test only): Sonos. **Internet radio/Sonos** finds
+the Sonos speakers in the network (over the ESP-01) and lists the rooms; Enter makes the
+MSX the screen and remote of one, as the MSX link does for the PC, without a PC: the song,
+its time, playing or paused, the cover, the lyrics (L), and SPACE, N, P, seeking, shuffle,
+repeat, the volume and mute go to the room. The sound stays on the speakers. See
+`picoamp/README.md`, section Sonos. (PicoAmp for Windows and PicoAmp for the web have
+Sonos too.)
+
 **v1.6** (engine 0.18; tried on a PicoVerse 2350 as the cartridge ROM with PicoAmp for Windows):
 the MSX link. With [PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp) on a PC in the
 same network, the MSX becomes the screen and remote of what the PC plays (Spotify, the Media
@@ -106,7 +114,7 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(v1.0; `bin/picoamp_wifi.uf2` here is v1.6).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.7).
 
 ## Downloads (`bin/`)
 
@@ -144,7 +152,7 @@ the ESP-01 must already know your access point (as for the Nextor WiFi tools).
 
 | Folder | What |
 |--------|------|
-| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds and the full articles, Yahoo Finance, iTunes and the wsrv.nl image proxy, 538 checks) |
+| `engine/` | the PicoVerse Audio Engine (`pva_*.c`), with its PC test (`tests/`: a simulated ESP-01, radio servers, the Radio Browser API, ip-api.com, Open-Meteo and news feeds and the full articles, Yahoo Finance, iTunes, the wsrv.nl image proxy and Sonos speakers, 539 checks) |
 | `picoamp/` | PICOAMP (Z80, sjasmplus) and its clock, weather and news pages (`clock.asm`, `weather.asm`, `news.asm`, page modules), its Z80 test harness, screen tools and mock-ups |
 | `picoplay/` | PicoPlay (SymbOS C Compiler) and PVTEST (sjasmplus), their PC tests, and an openMSX device that runs the engine (`emu/`) |
 | `devrig/` | a headless openMSX test bench (NMS 8245 + the cartridge's slot layout). The system ROMs it needs are not included |
@@ -180,6 +188,8 @@ cd ../../tool && make             # embeds it: loadrom.exe (on Linux: gcc src/lo
 loadrom -pa -w -o picoamp_wifi.uf2
 ```
 
+* The v1.7 `.uf2` files were made with the Pico SDK 2.3.1 and GCC 15.2 (xPack), as the
+  firmware's README says; `firmware/check-heap.sh build` wants 3 KB of heap at least.
 * Libraries: [no-OS-FatFS-SD-SDIO-SPI-RPi-Pico](https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico)
   and [picomp3lib](https://github.com/ikjordan/picomp3lib) (Helix MP3), the
   [Pico SDK 2.2.0](https://github.com/raspberrypi/pico-sdk) and

@@ -70,6 +70,7 @@
 
 // ---------------------------------------------------------------- ring
 static uint8_t *ring;
+static bool     sonos;              // a Sonos room plays (pva_sonos.c makes its screen's lines; no connection here)
 static uint8_t *spare;              // stream RAM after the ring (for the station directory)
 static size_t   spare_size;
 static size_t   ring_size, ring_head, ring_tail, ring_count;
@@ -100,6 +101,7 @@ static void commit_title(void);
 
 size_t pva_net_read(uint8_t *dst, size_t n)
 {
+    if (sonos) return pva_sonos_read(dst, n);
     if (n > ring_count) n = ring_count;
     size_t done = 0;
     while (done < n)
@@ -924,6 +926,23 @@ static void begin_session(void)
 int pva_net_start(const char *u)
 {
     if (!url || strlen(u) > URL_MAX) return PVA_E_ARGS;
+    if (sonos) { pva_sonos_stop(); sonos = false; }
+    if (pva_sonos_url(u))
+    {
+        // a Sonos room: the MSX link's screen, made by pva_sonos.c (the old stream closes meanwhile)
+        if (!ring) return PVA_E_NOWIFI;
+        if (hal_open && s != S_IDLE && s != S_FAILED) { restart_pending = false; stop_session(); }
+        pva_net_ring_return();
+        ring_head = ring_tail = ring_count = 0;
+        snprintf(url, URL_MAX + 1, "%s", u);
+        memset(&st, 0, sizeof st);
+        station[0] = 0;
+        title[0] = 0;
+        sonos = true;
+        int r = pva_sonos_start(u);
+        if (r != PVA_OK) sonos = false;
+        return r;
+    }
     {
         // check the URL without touching the session that may still be closing
         char save_host[HOST_MAX + 1];
@@ -1014,11 +1033,21 @@ static void stop_session(void)
 void pva_net_stop(void)
 {
     restart_pending = false;
+    if (sonos) { pva_sonos_stop(); sonos = false; return; }
     stop_session();
 }
 
-bool pva_net_active(void) { return s != S_IDLE && s != S_FAILED; }
-bool pva_net_ended(void) { return s == S_FAILED && ring_count == 0; }
+bool pva_net_active(void) { return sonos || (s != S_IDLE && s != S_FAILED); }
+bool pva_net_ended(void) { return !sonos && s == S_FAILED && ring_count == 0; }
+
+// the stream ring while a Sonos room plays: its memory (the screen's lines are lent its end, as for the PC's)
+uint8_t *pva_net_sonos_mem(size_t *size)
+{
+    *size = 0;
+    if (!sonos || !ring) return NULL;
+    *size = ring_size > 8192u ? 8192u : ring_size;
+    return ring;
+}
 
 const pva_net_stats_t *pva_net_stats(void)
 {
@@ -1036,7 +1065,7 @@ const pva_net_stats_t *pva_net_stats(void)
 }
 
 const char *pva_net_station(void) { return station; }
-uint8_t pva_net_picoamp(void) { return s != S_IDLE && s != S_FAILED ? picoamp : 0; }
+uint8_t pva_net_picoamp(void) { return sonos ? 2 : s != S_IDLE && s != S_FAILED ? picoamp : 0; }
 const char *pva_net_stream_title(void) { return title ? title : ""; }
 const char *pva_net_host(void) { return host; }
 const char *pva_net_url(void) { return url ? url : ""; }

@@ -93,6 +93,10 @@ uint8_t pva_dec_last_fresult(void);
 #define PVA_FN_TCPSEND      17u
 #define PVA_FN_TCPRCV       18u
 #define PVA_FN_DNS          206u
+#define PVA_FN_UDPOPEN      8u      // (the Sonos search: SSDP over UDP)
+#define PVA_FN_UDPCLOSE     9u
+#define PVA_FN_UDPSEND      11u
+#define PVA_FN_UDPRCV       12u
 #define PVA_RC_NO_FREE_CONN 9u      // UNAPI ERR_NO_FREE_CONN
 typedef struct pva_esp_slot
 {
@@ -153,6 +157,9 @@ const char *pva_dir_uuid(uint16_t i);
 uint16_t    pva_dir_num(uint16_t i);  // bitrate (stations) or station count (countries)
 void        pva_dir_click(const char *uuid);
 void        pva_dir_urlenc(char *out, size_t size, const char *s);
+void        pva_dir_clear(void);                // the results emptied (a list made here: the Sonos rooms)
+bool        pva_dir_add(const char *name, const char *url);   // a station added to them (false: no room)
+void        pva_dir_sort(void);                 // by name
 uint8_t    *pva_dir_cache(size_t *size);    // RAM the engine may use to keep a list
 
 // stream input for the decoder (pva_decode.c)
@@ -244,6 +251,8 @@ typedef bool (*pva_web_body_fn)(const uint8_t *p, size_t n);   // true: enough
 typedef void (*pva_web_done_fn)(bool ok);
 bool     pva_web_init(void);
 int      pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done);
+// a SOAP request (POST, text/xml): action and body stay the caller's until 'done'
+int      pva_web_soap(const char *url, const char *action, const char *body, size_t len, pva_web_body_fn bodyfn, pva_web_done_fn done);
 void     pva_web_poll(void);
 bool     pva_web_busy(void);
 void     pva_web_abort(void);
@@ -323,6 +332,21 @@ void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the
 int  pva_kind_from_name(const char *name);   // PVA_DE_xxx or 0
 void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
 
+// Sonos speakers in the network (pva_sonos.c): the rooms (a search), and one room as the MSX link's
+// screen: pva_net plays "sonos://<ip>:<port>/<RINCON id>#<room>" as such a station
+void        pva_sonos_init(void);               // (before pva_dir_init: its UDP slot from the spare RAM)
+int         pva_sonos_search(void);             // the rooms into pva_dir's results: PVA_E_BUSY, then pva_sonos_state()
+uint8_t     pva_sonos_state(void);              // PVA_DIRS_xxx of the search
+uint8_t     pva_sonos_error(void);              // PVA_NERR_xxx
+void        pva_sonos_cancel(void);
+bool        pva_sonos_url(const char *u);       // a sonos:// address
+int         pva_sonos_start(const char *u);     // (pva_net_start)
+void        pva_sonos_stop(void);
+bool        pva_sonos_on(void);                 // a room plays
+size_t      pva_sonos_read(uint8_t *dst, size_t n);   // its screen's lines, as the PC's /screen sends them
+void        pva_sonos_key(const char *k);       // a key, as the MSX link's (/cmd?k=...)
+void        pva_sonos_poll(void);
+uint8_t    *pva_net_sonos_mem(size_t *size);    // the stream ring while a room plays (no sound comes)
 // covers (pva_art.c)
 bool    pva_art_init(void);
 void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len, const char *artist, const char *album, const char *title);

@@ -39,8 +39,15 @@
 //     /screen         its screen (X-PicoAmp: 2): a V line every 40 ms (band b at level b + 1), a T line
 //                     every 500 ms (host_esp_screen_ms from the start, 200 s long, playing unless
 //                     host_esp_screen_paused), and an S line at once and every 8 s (the next of titles[])
+//   Sonos speakers (by their address, port 1400; the SSDP search over UDP finds 10.0.0.20 and .21):
+//     10.0.0.20 "Living Room" (RINCON_A, one speaker, a queue of songs), 10.0.0.21 "Kitchen" (RINCON_B,
+//     leads a group with "Dining Room", 10.0.0.22, RINCON_C; plays a station); a bonded one and a bridge
+//     are in the zone groups too. SOAP: GetZoneGroupState, Get/Set of the transport, position, play mode,
+//     group volume and mute, Play, Pause (a station: an error), Stop, Next, Previous, Seek. What they were
+//     told: host_esp_sonos_log. host_esp_sonos_udp = false: no UDP (an older ESP firmware)
 //   anything else: DNS error
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +64,10 @@ uint32_t host_esp_lrclib_asks;              // questions to LRCLIB
 char     host_esp_last_lrclib[300];
 uint32_t host_esp_link_keys, host_esp_link_covers, host_esp_link_big;   // the MSX link (pc.test)
 bool     host_esp_screen_paused;
+bool     host_esp_sonos_udp = true;
+char     host_esp_sonos_log[4000];
+uint32_t host_esp_sonos_asks;
+bool     host_esp_sonos_joined;             // Dining Room's group: Living Room leads it now (RINCON_C answers x-rincon:RINCON_A)
 char     host_esp_last_link_key[40];
 char     host_esp_last_itunes[200];
 char     host_esp_last_wsrv[400];              // the last request to the image proxy
@@ -160,7 +171,7 @@ static void answer(uint32_t delay, uint8_t fn, uint8_t rc, const void *p, size_t
 // ---------------- connections / HTTP servers ----------------
 typedef struct
 {
-    bool     used, tls;
+    bool     used, tls, udp;
     uint8_t  ip[4];
     uint16_t port;
     bq_t     reqbuf;
@@ -677,6 +688,144 @@ static void news(conn_t *c, const char *path)
     c->credit = 0;
 }
 
+// ---------------- pretend Sonos speakers ----------------
+typedef struct { const char *id, *name; bool radio; char state[20]; int track; uint32_t t0, at; int vol, mute; char mode[24]; } sonos_t;
+static sonos_t sonos_dev[3] = {
+    { "RINCON_A", "Living Room", false, "PLAYING", 1, 0, 0, 30, 0, "NORMAL" },
+    { "RINCON_B", "Kitchen", true, "PLAYING", 1, 0, 0, 40, 0, "NORMAL" },
+    { "RINCON_C", "Dining Room", true, "PLAYING", 1, 0, 0, 40, 0, "NORMAL" },
+};
+
+static void xesc(char *o, size_t n, const char *s)       // XML escaping, once
+{
+    size_t k = 0;
+    for (; *s && k + 7 < n; s++)
+    {
+        const char *e = *s == '<' ? "&lt;" : *s == '>' ? "&gt;" : *s == '&' ? "&amp;" : *s == '"' ? "&quot;" : NULL;
+        if (e) { memcpy(o + k, e, strlen(e)); k += strlen(e); } else o[k++] = *s;
+    }
+    o[k] = 0;
+}
+
+static void sonos_log(const char *who, const char *what, const char *args)
+{
+    size_t l = strlen(host_esp_sonos_log);
+    snprintf(host_esp_sonos_log + l, sizeof host_esp_sonos_log - l, "%s %s %s\n", who, what, args);
+}
+
+static const char *sx_arg(const char *body, const char *name, char *out, size_t n)
+{
+    char t[40];
+    snprintf(t, sizeof t, "<%s>", name);
+    const char *p = strstr(body, t);
+    out[0] = 0;
+    if (!p) return out;
+    p += strlen(t);
+    size_t k = strcspn(p, "<");
+    if (k >= n) k = n - 1;
+    memcpy(out, p, k);
+    out[k] = 0;
+    return out;
+}
+
+static void sonos_serve(conn_t *c, const char *r)
+{
+    host_esp_sonos_asks++;
+    sonos_t *d = &sonos_dev[c->ip[3] - 20];
+    const char *body = strstr(r, "\r\n\r\n");
+    body = body ? body + 4 : "";
+    char act[200] = "";
+    const char *sa = strstr(r, "SOAPACTION: \"");
+    if (sa) sscanf(sa + 13, "%199[^\"]", act);
+    const char *a = strchr(act, '#');
+    a = a ? a + 1 : act;
+    static char x[16384], m[4096], m2[8192];
+    x[0] = 0;
+    uint32_t el = (strcmp(d->state, "PLAYING") ? d->at : (now_ms - d->t0)) / 1000;
+    if (!strcmp(a, "GetZoneGroupState"))
+    {
+        snprintf(m, sizeof m,
+            "<ZoneGroupState><ZoneGroups>"
+            "<ZoneGroup Coordinator=\"RINCON_A\" ID=\"RINCON_A:1\"><ZoneGroupMember UUID=\"RINCON_A\" Location=\"http://10.0.0.20:1400/xml/device_description.xml\" ZoneName=\"Living Room\" SoftwareVersion=\"80.1-12345\"/>"
+            "<ZoneGroupMember UUID=\"RINCON_S\" Location=\"http://10.0.0.23:1400/xml/device_description.xml\" ZoneName=\"Living Room\" Invisible=\"1\"/>%s</ZoneGroup>"
+            "<ZoneGroup Coordinator=\"RINCON_B\" ID=\"RINCON_B:2\"><ZoneGroupMember UUID=\"RINCON_B\" Location=\"http://10.0.0.21:1400/xml/device_description.xml\" ZoneName=\"K&#252;che &amp; Co\">"
+            "<Satellite UUID=\"RINCON_X\" Location=\"http://10.0.0.24:1400/xml/device_description.xml\" ZoneName=\"Kitchen\" Invisible=\"1\"/></ZoneGroupMember>"
+            "%s</ZoneGroup>"
+            "<ZoneGroup Coordinator=\"RINCON_Z\" ID=\"RINCON_Z:3\"><ZoneGroupMember UUID=\"RINCON_Z\" Location=\"http://10.0.0.25:1400/xml/device_description.xml\" ZoneName=\"Boost\" IsZoneBridge=\"1\"/></ZoneGroup>"
+            "</ZoneGroups><VanishedDevices/></ZoneGroupState>",
+            host_esp_sonos_joined ? "<ZoneGroupMember UUID=\"RINCON_C\" Location=\"http://10.0.0.22:1400/xml/device_description.xml\" ZoneName=\"Dining Room\"/>" : "",
+            host_esp_sonos_joined ? "" : "<ZoneGroupMember UUID=\"RINCON_C\" Location=\"http://10.0.0.22:1400/xml/device_description.xml\" ZoneName=\"Dining Room\"/>");
+        xesc(m2, sizeof m2, m);
+        snprintf(x, sizeof x, "<ZoneGroupState>%s</ZoneGroupState>", m2);
+    }
+    else if (!strcmp(a, "GetPositionInfo") && d == &sonos_dev[2] && host_esp_sonos_joined)
+        snprintf(x, sizeof x, "<Track>1</Track><TrackDuration>0:00:00</TrackDuration><TrackMetaData></TrackMetaData><TrackURI>x-rincon:RINCON_A</TrackURI><RelTime>0:00:00</RelTime>");
+    else if (!strcmp(a, "GetPositionInfo") && d->radio)
+    {
+        snprintf(m, sizeof m, "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:r=\"urn:schemas-rinconnetworks-com:metadata-1-0/\"><item><dc:title>x-sonosapi-stream:s1234</dc:title>"
+                 "<r:streamContent>Radio Artist - Radio Song &amp; Co</r:streamContent></item></DIDL-Lite>");
+        xesc(m2, sizeof m2, m);
+        snprintf(x, sizeof x, "<Track>1</Track><TrackDuration>0:00:00</TrackDuration><TrackMetaData>%s</TrackMetaData><TrackURI>x-sonosapi-stream:s1234?sid=254</TrackURI><RelTime>0:01:00</RelTime>", m2);
+    }
+    else if (!strcmp(a, "GetPositionInfo"))
+    {
+        char t[40];
+        snprintf(t, sizeof t, d->track == 1 ? "Fake Song" : "Fake Song %d", d->track);
+        snprintf(m, sizeof m, "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"-1\"><res>x</res>"
+                 "<upnp:albumArtURI>/getaa?s=1&amp;u=x-sonos-spotify%%3a%d</upnp:albumArtURI><dc:title>%s</dc:title><dc:creator>Artist One</dc:creator><upnp:album>Caf&#233; Album</upnp:album></item></DIDL-Lite>", d->track, t);
+        xesc(m2, sizeof m2, m);
+        unsigned e = el > 210 ? 210 : el;
+        snprintf(x, sizeof x, "<Track>%d</Track><TrackDuration>0:03:30</TrackDuration><TrackMetaData>%s</TrackMetaData><TrackURI>x-sonos-spotify:track%d</TrackURI><RelTime>0:%02u:%02u</RelTime>",
+                 d->track, m2, d->track, e / 60, e % 60);
+    }
+    else if (!strcmp(a, "GetTransportInfo")) snprintf(x, sizeof x, "<CurrentTransportState>%s</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus>", d->state);
+    else if (!strcmp(a, "GetTransportSettings")) snprintf(x, sizeof x, "<PlayMode>%s</PlayMode>", d->mode);
+    else if (!strcmp(a, "GetGroupVolume")) snprintf(x, sizeof x, "<CurrentVolume>%d</CurrentVolume>", d->vol);
+    else if (!strcmp(a, "GetGroupMute")) snprintf(x, sizeof x, "<CurrentMute>%d</CurrentMute>", d->mute);
+    else if (!strcmp(a, "GetMediaInfo"))
+    {
+        snprintf(m, sizeof m, "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><item><dc:title>Radio Fake</dc:title></item></DIDL-Lite>");
+        xesc(m2, sizeof m2, m);
+        snprintf(x, sizeof x, "<NrTracks>1</NrTracks><CurrentURIMetaData>%s</CurrentURIMetaData>", m2);
+    }
+    else
+    {
+        char v[64] = "";
+        const char *u = strstr(body, a);
+        const char *args = u ? strchr(u, '>') : NULL;
+        char ab[200] = "";
+        if (args) { size_t k = strcspn(args + 1, "/"); snprintf(ab, sizeof ab, "%.*s", (int)(k > 0 ? k - 1 : 0), args + 1); }
+        char *ins = strstr(ab, "<InstanceID>0</InstanceID>");
+        if (ins) memmove(ins, ins + 26, strlen(ins + 26) + 1);
+        sonos_log(d->name, a, sx_arg(body, "Target", v, sizeof v)[0] ? v : sx_arg(body, "NewPlayMode", v, sizeof v)[0] ? v
+                  : sx_arg(body, "DesiredVolume", v, sizeof v)[0] ? v : sx_arg(body, "DesiredMute", v, sizeof v)[0] ? v : "");
+        if (!strcmp(a, "Play")) { if (strcmp(d->state, "PLAYING")) d->t0 = now_ms - d->at; snprintf(d->state, sizeof d->state, "PLAYING"); }
+        else if (!strcmp(a, "Pause") && d->radio) { http_reply(c, "HTTP/1.0 500 Internal Server Error\r\nContent-Type: text/xml\r\n\r\n", "<s:Envelope><s:Body><s:Fault><detail><UPnPError><errorCode>701</errorCode></UPnPError></detail></s:Fault></s:Body></s:Envelope>"); return; }
+        else if (!strcmp(a, "Pause") || !strcmp(a, "Stop")) { if (!strcmp(d->state, "PLAYING")) d->at = now_ms - d->t0; snprintf(d->state, sizeof d->state, "%s", !strcmp(a, "Pause") ? "PAUSED_PLAYBACK" : "STOPPED"); }
+        else if (!strcmp(a, "Next")) { d->track++; d->t0 = now_ms; d->at = 0; }
+        else if (!strcmp(a, "Previous")) { if (d->track > 1) d->track--; d->t0 = now_ms; d->at = 0; }
+        else if (!strcmp(a, "Seek")) { int h, mi, se; if (sscanf(sx_arg(body, "Target", v, sizeof v), "%d:%d:%d", &h, &mi, &se) == 3) { d->at = (uint32_t)(h * 3600 + mi * 60 + se) * 1000u; d->t0 = now_ms - d->at; } }
+        else if (!strcmp(a, "SetPlayMode")) snprintf(d->mode, sizeof d->mode, "%s", sx_arg(body, "NewPlayMode", v, sizeof v));
+        else if (!strcmp(a, "SetGroupVolume")) d->vol = atoi(sx_arg(body, "DesiredVolume", v, sizeof v));
+        else if (!strcmp(a, "SetGroupMute")) d->mute = atoi(sx_arg(body, "DesiredMute", v, sizeof v));
+        else { http_reply(c, "HTTP/1.0 500 Internal Server Error\r\n\r\n", NULL); return; }
+    }
+    static char out[20000];
+    snprintf(out, sizeof out, "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:%sResponse xmlns:u=\"%.*s\">%s</u:%sResponse></s:Body></s:Envelope>",
+             a, (int)(a - act > 0 ? a - act - 1 : 0), act, x, a);
+    char hd[160];
+    snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: %u\r\n\r\n", (unsigned)strlen(out));
+    http_reply(c, hd, out);
+}
+
+void host_esp_sonos_reset(void)
+{
+    for (int i = 0; i < 3; i++) { snprintf(sonos_dev[i].state, sizeof sonos_dev[i].state, "PLAYING"); sonos_dev[i].track = 1; sonos_dev[i].t0 = now_ms; sonos_dev[i].at = 0;
+                                  sonos_dev[i].vol = i ? 40 : 30; sonos_dev[i].mute = 0; snprintf(sonos_dev[i].mode, sizeof sonos_dev[i].mode, "NORMAL"); }
+    host_esp_sonos_log[0] = 0;
+    host_esp_sonos_joined = false;
+}
+
 static void serve(conn_t *c)
 {
     char *r = (char *)c->reqbuf.b;
@@ -690,6 +839,7 @@ static void serve(conn_t *c)
     host_esp_requests++;
     bool icy_meta = strstr(r, "Icy-MetaData: 1") != NULL;
     bool r1 = c->ip[3] == 1, r2 = c->ip[3] == 2, sec = c->ip[3] == 3;
+    if (c->ip[3] >= 20 && c->ip[3] <= 22) { sonos_serve(c, r); return; }
     if (c->ip[3] >= 6 && c->ip[3] <= 8) { web(c, path); return; }
     if (c->ip[3] == 9) { news(c, path); return; }
     if (c->ip[3] == 10 || c->ip[3] == 11) { yahoo(c, path, r); return; }
@@ -1006,6 +1156,8 @@ static int dns(const char *name, uint8_t *ip)
         { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } }, { "pc.test", { 10, 0, 0, 14 } },
         { "lrclib.net", { 10, 0, 0, 15 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
+    unsigned a, b, c, d;
+    if (sscanf(name, "%u.%u.%u.%u", &a, &b, &c, &d) == 4) { ip[0] = (uint8_t)a; ip[1] = (uint8_t)b; ip[2] = (uint8_t)c; ip[3] = (uint8_t)d; return 0; }   // (an address)
     return -1;
 }
 
@@ -1038,7 +1190,7 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 15);
+            bool known = (a[0] == 10 && ((a[3] >= 1 && a[3] <= 15) || (a[3] >= 20 && a[3] <= 22 && port == 1400)));
             if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && a[3] <= 9 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000) || (a[3] == 14 && port != 8765)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];
@@ -1085,7 +1237,10 @@ static void request(const uint8_t *p, size_t n)
             uint8_t z = 0;
             bq_put(&c->reqbuf, &z, 1);
             c->reqbuf.len--;
-            if (!c->got_request && strstr((char *)c->reqbuf.b, "\r\n\r\n")) { c->got_request = true; serve(c); }
+            const char *eoh = strstr((char *)c->reqbuf.b, "\r\n\r\n");
+            const char *cl = strstr((char *)c->reqbuf.b, "Content-Length: ");
+            bool whole = eoh && (!cl || cl > eoh || c->reqbuf.len >= (size_t)(eoh + 4 - (char *)c->reqbuf.b) + (size_t)atoi(cl + 16));
+            if (!c->got_request && whole) { c->got_request = true; serve(c); }
             answer(L, fn, 0, NULL, 0);
             break;
         }
@@ -1121,6 +1276,59 @@ static void request(const uint8_t *p, size_t n)
             r[3] = (uint8_t)(c->out.len >> 8);
             r[6] = 0xFF; r[7] = 0xFF;
             answer(L, fn, 0, r, 16);
+            break;
+        }
+        case 8:                                 // UDP_OPEN: [port][transient] -> the connection
+        {
+            if (!host_esp_sonos_udp) { answer(L, fn, 1, NULL, 0); break; }
+            int slot = 0;
+            for (int i = 1; i <= 4; i++) if (!conns[i].used) { slot = i; break; }
+            if (!slot) { answer(L, fn, 9, NULL, 0); break; }
+            memset(&conns[slot], 0, sizeof conns[slot]);
+            conns[slot].used = conns[slot].udp = true;
+            host_esp_opens++;
+            uint8_t cn = (uint8_t)slot;
+            answer(L, fn, 0, &cn, 1);
+            break;
+        }
+        case 9:                                 // UDP_CLOSE
+        {
+            uint8_t cn = a[0];
+            if (cn >= 1 && cn <= 4 && conns[cn].used && conns[cn].udp) { free(conns[cn].out.b); memset(&conns[cn], 0, sizeof conns[cn]); host_esp_closes++; answer(L, fn, 0, NULL, 0); }
+            else answer(L, fn, 11, NULL, 0);
+            break;
+        }
+        case 11:                                // UDP_SEND: [conn][ip 4][port 2][data]: the search answered by two speakers
+        {
+            uint8_t cn = a[0];
+            if (cn < 1 || cn > 4 || !conns[cn].used || !conns[cn].udp) { answer(L, fn, 11, NULL, 0); break; }
+            uint16_t port = (uint16_t)(a[5] | (a[6] << 8));
+            if (a[1] == 239 && a[2] == 255 && a[3] == 255 && a[4] == 250 && port == 1900 && memmem(a + 7, len - 7, "ZonePlayer", 10))
+                for (int k = 20; k <= 21; k++)
+                {
+                    char m[300];
+                    int n = snprintf(m, sizeof m, "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age = 1800\r\nEXT:\r\nLOCATION: http://10.0.0.%d:1400/xml/device_description.xml\r\n"
+                                                  "SERVER: Linux UPnP/1.0 Sonos/80.1\r\nST: urn:schemas-upnp-org:device:ZonePlayer:1\r\n\r\n", k);
+                    uint8_t h[8] = { 10, 0, 0, (uint8_t)k, 0x6C, 0x07, (uint8_t)(n >> 8), (uint8_t)n };   // (from :1900; its length first, for the queue)
+                    bq_put(&conns[cn].out, h, 8);
+                    bq_put(&conns[cn].out, m, (size_t)n);
+                }
+            answer(L, fn, 0, NULL, 0);
+            break;
+        }
+        case 12:                                // UDP_RCV: [conn][size 2] -> [ip 4][port 2][data], or ERR_NO_DATA
+        {
+            uint8_t cn = a[0];
+            if (cn < 1 || cn > 4 || !conns[cn].used || !conns[cn].udp) { answer(L, fn, 11, NULL, 0); break; }
+            conn_t *c = &conns[cn];
+            if (c->out.len < 8) { answer(L, fn, 3, NULL, 0); break; }
+            size_t n = (size_t)(c->out.b[6] << 8 | c->out.b[7]);
+            uint8_t *buf = malloc(6 + n);
+            memcpy(buf, c->out.b, 6);
+            memcpy(buf + 6, c->out.b + 8, n);
+            bq_drop(&c->out, 8 + n);
+            answer(L, fn, 0, buf, 6 + n);
+            free(buf);
             break;
         }
         default:

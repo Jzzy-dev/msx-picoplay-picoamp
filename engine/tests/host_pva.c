@@ -936,8 +936,8 @@ int main(int argc, char **argv)
         CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_OK && !strcmp((char *)reply + 2, "/Internet radio"), "enter it: '%s'", reply + 2);
         n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
         for (int i = 0; i < n; i++) printf("    %d %s\n", ents[i].type, ents[i].name);
-        CHECK(n == 8 && ents[0].type == PVA_DE_PARENT && find(n, "Favourites") == 1 && find(n, "By country") == 5 && find(n, "By genre") == 6 && find(n, "By decade") == 7,
-              "home: '..', 3 rankings, country, genre, decade");
+        CHECK(n == 9 && ents[0].type == PVA_DE_PARENT && find(n, "Favourites") == 1 && find(n, "By country") == 5 && find(n, "By genre") == 6 && find(n, "By decade") == 7
+              && find(n, "Sonos") == 8, "home: '..', 3 rankings, country, genre, decade, Sonos");
         uint32_t req0 = host_esp_requests;
         read_status();
         uint8_t g0 = st[PVA_ST_DIR_GEN];
@@ -2431,6 +2431,116 @@ int main(int argc, char **argv)
         cmd(PVA_C_STOP, NULL, 0);
         run_ms(1000);
     }
+    printf("[Sonos rooms: the search, a room as the screen, its keys]\n");
+    {
+        extern char host_esp_sonos_log[];
+        extern bool host_esp_sonos_udp, host_esp_sonos_joined;
+        extern uint32_t host_esp_sonos_asks, host_esp_lrclib_asks;
+        extern char host_esp_last_lrclib[300];
+        void host_esp_sonos_reset(void);
+        host_esp_sonos_reset();
+        #define SONOS_TOLD(what) (strstr(host_esp_sonos_log, what) != NULL)
+        #define WAIT_TOLD(what) do { for (int w = 0; w < 80 && !SONOS_TOLD(what); w++) run_ms(50); } while (0)
+        int n;
+        CHECK(cmd_str(PVA_C_DIR_OPEN, "/") == PVA_OK, "open root");
+        n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_OK, "Internet radio");
+        n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
+        int so = find(n, "Sonos");
+        uint32_t a0 = host_esp_sonos_asks;
+        CHECK(so == 8 && cmd_u16(PVA_C_DIR_ENTER, (uint16_t)so) == PVA_E_BUSY, "Sonos: BUSY (the search)");
+        for (int w = 0; w < 200; w++) { run_ms(50); read_status(); if (st[PVA_ST_DIR_STATE] != PVA_DIRS_LOADING) break; }
+        CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE, "the rooms are in (state %u)", st[PVA_ST_DIR_STATE]);
+        CHECK(cmd_str(PVA_C_DIR_OPEN, "") == PVA_OK && !strcmp((char *)reply + 2, "/Internet radio/Sonos"), "'%s'", reply + 2);
+        n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
+        for (int i = 0; i < n; i++) printf("    %d %s\n", ents[i].type, ents[i].name);
+        CHECK(n == 3 && ents[1].type == PVA_DE_URL && !strcmp(ents[1].name, "Kuche & Co + 1") && !strcmp(ents[2].name, "Living Room"),
+              "two rooms: a group by its leader's name (+ 1), a bonded speaker and a bridge left out, by name");
+        CHECK(host_esp_sonos_asks == a0 + 1 && host_esp_open_conns() == 0, "one speaker asked (SSDP found two), no connection left open");
+        CHECK(cmd_u16(PVA_C_PLAY_INDEX, 2) == PVA_OK, "play Living Room");
+        run_ms(3000);
+        read_status();
+        CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && st[PVA_ST_LINK] == 2 && !strcmp(ststr(PVA_ST_TITLE), "Fake Song") && !strcmp(ststr(PVA_ST_ARTIST), "Artist One")
+              && !strcmp(ststr(PVA_ST_ALBUM), "Cafe Album"), "the room's song: '%s' '%s' '%s' (link %u)", ststr(PVA_ST_ARTIST), ststr(PVA_ST_TITLE), ststr(PVA_ST_ALBUM), st[PVA_ST_LINK]);
+        CHECK(st16(PVA_ST_TOTAL) == 210 && st16(PVA_ST_ELAPSED) >= 2 && st16(PVA_ST_ELAPSED) <= 5 && (st[PVA_ST_FLAGS] & PVA_F_SEEKABLE), "its time: %u of %u s",
+              st16(PVA_ST_ELAPSED), st16(PVA_ST_TOTAL));
+        CHECK(!strcmp(ststr(PVA_ST_FMT_TEXT), "SONOS LIVING ROOM") && st[PVA_ST_VOLUME] == 30, "its name as the format line ('%s'), its volume (%u)",
+              ststr(PVA_ST_FMT_TEXT), st[PVA_ST_VOLUME]);
+        {
+            int lit = 0;
+            for (int i = 0; i < 24; i++) lit += rd((uint16_t)(PVA_WIN_BASE + PVA_R_VIZ + PVA_VIZ_LEVEL + i)) > 0;
+            CHECK(lit >= 12, "bars that move while it plays (%d lit)", lit);
+        }
+        CHECK(cmd(PVA_C_PAUSE, NULL, 0) == PVA_OK, "SPACE");
+        WAIT_TOLD("Living Room Pause");
+        run_ms(1500);
+        read_status();
+        CHECK(SONOS_TOLD("Living Room Pause") && st[PVA_ST_STATE] == PVA_STATE_PAUSED, "paused there and here (%u)", st[PVA_ST_STATE]);
+        CHECK(cmd(PVA_C_NEXT, NULL, 0) == PVA_OK, "N");
+        WAIT_TOLD("Living Room Next");
+        run_ms(1500);
+        read_status();
+        CHECK(SONOS_TOLD("Living Room Next") && !strcmp(ststr(PVA_ST_TITLE), "Fake Song 2"), "its next song: '%s'", ststr(PVA_ST_TITLE));
+        uint8_t v = 50;
+        CHECK(cmd(PVA_C_VOLUME, &v, 1) == PVA_OK, "volume 50");
+        WAIT_TOLD("SetGroupVolume 50");
+        CHECK(cmd_u16(PVA_C_SEEK, 75) == PVA_OK, "SEEK 75");
+        WAIT_TOLD("Seek 0:01:15");
+        uint8_t md = PVA_MODE_SHUFFLE;
+        CHECK(cmd(PVA_C_MODE, &md, 1) == PVA_OK, "shuffle");
+        WAIT_TOLD("SetPlayMode SHUFFLE_NOREPEAT");
+        run_ms(1500);
+        read_status();
+        CHECK(SONOS_TOLD("Living Room SetGroupVolume 50") && SONOS_TOLD("Living Room Seek 0:01:15") && SONOS_TOLD("Living Room SetPlayMode SHUFFLE_NOREPEAT")
+              && st[PVA_ST_VOLUME] == 50, "the volume, seeking and shuffle told:\n%s", host_esp_sonos_log);
+        {
+            // its words, from LRCLIB (by the song and its length; timed by the room)
+            uint8_t la[3] = { 0, 0, 3 };
+            uint32_t l0 = host_esp_lrclib_asks;
+            cmd(PVA_C_LYRICS, la, 3);
+            for (int w = 0; w < 100 && host_esp_lrclib_asks == l0; w++) { run_ms(50); cmd(PVA_C_LYRICS, la, 3); }
+            CHECK(host_esp_lrclib_asks > l0 && strstr(host_esp_last_lrclib, "Fake%20Song%202") && strstr(host_esp_last_lrclib, "duration=210"),
+                  "its words asked for (%s)", host_esp_last_lrclib);
+        }
+        // a station on a group: its song and name; no next; SPACE stops it (a station cannot pause)
+        host_esp_sonos_log[0] = 0;
+        CHECK(cmd_u16(PVA_C_PLAY_INDEX, 1) == PVA_OK, "play the group");
+        run_ms(3000);
+        read_status();
+        CHECK(!strcmp(ststr(PVA_ST_TITLE), "Radio Song & Co") && !strcmp(ststr(PVA_ST_ARTIST), "Radio Artist") && !strcmp(ststr(PVA_ST_ALBUM), "Radio Fake")
+              && st16(PVA_ST_TOTAL) == 0 && st[PVA_ST_VOLUME] == 40, "a station's song: '%s' '%s' '%s'", ststr(PVA_ST_ARTIST), ststr(PVA_ST_TITLE), ststr(PVA_ST_ALBUM));
+        cmd(PVA_C_NEXT, NULL, 0);
+        cmd(PVA_C_PAUSE, NULL, 0);
+        WAIT_TOLD(" Stop");
+        run_ms(1500);
+        read_status();
+        CHECK(SONOS_TOLD(" Stop") && !SONOS_TOLD(" Pause"), "SPACE: Stop (%s)", host_esp_sonos_log);
+        CHECK(!SONOS_TOLD("Next"), "no next for a station");
+        // a room that joined another group: followed to that group's leader
+        host_esp_sonos_joined = true;
+        static const char dr[] = "sonos://10.0.0.22:1400/RINCON_C#Dining Room\0Dining Room\0";
+        CHECK(cmd(PVA_C_PLAY_URL, dr, sizeof dr) == PVA_OK, "play Dining Room (in Living Room's group now)");
+        run_ms(5000);
+        read_status();
+        CHECK(!strcmp(ststr(PVA_ST_TITLE), "Fake Song 2") && st[PVA_ST_LINK] == 2, "the group's song: '%s'", ststr(PVA_ST_TITLE));
+        host_esp_sonos_joined = false;
+        cmd(PVA_C_STOP, NULL, 0);
+        run_ms(500);
+        // no UDP (an older ESP firmware): the speakers named in PICOAMP.INI
+        host_esp_sonos_udp = false;
+        pva_cfg_set("sonos.ip", "10.0.0.21");
+        CHECK(cmd_str(PVA_C_DIR_OPEN, "/") == PVA_OK && cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_OK, "Internet radio");
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 8) == PVA_E_BUSY, "Sonos again");
+        for (int w = 0; w < 200; w++) { run_ms(50); read_status(); if (st[PVA_ST_DIR_STATE] != PVA_DIRS_LOADING) break; }
+        cmd_str(PVA_C_DIR_OPEN, "");
+        n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
+        CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE && n == 3, "without UDP: [sonos] ip = (%d)", n);
+        pva_cfg_set("sonos.ip", "");
+        host_esp_sonos_udp = true;
+        run_ms(500);
+        CHECK(host_esp_open_conns() == 0, "no ESP connection left open");
+    }
+
     printf("[lyrics of a station's song, from LRCLIB]\n");
     {
         extern uint32_t host_esp_lrclib_asks;

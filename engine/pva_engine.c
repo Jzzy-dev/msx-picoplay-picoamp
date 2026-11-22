@@ -83,6 +83,7 @@ static char     given_station[PVA_ST_ALBUM_LEN];
 enum { V_CARD, V_HOME, V_COUNTRIES, V_GENRES, V_DECADES, V_STATIONS, V_FAVS };
 #define FAV_FILE        "/RADIOFAV.M3U"     // favourites (PicoPlay writes it through SymbOS)
 #define FAV_FOLDER      "Favourites"
+#define SONOS_FOLDER    "Sonos"             // the Sonos rooms of the network (pva_sonos.c), a station list
 #define PAGE_STATIONS   60u
 #define MORE_ENTRY      "More stations..."
 static char     st_query[200];      // the station list's query, for "more"
@@ -96,6 +97,7 @@ static uint8_t  want_level, want_parent;
 static char     want_title[48];
 static uint8_t  dstate, derr;       // PVA_ST_DIR_STATE / DIR_ERR
 static uint16_t ccache_n;           // countries kept in pva_dir_cache()
+static bool     sonos_wait;         // the Sonos rooms are searched (pva_sonos.c: its memory is pva_dir_cache())
 
 // ---------------------------------------------------------------- helpers
 static void fs_refresh(void)
@@ -249,7 +251,7 @@ static int read_dir(const char *path)
 }
 
 // ---------------------------------------------------------------- internet radio
-static const char *const home_names[] = { FAV_FOLDER, "Top stations", "Most voted", "Trending now", "By country", "By genre", "By decade" };
+static const char *const home_names[] = { FAV_FOLDER, "Top stations", "Most voted", "Trending now", "By country", "By genre", "By decade", SONOS_FOLDER };
 static const char *const home_order[] = { "clickcount", "votes", "clicktrend" };
 static const char *const genres[] = {
     "pop", "rock", "classic rock", "hard rock", "metal", "punk", "alternative", "indie", "jazz", "smooth jazz",
@@ -446,6 +448,28 @@ static int radio_more(void)
 static void radio_poll(void)
 {
     pva_dir_poll();
+    pva_sonos_poll();
+    if (sonos_wait)
+    {
+        uint8_t st = pva_sonos_state();
+        if (st == PVA_DIRS_LOADING) return;
+        sonos_wait = false;
+        if (st == PVA_DIRS_DONE)
+        {
+            dstate = PVA_DIRS_DONE;
+            vparent = V_HOME;
+            st_more = false;
+            v_build(V_STATIONS);
+            pva_log("radio: %u in Sonos", (unsigned)(dir_count - 1u));
+        }
+        else
+        {
+            dstate = PVA_DIRS_FAILED;
+            derr = pva_sonos_error() ? pva_sonos_error() : PVA_NERR_TIMEOUT;
+            status_dirty = true;
+        }
+        return;
+    }
     if (!dir_wait) return;
     uint8_t st = pva_dir_state();
     if (st == PVA_DIRS_DONE)
@@ -465,6 +489,7 @@ static void radio_poll(void)
 
 static void radio_stop_wait(void)
 {
+    if (sonos_wait) { pva_sonos_cancel(); sonos_wait = false; dstate = PVA_DIRS_IDLE; status_dirty = true; }
     if (!dir_wait) return;
     pva_dir_cancel();
     dir_wait = false;
@@ -481,6 +506,23 @@ static int radio_parent(void)
         case V_STATIONS:  v_build(vparent == V_COUNTRIES && !ccache_n ? V_HOME : vparent); return PVA_OK;
         default:          v_build(V_HOME); return PVA_OK;
     }
+}
+
+// Internet radio/Sonos: the rooms are searched, then a station list as the directory's
+static int sonos_fetch(void)
+{
+    radio_stop_wait();
+    ccache_n = 0;                       // (its memory is the search's now: the countries are asked again)
+    int r = pva_sonos_search();
+    if (r != PVA_E_BUSY) { dstate = PVA_DIRS_FAILED; derr = PVA_NERR_NOWIFI; status_dirty = true; return r; }
+    want_level = V_STATIONS;
+    want_parent = V_HOME;
+    snprintf(want_title, sizeof want_title, "%s", SONOS_FOLDER);
+    sonos_wait = true;
+    dstate = PVA_DIRS_LOADING;
+    derr = 0;
+    status_dirty = true;
+    return PVA_E_BUSY;
 }
 
 static int radio_enter(uint16_t idx)
@@ -504,6 +546,7 @@ static int radio_enter(uint16_t idx)
                 if (ccache_n) { v_build(V_COUNTRIES); return PVA_OK; }
                 return radio_fetch(V_COUNTRIES, V_HOME, "By country", "");
             }
+            if (i == 7) return sonos_fetch();
             v_build(i == 5 ? V_GENRES : V_DECADES);
             return PVA_OK;
         }
@@ -1116,7 +1159,7 @@ static void set_title_from_path(const char *path)
     memcpy(info.title, tmp, sizeof info.title);
 }
 
-static bool is_url(const char *p) { return !strncmp(p, "http://", 7) || !strncmp(p, "https://", 8); }
+static bool is_url(const char *p) { return !strncmp(p, "http://", 7) || !strncmp(p, "https://", 8) || pva_sonos_url(p); }
 
 static void split_stream_title(const char *t)
 {
@@ -1885,7 +1928,8 @@ static void scr_line(void)
                 memcpy(info.title, scr->t, sizeof info.title);
                 memcpy(info.artist, scr->a, sizeof info.artist);
                 memcpy(info.album, scr->al, sizeof info.album);
-                if (!scr->has_c) scr_cover();           // (a PC without C lines: its cover now, may be the last one)
+                if (pva_sonos_on()) pva_art_song(info.artist, info.title);     // (a Sonos room: the song's cover online)
+                else if (!scr->has_c) scr_cover();      // (a PC without C lines: its cover now, may be the last one)
                 status_dirty = true;
             }
             break;
@@ -2162,6 +2206,9 @@ static void ly_done(bool ok)
 }
 
 // the song now (a file's, a station's): looked for when it changes and the lyrics page asks
+// a Sonos room plays: the words are looked for here (as a file's: by its length), timed by the room
+static bool ly_sonos(void) { return pva_sonos_on() && scr && scr->on; }
+
 static void ly_want(void)
 {
     // (a station: a song's title, not only its name; "Artist - Title", or a title alone: then searched by it)
@@ -2175,12 +2222,13 @@ static void ly_want(void)
     if (ly_fetching) { pva_web_abort(); ly_fetching = false; }
     lyo->hash = h;
     ly_off_ms = ly_nudge_ms = 0;
-    lyo->untimed = pva_dec_is_stream() && song_untimed;
+    bool so = ly_sonos();
+    lyo->untimed = !so && pva_dec_is_stream() && song_untimed;
     lyo->retry_at = 0;
-    lyo->want_s = pva_dec_is_stream() ? 0 : (uint16_t)info.total_seconds;
+    lyo->want_s = so ? scr->total : pva_dec_is_stream() ? 0 : (uint16_t)info.total_seconds;
     snprintf(lyo->q[0], sizeof lyo->q[0], "%s", info.artist);
     snprintf(lyo->q[1], sizeof lyo->q[1], "%s", info.title);
-    snprintf(lyo->q[2], sizeof lyo->q[2], "%s", pva_dec_is_stream() ? "" : info.album);
+    snprintf(lyo->q[2], sizeof lyo->q[2], "%s", so ? (scr->total ? info.album : "") : pva_dec_is_stream() ? "" : info.album);
     lyo->arr_tried_search = false;
     lyo->step = lyo->want_s && info.artist[0] ? 1 : 2;
     lyo->best = 0;
@@ -2217,16 +2265,17 @@ static void ly_poll(void)
 // the song's time now, in ms (a station: since its title came)
 static int32_t ly_song_ms(void)
 {
+    if (ly_sonos()) return scr->el_ms + (scr->plays ? (int32_t)(pva_hal_millis() - scr->at) : 0);
     if (pva_dec_is_stream()) return (int32_t)(pva_hal_millis() - song_at_ms);
     return (int32_t)pva_dec_elapsed_ms();
 }
 
 static int cmd_lyrics(void)
 {
-    bool scr_on = lyr && scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED;
+    bool scr_on = lyr && scr && scr->on && pva_net_picoamp() == 2 && state != PVA_STATE_STOPPED && !pva_sonos_on();
     bool own = false;
     ly_used = true;                         // (from now on a stream keeps the words' memory from its start)
-    if (!scr_on && state != PVA_STATE_STOPPED && pva_net_picoamp() != 2 && link_mem_room(true))
+    if (!scr_on && state != PVA_STATE_STOPPED && (pva_net_picoamp() != 2 || ly_sonos()) && link_mem_room(true))
     {
         ly_want();
         own = true;
@@ -2279,10 +2328,11 @@ static int cmd_lyrics(void)
             for (uint16_t i = now; i < n && lyr->row[i].ms == ms; i++) lit++;
         }
     }
-    else if (n && (own ? info.total_seconds && !pva_dec_is_stream() : scr->total))
+    else if (n && (own && !ly_sonos() ? info.total_seconds && !pva_dec_is_stream() : scr->total))
     {
         // not synced: where the song is, in rows
-        uint32_t e = own ? pva_dec_elapsed() : scr_elapsed(), tot = own ? info.total_seconds : scr->total;
+        bool fl = own && !ly_sonos();
+        uint32_t e = fl ? pva_dec_elapsed() : scr_elapsed(), tot = fl ? info.total_seconds : scr->total;
         now = (uint16_t)((uint32_t)n * e / tot);
         if (now >= n) now = (uint16_t)(n - 1);
     }
@@ -2348,6 +2398,7 @@ static void link_base(char *o, size_t n)
 
 static void link_key(const char *k)
 {
+    if (pva_sonos_on()) { pva_sonos_key(k); return; }       // (a Sonos room: its keys, pva_sonos.c)
     // (a volume after a volume not sent yet: only the newest goes, the keys repeat fast)
     if (rk_n && !strncmp(k, "vol&", 4) && !strncmp(rk_q[rk_n - 1], "vol&", 4)) rk_n--;
     if (rk_n < RK_MAX) snprintf(rk_q[rk_n++], sizeof rk_q[0], "%s", k);
@@ -2710,6 +2761,7 @@ void pva_core1_init(void)
     if (net_ok && news_keep) pva_news_init(news_keep);
     if (net_ok && !pva_web_init()) pva_log("web: no memory");
     if (net_ok) pva_markets_init();
+    if (net_ok) pva_sonos_init();
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();
     // covers: their memory is the stream ring while a file plays (or the arena's)
