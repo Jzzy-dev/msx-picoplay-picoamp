@@ -58,6 +58,9 @@ static pva_web_body_fn body_fn;
 static pva_web_done_fn done_fn;
 static uint8_t  result = PVA_WEB_IDLE;
 static const char *w_agent, *next_agent;     // another User-Agent for this request (some services want a browser's form)
+// a SOAP request (the Sonos speakers): POST with this action and body (the caller's until done)
+static const char *w_action, *w_body;
+static uint16_t w_body_len;
 
 void     pva_web_agent(const char *ua) { next_agent = ua; }
 uint8_t  pva_web_error(void) { return werr; }
@@ -176,12 +179,21 @@ static void w_connect(void)
     w = W_DNS;
 }
 
+// the request in pieces: its head (req), then a POST's body
 static void send_next(void)
 {
-    size_t k = req_len - req_pos;
-    if (k > 128u) k = 128u;
     uint8_t a[2] = { conn, 1 };
-    pva_esp_request(WS, PVA_FN_TCPSEND, a, 2, (const uint8_t *)req + req_pos, k, T_SEND_MS);
+    if (req_pos < req_len)
+    {
+        size_t k = req_len - req_pos;
+        if (k > 128u) k = 128u;
+        pva_esp_request(WS, PVA_FN_TCPSEND, a, 2, (const uint8_t *)req + req_pos, k, T_SEND_MS);
+        req_pos += k;
+        return;
+    }
+    size_t o = req_pos - req_len, k = w_body_len - o;
+    if (k > 128u) k = 128u;
+    pva_esp_request(WS, PVA_FN_TCPSEND, a, 2, (const uint8_t *)w_body + o, k, T_SEND_MS);
     req_pos += k;
 }
 
@@ -210,7 +222,7 @@ static void w_end(bool ok)
 static void w_complete(void)
 {
     if (w != W_BODY) { w_trouble(PVA_NERR_CLOSED); return; }
-    if (whttp >= 300 && whttp < 400 && location[0] && redirects < MAX_REDIRECTS) { redirects++; w_close_then(A_REDIRECT); return; }
+    if (!w_action && whttp >= 300 && whttp < 400 && location[0] && redirects < MAX_REDIRECTS) { redirects++; w_close_then(A_REDIRECT); return; }
     if (whttp != 200 && !(whttp == 206 && w_from)) { w_trouble(PVA_NERR_HTTP); return; }
     w_close_then(A_DONE);
 }
@@ -273,7 +285,12 @@ void pva_web_poll(void)
             {
                 char range[32] = "";
                 if (w_from) snprintf(range, sizeof range, "Range: bytes=%lu-\r\n", (unsigned long)w_from);
-                int n = snprintf(req, 640,
+                int n = w_action ?
+                    snprintf(req, 640,
+                    "POST %s HTTP/1.0\r\nHost: %s:%u\r\nUser-Agent: PicoAmp/1.1 (MSX PicoVerse 2350)\r\n"
+                    "Content-Type: text/xml; charset=\"utf-8\"\r\nSOAPACTION: \"%s\"\r\nContent-Length: %u\r\n"
+                    "Connection: close\r\n\r\n", w_path, w_host, (unsigned)w_port, w_action, (unsigned)w_body_len) :
+                    snprintf(req, 640,
                     "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n"
                     "Accept: */*\r\n%sConnection: close\r\n\r\n", w_path, w_host,
                     w_agent ? w_agent : "PicoAmp/1.1 (MSX PicoVerse 2350)", range);
@@ -286,7 +303,7 @@ void pva_web_poll(void)
         case W_SEND:
             if (WS->rsp_timeout || WS->rc != 0) { pva_esp_clear(WS); w_trouble(PVA_NERR_TIMEOUT); return; }
             pva_esp_clear(WS);
-            if (req_pos < req_len) { send_next(); return; }
+            if (req_pos < req_len + (w_action ? w_body_len : 0)) { send_next(); return; }
             w = W_HEAD;
             t_phase = now;
             wait_until = now;
@@ -386,6 +403,8 @@ int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_w
 {
     const char *ua = next_agent;
     next_agent = NULL;
+    w_action = w_body = NULL;           // (a GET; pva_web_soap makes it a POST)
+    w_body_len = 0;
     w_nolend = next_nolend;
     next_nolend = false;
     if (!available) return PVA_E_NOWIFI;
@@ -408,4 +427,15 @@ int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_w
     pva_log("web: %.48s", url);
     w_connect();
     return PVA_OK;
+}
+
+// a SOAP request: POST <url> with SOAPACTION: "<action>" and the XML body (no redirects are followed)
+int pva_web_soap(const char *url, const char *action, const char *body, size_t len, pva_web_body_fn bodyfn, pva_web_done_fn done)
+{
+    if (w != W_IDLE) return PVA_E_BUSY;
+    next_nolend = true;                 // (plain HTTP in the house)
+    int r = pva_web_get_from(url, 0, bodyfn, done);
+    // (the request is made when the connection is open: a POST from here on)
+    if (r == PVA_OK) { w_action = action; w_body = body; w_body_len = (uint16_t)len; }
+    return r;
 }

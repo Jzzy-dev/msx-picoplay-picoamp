@@ -795,3 +795,47 @@ void pva_dir_urlenc(char *out, size_t size, const char *s)
     }
     out[o] = 0;
 }
+
+// ---------------------------------------------------------------- a list made here
+// (the Sonos rooms: pva_sonos.c) in the same results, as a station list
+void pva_dir_clear(void)
+{
+    base_nents = 0;
+    base_pool = 0;
+    reset_results();
+    q_append = false;
+    kind = PVA_DIRQ_STATIONS;
+}
+
+bool pva_dir_add(const char *name, const char *url)
+{
+    if (!ents || nents >= MAX_ENTRIES) return false;
+    dent_rb_t *e = &ents[nents];
+    e->name = pool_add(name, strlen(name));
+    e->url = pool_add(url, strlen(url));
+    e->uuid = 0xFFFF;
+    e->num = 0;
+    if (e->name == 0xFFFF || e->url == 0xFFFF) return false;
+    nents++;
+    return true;
+}
+
+static int name_ci(const char *a, const char *b)
+{
+    for (;; a++, b++)
+    {
+        char x = *a >= 'a' && *a <= 'z' ? (char)(*a - 32) : *a, y = *b >= 'a' && *b <= 'z' ? (char)(*b - 32) : *b;
+        if (x != y || !x) return (int)(uint8_t)x - (int)(uint8_t)y;
+    }
+}
+
+void pva_dir_sort(void)
+{
+    for (uint16_t i = 1; i < nents; i++)
+        for (uint16_t j = i; j > 0 && name_ci(at(ents[j - 1].name), at(ents[j].name)) > 0; j--)
+        {
+            dent_rb_t t = ents[j];
+            ents[j] = ents[j - 1];
+            ents[j - 1] = t;
+        }
+}

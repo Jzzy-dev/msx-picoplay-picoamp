@@ -871,7 +871,7 @@ void pva_art_station(const char *url, const char *uuid, const char *name)
     logo_ok = false;
     dflt_pick = (uint8_t)((rnd = rnd * 1103515245u + 12345u) >> 16);
     if (!mem()) { show_none(); return; }        // (the ring is the stream's: no cover without own memory)
-    if (!online_ok()) { show_default(); return; }
+    if (!online_ok() || !strncmp(url, "sonos://", 8)) { show_default(); return; }   // (a Sonos room has no logo: its songs' covers)
     job_t j;
     memset(&j, 0, sizeof j);
     j.kind = J_LOGO;

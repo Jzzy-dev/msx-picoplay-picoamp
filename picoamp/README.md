@@ -183,6 +183,38 @@ In both:
 * The equalizer and balance are the PC's sound's: they show **EQ REMOTE** and do not
   change while the link plays (yours are kept and come back after it).
 
+### Sonos
+
+**Internet radio/Sonos** (engine 0.19) lists the Sonos rooms in your network, and makes
+the MSX the screen and remote of one, as the PC's screen above: no PC and no account
+needed, the engine talks to the speakers itself over the ESP-01. The sound stays on the
+speakers.
+
+* Opening the folder searches the network (an SSDP search over the ESP-01's UDP, a second
+  or two; LOADING THE LIST shows meanwhile). One speaker tells all the rooms. A room is a
+  group of speakers, named after the one that leads it (`Kitchen + 1`); a pair, a sub or
+  surrounds are one room. Each time the folder is opened the rooms are searched again,
+  as groups change.
+* Enter on a room plays it as the PC's screen does: its song, artist and album (a station
+  on the Sonos: the song it plays and its name), its time and the seek bar, playing or
+  paused, `SONOS <ROOM>` as the format line, and its volume. The bars move on a pretend
+  sound while it plays (its own sound does not come to the MSX).
+* The keys go to the room: SPACE play and pause (a station on the Sonos cannot pause: it
+  stops), N and P its next and previous song, `,` `.` and the seek bar seek, H and R its
+  shuffle and repeat, the volume keys and M the room's volume and mute (the whole
+  group's). The equalizer shows **EQ REMOTE**.
+* The cover is the song's, from the iTunes search (as a station's song); **L** shows its
+  words from LRCLIB, timed by the room.
+* A room that joins another group is followed to that group.
+* **F** adds a room to Favourites, as a station (`sonos://...` in `RADIOFAV.M3U`).
+* When the search finds nothing (a network that keeps the search from the speakers, or an
+  ESP-01 firmware without UDP), name a speaker in `PICOAMP.INI`, any one of the house:
+
+```
+[sonos]
+ip=192.168.1.30
+```
+
 ### Clock
 
 C opens a page with the time, digital or analog, for having the MSX on with

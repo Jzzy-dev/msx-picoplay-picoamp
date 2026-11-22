@@ -29,7 +29,7 @@ static int esp_trace = -1;
 #define TRACE(...) do { } while (0)
 #endif
 
-#define MAX_SLOTS   3
+#define MAX_SLOTS   4
 
 static pva_esp_slot_t *slots[MAX_SLOTS];
 static uint8_t  nslots, turn;
@@ -169,7 +169,8 @@ static void payload_bytes(const uint8_t *p, size_t n)
     // keep the first bytes; TCP_RCV data (after the 2 urgent bytes) goes to the slot's handler
     while (n)
     {
-        if (pgot < sizeof pfirst && !(cur_fn == PVA_FN_TCPRCV && pgot >= 2))
+        // (UDP_RCV: the sender's address and port, 6 bytes, then the datagram)
+        if (pgot < sizeof pfirst && !(cur_fn == PVA_FN_TCPRCV && pgot >= 2) && !(cur_fn == PVA_FN_UDPRCV && pgot >= 6))
         {
             pfirst[pgot++] = *p++;
             n--;
@@ -177,7 +178,7 @@ static void payload_bytes(const uint8_t *p, size_t n)
         }
         size_t k = n;
         if (k > (size_t)(plen - pgot)) k = (size_t)(plen - pgot);
-        if (cur_fn == PVA_FN_TCPRCV && active && active->data)
+        if ((cur_fn == PVA_FN_TCPRCV || cur_fn == PVA_FN_UDPRCV) && active && active->data)
         {
             active->data(p, k);
             rcv_data += (uint32_t)k;

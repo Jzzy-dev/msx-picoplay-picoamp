@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        18      // 0.18: the MSX link (a station that is PicoAmp for Windows takes the keys, gives the covers)
+#define PVA_FW_MINOR        19      // 0.19: Sonos rooms (Internet radio/Sonos: a room as the MSX link's screen and remote); 0.18: the MSX link
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
