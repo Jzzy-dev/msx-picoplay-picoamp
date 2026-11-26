@@ -101,20 +101,65 @@ int pva_kind_from_name(const char *name)
     return 0;
 }
 
-// Latin-1 / UTF-8 to plain ASCII for the MSX font: accents are dropped.
+// Latin-1 / UTF-8 to plain ASCII for the MSX font: accents are dropped (é e, ő o, ł l, ß s ...),
+// Windows' punctuation made plain (‘’ ', “”„ ", – — -, … .), Cyrillic and Greek written with Latin
+// letters (roughly: one letter for one), emoji and other pictures left out (0). '?': none of these.
+static const char lat_a[] =                     // U+0100 - U+017F
+    "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+static const char cyr[] =                       // U+0410 - U+044F: А .. я
+    "ABVGDEZZIJKLMNOPRSTUFHCCSS'Y'EUAabvgdezzijklmnoprstufhccss'y'eua";
+static const char grk[] =                       // U+0391 - U+03C9: Α .. ω (U+03A2: no letter)
+    "ABGDEZITIKLMNXOPR?STYFHPOiyaeiiyabgdezitiklmnxoprsstyfhpo";
+
 char pva_fold_ascii(uint32_t c)
 {
     if (c >= 0x20 && c < 0x7F) return (char)c;
-    if (c == 0xA0) return ' ';
-    if (c == 0x2022 || c == 0xB7) return '*';
-    if (c == 0x2032 || c == 0xB4) return '\'';
-    if (c == 0x200B || c == 0x200C || c == 0x200D || c == 0xFEFF || c == 0xAD) return 0;   // (zero width)
+    if (c < 0x20 || c == 0x7F) return c ? '?' : 0;
+    // Latin-1's signs
+    if (c >= 0xA0 && c < 0xC0)
+    {
+        static const char sym[] = " \0cLoY|S\0ca\"\0\0r\0o\0" "23'uP*\0" "1o\"\0\0\0\0";    // U+00A0 - U+00BF (0: left out)
+        return sym[c - 0xA0];
+    }
     static const char map[] = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
     if (c >= 0xC0 && c <= 0xFF) return map[c - 0xC0];
-    if (c == 0x2018 || c == 0x2019) return '\'';
-    if (c == 0x201C || c == 0x201D) return '"';
-    if (c == 0x2013 || c == 0x2014) return '-';
-    return c ? '?' : 0;
+    if (c >= 0x100 && c < 0x180) return lat_a[c - 0x100];
+    if (c == 0x192) return 'f';
+    if (c == 0x218 || c == 0x21A) return c == 0x218 ? 'S' : 'T';         // Ș Ț
+    if (c == 0x219 || c == 0x21B) return c == 0x219 ? 's' : 't';         // ș ț
+    if (c == 0x401) return 'E';                                          // Ё
+    if (c == 0x451) return 'e';                                          // ё
+    if (c >= 0x410 && c < 0x450) return cyr[c - 0x410];
+    if (c == 0x404 || c == 0x454) return c == 0x404 ? 'E' : 'e';         // Є є
+    if (c == 0x406 || c == 0x407) return 'I';                            // І Ї
+    if (c == 0x456 || c == 0x457) return 'i';
+    if (c >= 0x391 && c <= 0x3C9) return grk[c - 0x391];
+    if (c >= 0x386 && c <= 0x38F) return "A.EII?O?YO"[c - 0x386];         // Ά .. Ώ
+    if (c >= 0x3AC && c <= 0x3B0) return "aeiiy"[c - 0x3AC];              // ά .. ΰ
+    if (c >= 0x3CA && c <= 0x3CE) return "iyoyo"[c - 0x3CA];              // ϊ .. ώ
+    if (c == 0x2022 || c == 0x2027) return '*';
+    if (c == 0x2032 || c == 0x2018 || c == 0x2019 || c == 0x201B || c == 0x2039 || c == 0x203A) return '\'';
+    if (c == 0x201A) return ',';
+    if (c == 0x201C || c == 0x201D || c == 0x201E || c == 0x201F || c == 0x2033) return '"';
+    if (c >= 0x2010 && c <= 0x2015) return '-';
+    if (c == 0x2026) return '.';
+    if (c == 0x20AC) return 'E';
+    if (c == 0x2122) return 0;
+    // (zero width, the variation selectors, emoji and pictures: left out)
+    if (c == 0x200B || c == 0x200C || c == 0x200D || c == 0x2060 || c == 0xFEFF || (c >= 0xFE00 && c <= 0xFE0F)) return 0;
+    if ((c >= 0x2190 && c <= 0x21FF) || (c >= 0x2300 && c <= 0x23FF) || (c >= 0x25A0 && c <= 0x27BF) ||
+        (c >= 0x2B00 && c <= 0x2BFF) || c >= 0x1F000) return 0;
+    if (c >= 0x2000 && c <= 0x200A) return ' ';
+    return '?';
+}
+
+// Windows-1252's 0x80 - 0x9F (a station's title as Latin-1 often is that)
+static uint32_t cp1252(uint8_t b)
+{
+    static const uint16_t w[32] = {
+        0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
+        0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178 };
+    return b >= 0x80 && b < 0xA0 ? w[b - 0x80] : b;
 }
 
 void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len)
@@ -124,18 +169,21 @@ void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len)
     {
         uint8_t b = (uint8_t)src[i];
         uint32_t c = b;
-        if (b >= 0xC0 && b < 0xE0 && i + 1 < src_len && ((uint8_t)src[i + 1] & 0xC0) == 0x80)
+        // UTF-8 when it is (its following bytes 10xxxxxx), else Latin-1 / Windows-1252
+        int n = b >= 0xC2 && b < 0xE0 ? 1 : b >= 0xE0 && b < 0xF0 ? 2 : b >= 0xF0 && b < 0xF5 ? 3 : 0;
+        bool ok = n && i + (size_t)n < src_len;
+        for (int k = 1; ok && k <= n; k++) ok = ((uint8_t)src[i + k] & 0xC0) == 0x80;
+        if (ok)
         {
-            c = ((uint32_t)(b & 0x1F) << 6) | ((uint8_t)src[i + 1] & 0x3F);
-            i += 2;
-        }
-        else if (b >= 0xE0 && b < 0xF0 && i + 2 < src_len)
-        {
-            c = ((uint32_t)(b & 0x0F) << 12) | ((uint32_t)((uint8_t)src[i + 1] & 0x3F) << 6) | ((uint8_t)src[i + 2] & 0x3F);
-            i += 3;
+            c = b & (n == 1 ? 0x1Fu : n == 2 ? 0x0Fu : 0x07u);
+            for (int k = 1; k <= n; k++) c = (c << 6) | ((uint8_t)src[i + k] & 0x3F);
+            i += (size_t)n + 1;
         }
         else
+        {
+            c = cp1252(b);
             i++;
+        }
         char a = pva_fold_ascii(c);
         if (a) dst[o++] = a;
     }
@@ -172,7 +220,7 @@ static void id3_text(char *dst, size_t size, const uint8_t *p, uint32_t len)
         size_t o = 0;
         for (uint32_t i = 0; i < len && p[i] && o + 1 < size; i++)
         {
-            char a = pva_fold_ascii(p[i]);
+            char a = pva_fold_ascii(cp1252(p[i]));
             if (a) dst[o++] = a;
         }
         while (o > 0 && dst[o - 1] == ' ') o--;

@@ -297,6 +297,29 @@ int main(int argc, char **argv)
         host_esp_load_audio(sp);
     }
 
+    {
+        // text for the MSX's font: UTF-8, else Latin-1 / Windows-1252 (a station's title often is); the
+        // accents dropped, Central European, Cyrillic and Greek letters plain, emoji left out, no '?'
+        static const struct { const char *in, *out; } t[] = {
+            { "Beyonc\xc3\xa9 - D\xc3\xa9j\xc3\xa0 Vu", "Beyonce - Deja Vu" },
+            { "Beyonc\xe9 - D\xe9j\xe0 Vu", "Beyonce - Deja Vu" },                         // Latin-1
+            { "Sigur R\xf3s - Hopp\xedpolla", "Sigur Ros - Hoppipolla" },                    // (0xF3: not a 4-byte start)
+            { "\x93Hello\x94 \x96 It\x92s \x85", "\"Hello\" - It's ." },                     // Windows-1252
+            { "Dvo\xc5\x99\xc3\xa1k, Chopin: \xc5\x81\xc3\xb3" "d\xc5\xba, Pet\xc5\x91" "fi", "Dvorak, Chopin: Lodz, Petofi" },
+            { "Rom\xc3\xa2nia: \xc8\x98tefan \xc8\x9a\xc4\x83ranu", "Romania: Stefan Taranu" },
+            { "\xd0\x9c\xd1\x83\xd0\xb7\xd1\x8b\xd0\xba\xd0\xb0", "Muzyka" },               // Музыка
+            { "\xce\x9c\xce\xbf\xcf\x85\xcf\x83\xce\xb9\xce\xba\xce\xae", "Moysiki" },     // Μουσική (a letter for a letter)
+            { "Party \xf0\x9f\x8e\x89\xef\xb8\x8f time \xe2\x9c\xa8", "Party  time" },       // 🎉️ ✨
+            { "Stra\xc3\x9f" "e \xe2\x80\x9e" "Br\xc3\xbc" "cke\xe2\x80\x9c \xe2\x82\xac" "5", "Strase \"Brucke\" E5" },
+        };
+        for (size_t i = 0; i < sizeof t / sizeof t[0]; i++)
+        {
+            char o[80];
+            pva_copy_ascii(o, sizeof o, t[i].in, strlen(t[i].in));
+            CHECK(!strcmp(o, t[i].out), "text for the MSX: '%s', not '%s'", t[i].out, o);
+        }
+    }
+
     // the PicoAmp ROM's: the SRAM cache - the ROM - core 1's stack - the HAL's heap and microSD buffers
     static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024 - 16 * 1024 - 2304];
     // as the firmware: 128 KB left by Nextor - 8 KB core 1 stack - FatFs name buffers - the heap's piece;
