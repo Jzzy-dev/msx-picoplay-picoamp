@@ -824,6 +824,17 @@ bool pva_dir_add(const char *name, const char *url)
     return true;
 }
 
+// an entry with all four (Network's folders, pva_media.c): extra in the uuid's place, num its size in KB
+bool pva_dir_add_entry(const char *name, const char *url, const char *extra, uint16_t num)
+{
+    if (!pva_dir_add(name, url)) return false;
+    dent_rb_t *e = &ents[nents - 1u];
+    e->uuid = pool_add(extra, strlen(extra));
+    e->num = num;
+    if (e->uuid == 0xFFFF) { nents--; return false; }
+    return true;
+}
+
 static int name_ci(const char *a, const char *b)
 {
     for (;; a++, b++)
@@ -833,10 +844,18 @@ static int name_ci(const char *a, const char *b)
     }
 }
 
+// (an entry whose extra begins with 'd', a folder, before the rest)
+static bool is_folder(const dent_rb_t *e) { return e->uuid != 0xFFFF && at(e->uuid)[0] == 'd'; }
+static int ent_cmp(const dent_rb_t *a, const dent_rb_t *b)
+{
+    if (is_folder(a) != is_folder(b)) return is_folder(a) ? -1 : 1;
+    return name_ci(at(a->name), at(b->name));
+}
+
 void pva_dir_sort(void)
 {
     for (uint16_t i = 1; i < nents; i++)
-        for (uint16_t j = i; j > 0 && name_ci(at(ents[j - 1].name), at(ents[j].name)) > 0; j--)
+        for (uint16_t j = i; j > 0 && ent_cmp(&ents[j - 1], &ents[j]) > 0; j--)
         {
             dent_rb_t t = ents[j];
             ents[j] = ents[j - 1];

@@ -45,6 +45,15 @@
 //     are in the zone groups too. SOAP: GetZoneGroupState, Get/Set of the transport, position, play mode,
 //     group volume and mute, Play, Pause (a station: an error), Stop, Next, Previous, Seek. What they were
 //     told: host_esp_sonos_log. host_esp_sonos_udp = false: no UDP (an older ESP firmware)
+//     /music/list?path=   its music folder: (top) "Albums", "Caf\xc3\xa9", Sine.mp3, Tone.wav, cover.jpg;
+//                         Albums: VBR.mp3, Long.mp3
+//     /music/file?path=   a song (cbr128_v23, tone, vbr_v24, long192 from the assets), Range: 206
+//                         (host_esp_music_ranges, host_esp_last_range); at host_esp_music_bps
+//   10.0.0.30 port 8200: "Home NAS", a DLNA media server (the SSDP search for MediaServer finds it and
+//     10.0.0.31, a router without a ContentDirectory): /rootDesc.xml, ContentDirectory Browse at
+//     /ctl/ContentDir (relative in the description): 0 has "Music" (64), "Caf\xc3\xa9 & Bar" (65), three
+//     items (an MP3, a FLAC: left out, one with a FLAC and an MP3 address); 64 has 150 MP3 items (pages);
+//     /MediaItems/1.mp3 cbr128_v23 (Range)
 //   anything else: DNS error
 
 #define _GNU_SOURCE
@@ -93,6 +102,11 @@ bool     host_esp_api_down = false;         // 10.0.0.4 refuses connections (a m
 bool     host_esp_api_all_down = false;     // all API servers refuse
 uint32_t host_esp_api_bps = 20000;          // API reply speed
 uint32_t host_esp_clicks;
+uint32_t host_esp_music_ranges;             // Range requests of the PC's and the NAS's songs
+uint32_t host_esp_music_bps = 64000;
+uint32_t host_esp_browses;                  // ContentDirectory Browse requests
+char     host_esp_last_range[40];
+char     host_esp_last_browse[200];
 char     host_esp_last_click[48];
 char     host_esp_last_api[300];
 long long host_esp_date_base = 1793303100LL;    // Date headers: 2026-10-29 19:45:00 UTC + the time
@@ -826,6 +840,142 @@ void host_esp_sonos_reset(void)
     host_esp_sonos_joined = false;
 }
 
+// a song from the assets, all or from the Range's first byte, as a music server sends it (kind 6)
+static void music_file(conn_t *c, const char *r, const char *asset, const char *type)
+{
+    char fn[300];
+    snprintf(fn, sizeof fn, "%s/%s", host_esp_logo_dir, asset);
+    size_t n = 0;
+    FILE *fp = fopen(fn, "rb");
+    if (!fp) { http_reply(c, "HTTP/1.0 404 Not Found\r\n\r\n", NULL); return; }
+    static uint8_t b[8 << 20];
+    n = fread(b, 1, sizeof b, fp);
+    fclose(fp);
+    unsigned long from = 0;
+    const char *rg = strstr(r, "\r\nRange: bytes=");
+    char hd[300];
+    if (rg)
+    {
+        host_esp_music_ranges++;
+        from = strtoul(rg + 15, NULL, 10);
+        snprintf(host_esp_last_range, sizeof host_esp_last_range, "%lu-", from);
+        if (from >= n) { snprintf(hd, sizeof hd, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */%u\r\n\r\n", (unsigned)n); http_reply(c, hd, NULL); return; }
+        snprintf(hd, sizeof hd, "HTTP/1.1 206 Partial Content\r\nContent-Type: %s\r\nAccept-Ranges: bytes\r\nContent-Range: bytes %lu-%u/%u\r\nContent-Length: %lu\r\n\r\n",
+                 type, from, (unsigned)n - 1u, (unsigned)n, (unsigned long)(n - from));
+    }
+    else snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nAccept-Ranges: bytes\r\nContent-Length: %u\r\n\r\n", type, (unsigned)n);
+    bq_put(&c->pend, hd, strlen(hd));
+    bq_put(&c->pend, b + from, n - from);
+    c->kind = 6;
+    c->closed = false;
+}
+
+static void pct_dec(char *t)
+{
+    char *o = t;
+    for (const char *i = t; *i; i++)
+    {
+        if (*i == '%' && i[1] && i[2]) { char h[3] = { i[1], i[2], 0 }; *o++ = (char)strtol(h, NULL, 16); i += 2; }
+        else *o++ = *i;
+    }
+    *o = 0;
+}
+
+static void pc_music(conn_t *c, const char *path, const char *r)
+{
+    const char *q = strstr(path, "path=");
+    char rel[300] = "";
+    if (q) snprintf(rel, sizeof rel, "%s", q + 5);
+    pct_dec(rel);
+    if (!strncmp(path, "/music/list", 11))
+    {
+        if (!rel[0]) http_reply(c, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n",
+                                "f Tone.wav\nd Albums\nf Sine.mp3\nf cover.jpg\nd Caf\xc3\xa9\n");
+        else if (!strcmp(rel, "Albums")) http_reply(c, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n", "f VBR.mp3\nf Long.mp3\n");
+        else if (!strcmp(rel, "Caf\xc3\xa9")) http_reply(c, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n", "");
+        else http_reply(c, "HTTP/1.0 404 Not Found\r\nContent-Type: text/plain\r\n\r\n", "no such folder\n");
+        return;
+    }
+    static const char *const map[][3] = { { "Sine.mp3", "cbr128_v23.mp3", "audio/mpeg" }, { "Tone.wav", "tone.wav", "audio/wav" },
+                                          { "Albums/VBR.mp3", "vbr_v24.mp3", "audio/mpeg" }, { "Albums/Long.mp3", "long192.mp3", "audio/mpeg" } };
+    for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
+        if (!strcmp(rel, map[i][0])) { music_file(c, r, map[i][1], map[i][2]); return; }
+    http_reply(c, "HTTP/1.0 404 Not Found\r\n\r\n", "no such song\n");
+}
+
+// the NAS: its description, ContentDirectory Browse, its songs
+static void nas_serve(conn_t *c, const char *path, const char *r)
+{
+    if (c->ip[3] == 31) { http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\n\r\n",
+                                     "<?xml version=\"1.0\"?><root><device><friendlyName>Router</friendlyName><serviceList><service>"
+                                     "<serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>/ctl/IPConn</controlURL>"
+                                     "</service></serviceList></device></root>"); return; }
+    if (!strcmp(path, "/rootDesc.xml"))
+    {
+        http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\n\r\n",
+                   "<?xml version=\"1.0\"?>\n<root xmlns=\"urn:schemas-upnp-org:device-1-0\"><specVersion><major>1</major></specVersion>"
+                   "<device><deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType><friendlyName>Home NAS</friendlyName>"
+                   "<serviceList><service><serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>"
+                   "<controlURL>ctl/ConnMgr</controlURL></service>"
+                   "<service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>"
+                   "<controlURL>ctl/ContentDir</controlURL><eventSubURL>/evt/ContentDir</eventSubURL></service></serviceList></device></root>");
+        return;
+    }
+    if (!strncmp(path, "/MediaItems/", 12)) { music_file(c, r, "cbr128_v23.mp3", "audio/mpeg"); return; }
+    if (strncmp(r, "POST /ctl/ContentDir", 20)) { http_reply(c, "HTTP/1.1 404 Not Found\r\n\r\n", NULL); return; }
+    host_esp_browses++;
+    const char *body = strstr(r, "\r\n\r\n");
+    body = body ? body + 4 : "";
+    char id[64], st[12], cnt[12];
+    sx_arg(body, "ObjectID", id, sizeof id);
+    sx_arg(body, "StartingIndex", st, sizeof st);
+    sx_arg(body, "RequestedCount", cnt, sizeof cnt);
+    snprintf(host_esp_last_browse, sizeof host_esp_last_browse, "%s %s %s", id, st, cnt);
+    static char didl[65536], x[140000], out[150000];
+    int total = 0, ret = 0;
+    size_t k = (size_t)snprintf(didl, sizeof didl, "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\">");
+    if (!strcmp(id, "0"))
+    {
+        k += (size_t)snprintf(didl + k, sizeof didl - k,
+             "<container id=\"64\" parentID=\"0\" restricted=\"1\" childCount=\"150\"><dc:title>Music</dc:title><upnp:class>object.container.storageFolder</upnp:class></container>"
+             "<container id=\"65\" parentID=\"0\" restricted=\"1\"><dc:title>Caf&#233; &amp; Bar</dc:title><upnp:class>object.container</upnp:class></container>"
+             "<item id=\"i1\" parentID=\"0\" restricted=\"1\"><dc:title>NAS Sine</dc:title><upnp:artist role=\"Performer\">NAS Artist</upnp:artist><upnp:artist>Someone Else</upnp:artist>"
+             "<dc:creator>Creator</dc:creator><upnp:album>NAS Album</upnp:album><upnp:class>object.item.audioItem.musicTrack</upnp:class>"
+             "<res size=\"129193\" duration=\"0:00:20.000\" protocolInfo=\"http-get:*:audio/mpeg:DLNA.ORG_PN=MP3\">http://10.0.0.30:8200/MediaItems/1.mp3</res></item>"
+             "<item id=\"i2\" parentID=\"0\"><dc:title>Lossless</dc:title><res protocolInfo=\"http-get:*:audio/flac:*\">http://10.0.0.30:8200/MediaItems/2.flac</res></item>"
+             "<item id=\"i3\" parentID=\"0\"><dc:title>Both</dc:title><dc:creator>Two Formats</dc:creator><res protocolInfo=\"http-get:*:audio/flac:*\">http://10.0.0.30:8200/MediaItems/3.flac</res>"
+             "<res size=\"2048000\" protocolInfo=\"http-get:*:audio/mpeg:*\">\n http://10.0.0.30:8200/MediaItems/3.mp3 </res></item>");
+        total = ret = 5;
+    }
+    else if (!strcmp(id, "64"))
+    {
+        int a = atoi(st), n = atoi(cnt);
+        total = 150;
+        for (int i = a; i < a + n && i < total; i++, ret++)
+            k += (size_t)snprintf(didl + k, sizeof didl - k,
+                 "<item id=\"64$%d\" parentID=\"64\"><dc:title>Track %03d</dc:title><upnp:artist>Band</upnp:artist><upnp:album>Long Album</upnp:album>"
+                 "<res size=\"129193\" protocolInfo=\"http-get:*:audio/mpeg:*\">http://10.0.0.30:8200/MediaItems/1.mp3?t=%d</res></item>", i, i + 1, i);
+    }
+    else if (!strcmp(id, "65")) total = ret = 0;
+    else
+    {
+        http_reply(c, "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/xml\r\n\r\n",
+                   "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><s:Fault><detail><UPnPError><errorCode>701</errorCode></UPnPError></detail></s:Fault></s:Body></s:Envelope>");
+        return;
+    }
+    snprintf(didl + k, sizeof didl - k, "</DIDL-Lite>");
+    xesc(x, sizeof x, didl);
+    snprintf(out, sizeof out, "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
+             "<s:Body><u:BrowseResponse xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\"><Result>%s</Result><NumberReturned>%d</NumberReturned>"
+             "<TotalMatches>%d</TotalMatches><UpdateID>7</UpdateID></u:BrowseResponse></s:Body></s:Envelope>", x, ret, total);
+    char hd[160];
+    snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: %u\r\n\r\n", (unsigned)strlen(out));
+    bq_put(&c->pend, hd, strlen(hd));
+    bq_put(&c->pend, out, strlen(out));
+    c->kind = 4;
+    c->closed = false;
+}
+
 static void serve(conn_t *c)
 {
     char *r = (char *)c->reqbuf.b;
@@ -840,6 +990,7 @@ static void serve(conn_t *c)
     bool icy_meta = strstr(r, "Icy-MetaData: 1") != NULL;
     bool r1 = c->ip[3] == 1, r2 = c->ip[3] == 2, sec = c->ip[3] == 3;
     if (c->ip[3] >= 20 && c->ip[3] <= 22) { sonos_serve(c, r); return; }
+    if (c->ip[3] == 30 || c->ip[3] == 31) { nas_serve(c, path, r); return; }
     if (c->ip[3] >= 6 && c->ip[3] <= 8) { web(c, path); return; }
     if (c->ip[3] == 9) { news(c, path); return; }
     if (c->ip[3] == 10 || c->ip[3] == 11) { yahoo(c, path, r); return; }
@@ -953,6 +1104,7 @@ static void serve(conn_t *c)
             c->closed = true;
             return;
         }
+        if (!strncmp(path, "/music/", 7)) { pc_music(c, path, r); return; }
         if (!strncmp(path, "/screen", 7))
         {
             static const char hd[] = "HTTP/1.0 200 OK\r\nContent-Type: text/x-picoamp-screen\r\nicy-name: PicoAmp on PC\r\nX-PicoAmp: 2\r\n\r\n";
@@ -1039,13 +1191,25 @@ static void serve(conn_t *c)
 
 static void gen(conn_t *c, uint32_t ms)
 {
-    if (c->kind == 4)
+    if (c->kind == 4 || c->kind == 6)
     {
-        // an API reply: at host_esp_api_bps, then the server closes
-        c->credit += (double)host_esp_api_bps * ms / 1000.0;
+        // an API reply: at host_esp_api_bps, then the server closes (6: a song, at host_esp_music_bps)
+        c->credit += (double)(c->kind == 6 ? host_esp_music_bps : host_esp_api_bps) * ms / 1000.0;
         size_t k = (size_t)c->credit;
         if (k > c->pend.len) k = c->pend.len;
         if (c->out.len > 16384) k = 0;
+        // (a song: the connection drops after host_esp_drop_after bytes, as a stream's)
+        if (c->kind == 6 && host_esp_drop_after && c->body_sent + k >= host_esp_drop_after)
+        {
+            k = host_esp_drop_after > c->body_sent ? host_esp_drop_after - c->body_sent : 0;
+            if (k > c->pend.len) k = c->pend.len;
+            bq_put(&c->out, c->pend.b, k);
+            bq_drop(&c->pend, c->pend.len);
+            c->body_sent += k;
+            c->closed = true;
+            return;
+        }
+        c->body_sent += k;
         c->credit -= (double)k;
         bq_put(&c->out, c->pend.b, k);
         bq_drop(&c->pend, k);
@@ -1190,7 +1354,7 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && ((a[3] >= 1 && a[3] <= 15) || (a[3] >= 20 && a[3] <= 22 && port == 1400)));
+            bool known = (a[0] == 10 && ((a[3] >= 1 && a[3] <= 15) || (a[3] >= 20 && a[3] <= 22 && port == 1400) || (a[3] == 30 && port == 8200) || (a[3] == 31 && port == 1900)));
             if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && a[3] <= 9 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000) || (a[3] == 14 && port != 8765)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];
@@ -1310,6 +1474,16 @@ static void request(const uint8_t *p, size_t n)
                     int n = snprintf(m, sizeof m, "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age = 1800\r\nEXT:\r\nLOCATION: http://10.0.0.%d:1400/xml/device_description.xml\r\n"
                                                   "SERVER: Linux UPnP/1.0 Sonos/80.1\r\nST: urn:schemas-upnp-org:device:ZonePlayer:1\r\n\r\n", k);
                     uint8_t h[8] = { 10, 0, 0, (uint8_t)k, 0x6C, 0x07, (uint8_t)(n >> 8), (uint8_t)n };   // (from :1900; its length first, for the queue)
+                    bq_put(&conns[cn].out, h, 8);
+                    bq_put(&conns[cn].out, m, (size_t)n);
+                }
+            if (a[1] == 239 && a[2] == 255 && a[3] == 255 && a[4] == 250 && port == 1900 && memmem(a + 7, len - 7, "MediaServer", 11))
+                for (int k = 30; k <= 31; k++)
+                {
+                    char m[300];
+                    int n = snprintf(m, sizeof m, "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLocation: http://10.0.0.%d:%s\r\n"
+                                                  "SERVER: Linux/5 UPnP/1.0 MiniDLNA/1.3\r\nST: urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n", k, k == 30 ? "8200/rootDesc.xml" : "1900/igd.xml");
+                    uint8_t h[8] = { 10, 0, 0, (uint8_t)k, 0x6C, 0x07, (uint8_t)(n >> 8), (uint8_t)n };
                     bq_put(&conns[cn].out, h, 8);
                     bq_put(&conns[cn].out, m, (size_t)n);
                 }

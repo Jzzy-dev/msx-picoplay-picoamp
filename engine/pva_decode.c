@@ -47,8 +47,22 @@ void *pva_mp3_alloc(size_t size)
 static HMP3Decoder decoder;
 static uint8_t  *inbuf;
 static uint32_t  in_len, in_pos;
-static FIL      *filep;               // in the arena
-#define file (*filep)
+// the file, and a song from a music server (pva_dec_open_remote): read from the
+// stream buffer as a stream is, but with its length, its tags and seeking. Its
+// first bytes are looked at as a file's (the ID3 tag, a WAV's chunks: a window,
+// inbuf); a jump (past a big tag, a seek) asks the engine to fetch the song
+// again from that byte (pva_dec_remote_want). In the arena: no static RAM.
+enum { RP_HEAD, RP_PROBE, RP_PLAY };
+typedef struct
+{
+    FIL      fil;
+    bool     on, want, info_new, win;
+    uint8_t  phase;
+    uint32_t want_at, wpos;
+    pva_track_info_t *info;
+} dsrc_t;
+static dsrc_t   *R;
+#define file (R->fil)
 static bool      file_open, file_eof;
 static uint32_t  file_size;
 static uint32_t  audio_start;          // first byte after the ID3v2 tag
@@ -315,6 +329,20 @@ static void id3_text(char *dst, size_t size, const uint8_t *p, uint32_t len)
     }
 }
 
+// the file's bytes, or the window of a song from a music server (its first bytes, in inbuf)
+static FRESULT s_read(void *b, UINT n, UINT *br)
+{
+    if (!R->win) return f_read(&file, b, n, br);
+    uint32_t k = R->wpos < in_len ? in_len - R->wpos : 0;
+    if (k > n) k = n;
+    memcpy(b, inbuf + R->wpos, k);
+    R->wpos += k;
+    *br = (UINT)k;
+    return FR_OK;
+}
+static FRESULT s_seek(uint32_t p) { if (!R->win) return f_lseek(&file, p); R->wpos = p; return FR_OK; }
+static uint32_t s_tell(void) { return R->win ? R->wpos : (uint32_t)f_tell(&file); }
+
 // An attached picture (APIC): encoding, MIME type 0, picture type, description 0 (00 in UTF-16), the
 // image. Only JPEG (the cover's decoder); the front cover (type 3) before any other.
 static void apic(pva_track_info_t *info, uint32_t at, uint32_t size)
@@ -322,7 +350,7 @@ static void apic(pva_track_info_t *info, uint32_t at, uint32_t size)
     uint8_t h[160];
     UINT br;
     uint32_t n = size < sizeof h ? size : sizeof h;
-    if (n < 16 || f_read(&file, h, n, &br) != FR_OK || br != n) return;
+    if (n < 16 || s_read(h, n, &br) != FR_OK || br != n) return;
     uint32_t i = 1;
     const char *mime = (const char *)h + 1;
     while (i < n && h[i]) i++;
@@ -349,7 +377,7 @@ static void parse_id3v2(pva_track_info_t *info, uint32_t tag_size, uint8_t ver, 
     {
         uint8_t eh[4];
         UINT br;
-        if (f_lseek(&file, 10) != FR_OK || f_read(&file, eh, 4, &br) != FR_OK || br != 4) return;
+        if (s_seek(10) != FR_OK || s_read(eh, 4, &br) != FR_OK || br != 4) return;
         uint32_t es = (ver == 4) ? syncsafe(eh) : rd32be(eh) + 4;
         pos += es;
     }
@@ -357,7 +385,7 @@ static void parse_id3v2(pva_track_info_t *info, uint32_t tag_size, uint8_t ver, 
     {
         uint8_t fh[10];
         UINT br;
-        if (f_lseek(&file, pos) != FR_OK || f_read(&file, fh, 10, &br) != FR_OK || br != 10) return;
+        if (s_seek(pos) != FR_OK || s_read(fh, 10, &br) != FR_OK || br != 10) return;
         if (fh[0] == 0) return;             // padding
         uint32_t fs = (ver == 4) ? syncsafe(fh + 4) : rd32be(fh + 4);
         if (fs == 0 || pos + 10 + fs > 10 + tag_size) return;
@@ -372,7 +400,7 @@ static void parse_id3v2(pva_track_info_t *info, uint32_t tag_size, uint8_t ver, 
         {
             uint8_t body[200];
             uint32_t n = fs < sizeof body ? fs : sizeof body;
-            if (f_read(&file, body, n, &br) == FR_OK && br == n)
+            if (s_read(body, n, &br) == FR_OK && br == n)
             {
                 id3_text(dst, dsz, body, n);
                 if (dst == info->title && dst[0]) info->tagged = true;
@@ -428,8 +456,10 @@ static void refill(void)
     {
         if ((in_len - in_pos) >= INBUF_SIZE / 2u) return;
         compact_input();
+        if (R->want) return;            // (the song comes again from another byte)
         in_len += (uint32_t)pva_net_read(inbuf + in_len, INBUF_SIZE - in_len);
-        if (pva_net_ended() && in_len == in_pos) file_eof = true;
+        // (a song: what is left is all there is)
+        if (pva_net_ended() && (in_len == in_pos || R->on)) file_eof = true;
         return;
     }
     if (!file_open || file_eof || (in_len - in_pos) >= INBUF_SIZE / 2u)
@@ -529,7 +559,7 @@ static int produce_mp3(void)
             refill();
             avail = in_len - in_pos;
             // a stream decodes only whole frames (the largest is 1441 bytes)
-            if (stream && avail < 1800u) return pva_net_ended() ? -1 : 0;
+            if (stream && avail < 1800u && !file_eof) return pva_net_ended() ? -1 : 0;
         }
         unsigned char *p = inbuf + in_pos;
         int left = (int)avail;
@@ -568,18 +598,18 @@ static bool open_wav(pva_track_info_t *info)
 {
     uint8_t h[12];
     UINT br;
-    if (f_read(&file, h, 12, &br) != FR_OK || br != 12 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4))
+    if (s_read(h, 12, &br) != FR_OK || br != 12 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4))
         return false;
     bool have_fmt = false;
     for (int guard = 0; guard < 32; guard++)
     {
         uint8_t ch[8];
-        if (f_read(&file, ch, 8, &br) != FR_OK || br != 8) return false;
+        if (s_read(ch, 8, &br) != FR_OK || br != 8) return false;
         uint32_t size = rd32le(ch + 4);
         if (!memcmp(ch, "fmt ", 4))
         {
             uint8_t fmt[16];
-            if (size < 16 || f_read(&file, fmt, 16, &br) != FR_OK || br != 16) return false;
+            if (size < 16 || s_read(fmt, 16, &br) != FR_OK || br != 16) return false;
             uint16_t tag = rd16le(fmt);
             wav_channels = rd16le(fmt + 2);
             rate = rd32le(fmt + 4);
@@ -588,12 +618,12 @@ static bool open_wav(pva_track_info_t *info)
                 (wav_bits != 8 && wav_bits != 16) || rate < 8000 || rate > 48000)
                 return false;
             have_fmt = true;
-            if (f_lseek(&file, f_tell(&file) + (size - 16u) + (size & 1u)) != FR_OK) return false;
+            if (s_seek(s_tell() + (size - 16u) + (size & 1u)) != FR_OK) return false;
         }
         else if (!memcmp(ch, "data", 4))
         {
             if (!have_fmt) return false;
-            wav_data_start = (uint32_t)f_tell(&file);
+            wav_data_start = s_tell();
             wav_data_size = size;
             if (wav_data_start + wav_data_size > file_size) wav_data_size = file_size - wav_data_start;
             wav_remaining = wav_data_size;
@@ -605,7 +635,7 @@ static bool open_wav(pva_track_info_t *info)
             info->seekable = true;
             return true;
         }
-        else if (f_lseek(&file, f_tell(&file) + size + (size & 1u)) != FR_OK)
+        else if (s_seek(s_tell() + size + (size & 1u)) != FR_OK)
             return false;
     }
     return false;
@@ -621,7 +651,19 @@ static int produce_wav(uint32_t max_frames)
     if (bytes > PVA_READ_CHUNK) bytes = PVA_READ_CHUNK - (PVA_READ_CHUNK % bpf);
     UINT br = 0;
     FRESULT fr = FR_OK;
-    if (bytes == 0 || (fr = f_read(&file, inbuf, bytes, &br)) != FR_OK || br < bpf)
+    const uint8_t *src = inbuf;
+    if (stream)
+    {
+        // a song from a music server: from the buffer, whole frames
+        refill();
+        uint32_t avail = in_len - in_pos;
+        if (bytes > avail - avail % bpf) bytes = avail - avail % bpf;
+        if (bytes < bpf) return file_eof ? -1 : 0;
+        src = inbuf + in_pos;
+        in_pos += bytes;
+        br = (UINT)bytes;
+    }
+    else if (bytes == 0 || (fr = f_read(&file, inbuf, bytes, &br)) != FR_OK || br < bpf)
     {
         if (fr != FR_OK) { last_fr = (uint8_t)fr; pva_log("wav read error %d", (int)fr); }
         return -1;
@@ -630,7 +672,7 @@ static int produce_wav(uint32_t max_frames)
     frames = br / bpf;
     for (uint32_t i = 0; i < frames; i++)
     {
-        const uint8_t *s = inbuf + i * bpf;
+        const uint8_t *s = src + i * bpf;
         int16_t l, r;
         if (wav_bits == 16)
         {
@@ -717,16 +759,17 @@ bool pva_dec_init(void)
 #endif
     inbuf = pva_alloc(INBUF_SIZE);
     mp3_pool = pva_alloc(MP3_POOL_SIZE);
-    filep = pva_alloc(sizeof(FIL));
+    R = pva_alloc(sizeof *R);
     pcm = pva_alloc(MAX_FRAME_SAMPLES * 2u * sizeof(int16_t));
     pva_dec_set_volume(80);
-    return inbuf && mp3_pool && filep && pcm;
+    return inbuf && mp3_pool && R && pcm;
 }
 
 void pva_dec_close(void)
 {
     close_file();
     stream = false;
+    if (R) R->on = R->want = R->win = false;
     format = 0;
     vu_l = vu_r = 0;
 }
@@ -811,7 +854,110 @@ int pva_dec_open_stream(pva_track_info_t *info)
     return PVA_OK;
 }
 
-bool pva_dec_is_stream(void) { return stream; }
+bool pva_dec_is_stream(void) { return stream && !(R && R->on); }
+bool pva_dec_is_remote(void) { return R && R->on; }
+
+// a song from a music server: its bytes from the stream buffer (pva_net_start_file); the
+// tags, the length and the format come with its first bytes (pva_dec_take_info)
+int pva_dec_open_remote(pva_track_info_t *info)
+{
+    int r = pva_dec_open_stream(info);
+    if (r != PVA_OK) return r;
+    info->format = PVA_DE_MP3;
+    R->on = true;
+    R->want = R->info_new = R->win = false;
+    R->phase = RP_HEAD;
+    R->info = info;
+    return PVA_OK;
+}
+
+// the song is to come again from this byte (a jump past a big tag, a seek): true once
+bool pva_dec_remote_want(uint32_t *at)
+{
+    if (!R || !R->on || !R->want) return false;
+    *at = R->want_at;
+    R->want = false;
+    return true;
+}
+
+// its tags, length and format are known now: true once
+bool pva_dec_take_info(void)
+{
+    if (!R || !R->info_new) return false;
+    R->info_new = false;
+    return true;
+}
+
+static void r_jump(uint32_t at)
+{
+    R->want = true;
+    R->want_at = at;
+    in_len = in_pos = 0;
+    file_eof = false;
+}
+
+// 1: the song plays; 0: its first bytes are not in yet; -1: not a song this plays
+static int remote_head(void)
+{
+    pva_track_info_t *info = R->info;
+    if (R->want) return 0;
+    if (R->phase == RP_HEAD)
+    {
+        if (in_len < INBUF_SIZE) in_len += (uint32_t)pva_net_read(inbuf + in_len, INBUF_SIZE - in_len);
+        uint32_t total = pva_net_file_total();
+        bool ended = pva_net_ended();
+        if (in_len < INBUF_SIZE && !(total && in_len >= total) && !ended) return 0;
+        if (in_len < 16u) return -1;
+        file_size = total ? total : in_len;
+        in_pos = 0;
+        audio_start = audio_end = 0;
+        if (!memcmp(inbuf, "RIFF", 4))
+        {
+            R->win = true;
+            R->wpos = 0;
+            bool ok = open_wav(info);
+            R->win = false;
+            if (!ok) return -1;
+            format = PVA_DE_WAV;
+            info->format = PVA_DE_WAV;
+            if (wav_data_start < in_len) in_pos = wav_data_start;
+            else r_jump(wav_data_start);
+            R->phase = RP_PLAY;
+            R->info_new = true;
+            return R->want ? 0 : 1;
+        }
+        const uint8_t *h = inbuf;
+        if (!memcmp(h, "ID3", 3) && h[3] >= 2 && h[3] <= 4)
+        {
+            uint32_t size = syncsafe(h + 6);
+            audio_start = 10u + size + ((h[5] & 0x10) ? 10u : 0u);
+            if (h[3] >= 3)
+            {
+                R->win = true;
+                parse_id3v2(info, size, h[3], h[5]);
+                R->win = false;
+            }
+            info->pic_pos = info->pic_len = 0;       // (a cover in the tag: not from here)
+            if (audio_start >= file_size) audio_start = 0;
+        }
+        if (audio_start <= in_len) in_pos = audio_start;
+        else r_jump(audio_start);
+        R->phase = RP_PROBE;
+        if (R->want) return 0;
+    }
+    if (R->phase == RP_PROBE)
+    {
+        refill();
+        if (in_len - in_pos < INBUF_SIZE / 2u && !file_eof) return 0;
+        mp3_probe(info);
+        if (info->sample_rate == 0) return -1;
+        rate = info->sample_rate;
+        info->format = PVA_DE_MP3;
+        R->phase = RP_PLAY;
+        R->info_new = true;
+    }
+    return 1;
+}
 
 void pva_dec_frame_info(pva_track_info_t *info)
 {
@@ -824,6 +970,11 @@ void pva_dec_frame_info(pva_track_info_t *info)
 int pva_dec_step(void)
 {
     if (!format) return -1;
+    if (R->on && R->phase != RP_PLAY)
+    {
+        int h = remote_head();
+        if (h <= 0) return h;
+    }
     uint32_t max_frames = 0;
     int16_t *out = pva_hal_audio_acquire(&max_frames);
     if (!out) return 0;
@@ -851,7 +1002,7 @@ uint32_t pva_dec_elapsed_ms(void)
 
 int pva_dec_seek(uint32_t seconds)
 {
-    if (!format || !file_open || stream) return PVA_E_STATE;
+    if (!format || (R->on ? R->phase != RP_PLAY : (!file_open || stream))) return PVA_E_STATE;
     if (total_s && seconds >= total_s) seconds = total_s ? total_s - 1u : 0u;
     uint32_t target;
     if (format == PVA_DE_WAV)
@@ -881,8 +1032,12 @@ int pva_dec_seek(uint32_t seconds)
             off = (uint32_t)(((uint64_t)seconds * bytes) / total_s);
         target = audio_start + off;
     }
-    FRESULT fr = f_lseek(&file, target);
-    if (fr != FR_OK) { last_fr = (uint8_t)fr; return PVA_E_IO; }
+    if (R->on) { R->want = true; R->want_at = target; }      // (the engine fetches it from there)
+    else
+    {
+        FRESULT fr = f_lseek(&file, target);
+        if (fr != FR_OK) { last_fr = (uint8_t)fr; return PVA_E_IO; }
+    }
     in_len = in_pos = 0;
     file_eof = false;
     if (format == PVA_DE_MP3) reset_decoder();

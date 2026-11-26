@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        20      // 0.20: PVA_C_CHARSET (accented letters for the MSX's font); 0.19: Sonos rooms (Internet radio/Sonos: a room as the MSX link's screen and remote); 0.18: the MSX link
+#define PVA_FW_MINOR        21      // 0.21: Network (PicoAmp for Windows' music and DLNA media servers as folders, their songs with a length and seeking); 0.20: PVA_C_CHARSET (accented letters for the MSX's font); 0.19: Sonos rooms (Internet radio/Sonos: a room as the MSX link's screen and remote); 0.18: the MSX link
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -307,7 +307,7 @@
 #define PVA_ST_ARTIST_LEN   40
 #define PVA_ST_ALBUM_LEN    40
 #define PVA_ST_FORMAT       160     // u8  PVA_DE_MP3 / PVA_DE_WAV of the track
-#define PVA_ST_PL_KIND      161     // u8  0 = folder, 1 = M3U play list, 2 = URL
+#define PVA_ST_PL_KIND      161     // u8  0 = folder, 1 = M3U play list, 2 = URL, 3 = a folder of Network (its songs)
 // streams (all 0 when no stream plays)
 #define PVA_ST_NET_STATE    162     // u8  PVA_NET_xxx
 #define PVA_ST_BUF_PCT      163     // u8  stream buffer fill, 0..100

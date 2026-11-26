@@ -218,6 +218,44 @@ speakers.
 ip=192.168.1.30
 ```
 
+### Network
+
+**Network** (engine 0.21), the second folder of the root after Internet radio, plays the
+music on other computers in the house, as folders: browse them as the card's, Enter on a
+song plays that folder's songs. MP3 and WAV, streamed over the ESP-01, with their length,
+the seek bar and `,` `.` seeking, as files from the card.
+
+* Opening it looks for the sources (a second or two; LOADING THE LIST shows meanwhile):
+  * **PicoAmp on the PC**: the music folder of [PicoAmp for Windows](https://github.com/Jzzy-dev/win-picoamp)
+    (its list's Music folder, the same as the TV app's), when its MSX link is on (K on the PC).
+    The engine knows the PC from `[network] pc=` in `PICOAMP.INI`, else from the MSX link
+    that plays, else from a favourite on the link's port (the `http://<the PC>:8765/screen`
+    or `/stream.mp3` line of the MSX link, see above):
+
+    ```
+    [network]
+    pc=192.168.1.20
+    ```
+
+  * **Media servers** (UPnP / DLNA) in the network: a NAS, Windows Media Player's media
+    sharing, Plex, Jellyfin, MiniDLNA, Serviio, Twonky ..., by their own names (an SSDP
+    search over the ESP-01's UDP, as for Sonos). A server's folders are its own (Music,
+    Artists, Albums, Folders ...), 100 entries at a time: **More...** at the end of the list
+    asks for the next 100.
+* The PC's folders come first, then its MP3 and WAV files by name (other files are left
+  out); a server's come in its order (its FLAC, AAC and other songs that the engine does not
+  play are left out; of a song in several forms, its MP3).
+* A song starts after a second (its buffer fills); its tags (ID3) come from its first bytes,
+  the server's names before them; the cover is the song's from the iTunes search (as a
+  station's song). At the end of a song the next one of the folder plays; shuffle and
+  repeat work as on the card. A seek fetches the song again from that place.
+* BS (or `..`) goes up: at a source's top to the sources, from there to the card's root.
+  Opening Network again searches the sources again.
+* WAV: as much as the ESP-01's link carries (about 80 KB/s): 22 kHz stereo or 44 kHz mono
+  16-bit; a CD-quality WAV (176 KB/s) stutters. MP3 at any bit rate.
+* Nothing found: an ESP-01 firmware without UDP finds no media servers (the PC, given in
+  `PICOAMP.INI`, still shows); some routers keep the search from the servers too.
+
 ### Clock
 
 C opens a page with the time, digital or analog, for having the MSX on with
@@ -539,7 +577,8 @@ The engine reads the file when PICOAMP starts (and starts the clock with it);
 News World, Al Jazeera, DW, The Guardian World and NOS, and your own feeds
 after them. `[news] sort` is `date` (newest first, the default) or `feed`
 (the feed's order), set with S. `clock.colours` is `music`, `cyan`, `green`, `amber`, `red`,
-`purple` or `white`.
+`purple` or `white`. `[network] pc` is PicoAmp for Windows' address for Network (an IP
+address, `host:port` or the link's URL), `[sonos] ip` speakers for the Sonos search.
 A changed setting is saved when the page closes (or PICOAMP quits): by the
 engine in the ROM version, by PICOAMP through MSX-DOS in the COM version, on
 the same drive as the favourites. The file can be edited by hand; comments
