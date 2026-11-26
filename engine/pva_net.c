@@ -27,6 +27,11 @@
 // data comes for a while, the stream is opened again; the buffer keeps the
 // audio going in the meantime.
 //
+// A song from a music server (pva_net_start_file, Network in the engine): a
+// GET with "Range: bytes=<from>-" and no ICY; its length from Content-Range or
+// Content-Length. A dropped connection goes on from the byte it got to; at the
+// song's end the stream is done (pva_net_ended once the buffer is empty).
+//
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
@@ -128,7 +133,7 @@ enum
     S_ABANDON,      // stopped while an answer (DNS, open) was on its way: wait for it
     S_CLEANUP       // no free ESP connection: abort leftovers, then open again
 };
-enum { AFTER_NONE, AFTER_RETRY, AFTER_REDIRECT, AFTER_FAIL, AFTER_IDLE };
+enum { AFTER_NONE, AFTER_RETRY, AFTER_REDIRECT, AFTER_FAIL, AFTER_IDLE, AFTER_DONE };
 
 static pva_net_stats_t st;
 static uint8_t  s = S_IDLE;
@@ -178,7 +183,10 @@ static char     station[PVA_ST_ALBUM_LEN];
 static char    *title;              // PVA_ST_TITLE_LEN + PVA_ST_ARTIST_LEN
 static char    *location;           // URL_MAX + 1
 static bool     body_playlist;      // body is a .pls / .m3u: look for the first URL
-static char    *pls;                // PLS_MAX + 1
+static char    *pls;                // PLS_MAX + 1 (a file's state, NF, before it)
+// a song from a music server (in the same piece of the arena as pls: no static RAM)
+typedef struct { bool on, done; uint32_t next, total, clen, skip; } nfile_t;
+#define NF ((nfile_t *)(void *)(pls - sizeof(nfile_t)))
 static size_t   pls_len;
 static bool     bad_format;
 
@@ -337,6 +345,13 @@ static void header_line(void)
     else if (starts_ci(line, "icy-metaint") && !line[11]) metaint = (uint32_t)atol(v);
     else if (starts_ci(line, "x-picoamp") && !line[9]) picoamp = (uint8_t)(atoi(v) == 2 ? 2 : atoi(v) > 0 ? 1 : 0);
     else if (starts_ci(line, "icy-name") && !line[8]) pva_copy_ascii(station, sizeof station, v, strlen(v));
+    else if (starts_ci(line, "content-length") && !line[14]) NF->clen = (uint32_t)strtoul(v, NULL, 10);
+    else if (starts_ci(line, "content-range") && !line[13])
+    {
+        // "bytes 1000-5999/6000"
+        const char *t = strchr(v, '/');
+        if (t && t[1] != '*') NF->total = (uint32_t)strtoul(t + 1, NULL, 10);
+    }
     else if (starts_ci(line, "content-type") && !line[12])
     {
         if (starts_ci(v, "audio/x-scpls") || starts_ci(v, "audio/x-mpegurl") || starts_ci(v, "audio/mpegurl") ||
@@ -355,6 +370,7 @@ static void header_line(void)
 
 static void headers_done(void);
 static uint8_t decided;
+static void decide(uint8_t what);
 
 static void http_feed(const uint8_t *p, size_t n)
 {
@@ -386,6 +402,20 @@ static void http_feed(const uint8_t *p, size_t n)
             n -= k;
             if (pls_len >= PLS_MAX) return;
             continue;
+        }
+        if (NF->on)
+        {
+            // a song: what a server that ignored Range sends before the byte asked for is
+            // left out; nothing past the song's end
+            size_t k = NF->skip < n ? NF->skip : n;
+            NF->skip -= (uint32_t)k;
+            p += k;
+            n -= k;
+            if (NF->total && n > NF->total - NF->next) n = NF->total - NF->next;
+            ring_audio(p, n);
+            NF->next += (uint32_t)n;
+            if (NF->total && NF->next >= NF->total) decide(AFTER_DONE);
+            return;
         }
         if (!metaint)
         {
@@ -461,6 +491,14 @@ static void headers_done(void)
         pva_log("stream: redirect to %.40s", cur);
         decide(AFTER_REDIRECT);
         return;
+    }
+    if (NF->on && st.http == 416) { NF->total = NF->next; decide(AFTER_DONE); return; }   // (nothing after the byte asked for)
+    if (NF->on && (st.http == 200 || st.http == 206))
+    {
+        if (st.http == 200) { NF->skip = NF->next; NF->total = NF->clen; }
+        else if (!NF->total && NF->clen) NF->total = NF->next + NF->clen;
+        pva_log("stream: a song, %lu bytes from %lu", (unsigned long)NF->total, (unsigned long)NF->next);
+        st.http = 200;
     }
     if (st.http != 200)
     {
@@ -553,13 +591,16 @@ static void begin_connect(void)
 
 static void build_request(void)
 {
+    char range[40] = "Icy-MetaData: 1\r\n";
+    if (NF->on) snprintf(range, sizeof range, "Range: bytes=%lu-\r\n", (unsigned long)NF->next);
+    NF->clen = 0;
     int n = snprintf(req, TXQ_MAX,
         "GET %s HTTP/1.0\r\n"
         "Host: %s\r\n"
         "User-Agent: PicoPlay/0.2 (MSX PicoVerse 2350)\r\n"
         "Accept: */*\r\n"
-        "Icy-MetaData: 1\r\n"
-        "Connection: close\r\n\r\n", path, host);
+        "%s"
+        "Connection: close\r\n\r\n", path, host, range);
     if (n < 0 || n >= (int)TXQ_MAX - 8) n = 0;
     req_len = (size_t)n;
     req_pos = 0;
@@ -623,6 +664,7 @@ static uint32_t last_rx_ms, state_ask_ms;
 
 static void server_closed(void)
 {
+    if (NF->on && s == S_BODY && NF->total && NF->next >= NF->total) { close_then(AFTER_DONE); return; }
     if (s == S_BODY && body_playlist) { finish_playlist(); return; }
     if (s == S_HEADERS && !ever_streamed) { fail_or_retry(PVA_NERR_CLOSED); return; }
     lost_connection(PVA_NERR_CLOSED);
@@ -838,6 +880,10 @@ void pva_net_poll(void)
                 case AFTER_FAIL:
                     release(S_FAILED);
                     return;
+                case AFTER_DONE:
+                    NF->done = true;
+                    release(S_IDLE);
+                    return;
                 default:
                     release(S_IDLE);
                     return;
@@ -900,7 +946,8 @@ bool pva_net_init(size_t keep)
     meta = pva_alloc(META_KEEP + 1);
     title = pva_alloc(PVA_ST_TITLE_LEN + PVA_ST_ARTIST_LEN);
     pending = pva_alloc(PVA_ST_TITLE_LEN + PVA_ST_ARTIST_LEN);
-    pls = pva_alloc(PLS_MAX + 1);
+    pls = pva_alloc(sizeof(nfile_t) + PLS_MAX + 1);
+    if (pls) pls += sizeof(nfile_t);
     if (!(url && cur && path && location && req && NS && line && meta && title && pending && pls)) return false;
     size_t big = 0;
     ring = pva_hal_stream_ram(&big);
@@ -925,8 +972,9 @@ static void begin_session(void)
 
 int pva_net_start(const char *u)
 {
-    if (!url || strlen(u) > URL_MAX) return PVA_E_ARGS;
+    if (!url || !pls || strlen(u) > URL_MAX) return PVA_E_ARGS;
     if (sonos) { pva_sonos_stop(); sonos = false; }
+    NF->on = NF->done = false;
     if (pva_sonos_url(u))
     {
         // a Sonos room: the MSX link's screen, made by pva_sonos.c (the old stream closes meanwhile)
@@ -1038,7 +1086,21 @@ void pva_net_stop(void)
 }
 
 bool pva_net_active(void) { return sonos || (s != S_IDLE && s != S_FAILED); }
-bool pva_net_ended(void) { return !sonos && s == S_FAILED && ring_count == 0; }
+bool pva_net_ended(void) { return !sonos && (s == S_FAILED || (s == S_IDLE && pls && NF->on && NF->done)) && ring_count == 0; }
+
+// a song from a music server, from byte 'from' (seeking: again from another)
+int pva_net_start_file(const char *u, uint32_t from)
+{
+    int r = pva_net_start(u);
+    if (r != PVA_OK || sonos) return r;
+    NF->on = true;
+    NF->done = false;
+    NF->next = from;
+    NF->total = NF->skip = 0;
+    return PVA_OK;
+}
+uint32_t pva_net_file_total(void) { return pls && NF->on ? NF->total : 0; }
+bool     pva_net_file_done(void) { return pls && NF->on && NF->done; }
 
 // the stream ring while a Sonos room plays: its memory (the screen's lines are lent its end, as for the PC's)
 uint8_t *pva_net_sonos_mem(size_t *size)

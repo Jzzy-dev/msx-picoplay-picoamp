@@ -42,6 +42,14 @@ https://www.youtube.com/embed/hVLpiqQKfts?si=i2GK5ZjUDZk3-P4l
 |---|---|
 | <img width="2068" height="2262" alt="Picture1" src="https://github.com/user-attachments/assets/efd2d146-1bb1-4904-94c4-b3e852ee332e" /> | <img width="1195" height="1119" alt="PIcoAmpWinlyrics" src="https://github.com/user-attachments/assets/95dddcd8-2f98-4449-ae9b-a03dbd54854f" /> |
 
+**v1.8** (engine 0.21): Network. The root's **Network** folder plays the music of the other
+computers in the house as folders: PicoAmp for Windows' music folder, and the UPnP / DLNA
+media servers of the network (a NAS, Windows Media Player's sharing, Plex, Jellyfin,
+MiniDLNA ...). MP3 and WAV, streamed over the ESP-01, with their length, the seek bar and
+seeking; the next song of the folder at a song's end. See `picoamp/README.md`, section
+Network. And the MSX's own accented letters (engine 0.20): é ü ñ Ä Ö ... in titles, lists
+and the news, as the MSX's international font has them.
+
 **v1.7** (engine 0.19; tried on a PicoVerse 2350 with Sonos speakers): Sonos. **Internet radio/Sonos** finds
 the Sonos speakers in the network (over the ESP-01) and lists the rooms; Enter makes the
 MSX the screen and remote of one, as the MSX link does for the PC, without a PC: the song,
@@ -114,7 +122,7 @@ colours that turn with the music, a small spectrum. The choices are kept in
 
 PicoAmp v1.0 is also published as third-party firmware in the PicoVerse repository:
 [`firmware/third-party/2350/picoamp_by_Jzzy_v1.0.uf2`](https://github.com/cristianoag/msx-picoverse-public/tree/main/firmware/third-party/2350)
-(v1.0; `bin/picoamp_wifi.uf2` here is v1.7).
+(v1.0; `bin/picoamp_wifi.uf2` here is v1.8).
 
 ## Spotify, other players and Sonos
 

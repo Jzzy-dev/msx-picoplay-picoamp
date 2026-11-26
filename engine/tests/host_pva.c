@@ -374,8 +374,9 @@ int main(int argc, char **argv)
     uint16_t cnt = (uint16_t)(reply[0] | (reply[1] << 8));
     CHECK(!strcmp((char *)reply + 2, "/"), "path '/'");
     int n = list_dir(cnt);
-    CHECK(n == 3 && !strcmp(ents[0].name, "Internet radio") && !strcmp(ents[1].name, "MUSIC") && !strcmp(ents[2].name, "SYMBOS"),
-          "root: %d entries, the radio directory first (hidden folder left out)", n);
+    CHECK(n == 5 && !strcmp(ents[0].name, "Internet radio") && !strcmp(ents[1].name, "Network") && ents[1].type == PVA_DE_DIR &&
+          !strcmp(ents[2].name, "MUSIC") && !strcmp(ents[3].name, "PICTURES") && !strcmp(ents[4].name, "SYMBOS"),
+          "root: %d entries, the radio directory and Network first (hidden folder left out): %s %s %s %s", n, ents[0].name, ents[1].name, ents[2].name, ents[3].name);
     CHECK(cmd_str(PVA_C_DIR_OPEN, "\\MUSIC\\") == PVA_OK, "open \\MUSIC\\ (backslashes, trailing slash)");
     cnt = (uint16_t)(reply[0] | (reply[1] << 8));
     n = list_dir(cnt);
@@ -1894,7 +1895,7 @@ int main(int argc, char **argv)
         host_esp_present = false;
         cmd_str(PVA_C_DIR_OPEN, "/");
         n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
-        CHECK(n == 2 && !strcmp(ents[0].name, "MUSIC"), "no ESP: no radio entry in the root");
+        CHECK(n == 3 && !strcmp(ents[0].name, "MUSIC") && find(n, "Network") < 0, "no ESP: no radio entry and no Network in the root (%d)", n);
         host_esp_present = true;
         CHECK(cmd(PVA_C_DIAG, NULL, 0) == PVA_OK && strstr((char *)reply, "Radio list:"), "DIAG:\n%s", reply);
 
@@ -2601,6 +2602,177 @@ int main(int argc, char **argv)
         host_esp_sonos_udp = true;
         run_ms(500);
         CHECK(host_esp_open_conns() == 0, "no ESP connection left open");
+    }
+
+    printf("[Network: PicoAmp for Windows' music and a DLNA server, as folders; their songs with a length and seeking]\n");
+    {
+        extern uint32_t host_esp_music_ranges, host_esp_browses;
+        extern char host_esp_last_range[40], host_esp_last_browse[200];
+        int n;
+        #define WAIT_DIR() do { for (int w = 0; w < 400; w++) { run_ms(25); read_status(); if (st[PVA_ST_DIR_STATE] != PVA_DIRS_LOADING) break; } } while (0)
+        #define LIST() do { cmd_str(PVA_C_DIR_OPEN, ""); n = list_dir((uint16_t)(reply[0] | (reply[1] << 8))); } while (0)
+        pva_cfg_set("network.pc", "pc.test");
+        CHECK(cmd_str(PVA_C_DIR_OPEN, "/") == PVA_OK, "open root");
+        n = list_dir((uint16_t)(reply[0] | (reply[1] << 8)));
+        CHECK(n >= 2 && !strcmp(ents[1].name, "Network"), "Network is the second entry");
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 1) == PVA_E_BUSY, "Network: BUSY (the search)");
+        WAIT_DIR();
+        CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE, "the sources are in (state %u)", st[PVA_ST_DIR_STATE]);
+        LIST();
+        CHECK(!strcmp((char *)reply + 2, "/Network") || n > 0, "path");
+        cmd_str(PVA_C_DIR_OPEN, "");
+        CHECK(!strcmp((char *)reply + 2, "/Network"), "'%s'", reply + 2);
+        for (int i = 0; i < n; i++) printf("    %d %s\n", ents[i].type, ents[i].name);
+        CHECK(n == 3 && !strcmp(ents[1].name, "PicoAmp on the PC") && !strcmp(ents[2].name, "Home NAS") && ents[2].type == PVA_DE_DIR,
+              "the PC ([network] pc =) and the NAS (the router has no ContentDirectory): %d", n);
+        CHECK(host_esp_open_conns() == 0, "no connection left open after the search");
+
+        // the PC
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 1) == PVA_E_BUSY, "the PC: BUSY");
+        WAIT_DIR();
+        LIST();
+        cmd_str(PVA_C_DIR_OPEN, "");
+        CHECK(!strcmp((char *)reply + 2, "/Network/PicoAmp on the PC"), "'%s'", reply + 2);
+        for (int i = 0; i < n; i++) printf("    %d %s\n", ents[i].type, ents[i].name);
+        CHECK(n == 5 && !strcmp(ents[1].name, "Albums") && ents[1].type == PVA_DE_DIR && !strcmp(ents[2].name, "Cafe") && ents[2].type == PVA_DE_DIR &&
+              !strcmp(ents[3].name, "Sine") && ents[3].type == PVA_DE_MP3 && !strcmp(ents[4].name, "Tone") && ents[4].type == PVA_DE_WAV,
+              "folders first, then MP3 and WAV by name (the picture left out)");
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 1) == PVA_E_BUSY, "Albums");
+        WAIT_DIR();
+        LIST();
+        cmd_str(PVA_C_DIR_OPEN, "");
+        CHECK(!strcmp((char *)reply + 2, "/Network/PicoAmp on the PC/Albums") && n == 3 && !strcmp(ents[1].name, "Long") && !strcmp(ents[2].name, "VBR"),
+              "'%s': %d", reply + 2, n);
+        uint32_t r0 = host_esp_music_ranges;
+        CHECK(cmd_u16(PVA_C_PLAY_INDEX, 1) == PVA_OK, "play 'Long'");
+        for (int w = 0; w < 200; w++) { run_ms(25); read_status(); if (st16(PVA_ST_TOTAL)) break; }
+        run_ms(1500);
+        read_status();
+        CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_TITLE), "Long One") && st16(PVA_ST_TOTAL) >= 239 && st16(PVA_ST_TOTAL) <= 241 &&
+              st16(PVA_ST_BITRATE) == 192 && (st[PVA_ST_FLAGS] & PVA_F_SEEKABLE) && !(st[PVA_ST_FLAGS] & PVA_F_STREAM),
+              "plays as a file, its ID3 tag read from the start: '%s', %u s, %u kbit/s, flags %02X", ststr(PVA_ST_TITLE), st16(PVA_ST_TOTAL), st16(PVA_ST_BITRATE), st[PVA_ST_FLAGS]);
+        CHECK(st16(PVA_ST_PL_COUNT) == 2 && st16(PVA_ST_PL_POS) == 0 && st[PVA_ST_PL_KIND] == 3, "the play list: the folder's 2 songs");
+        CHECK(host_esp_music_ranges == r0 + 1 && !strcmp(host_esp_last_range, "0-") && strstr(host_esp_last_get, "GET /music/file?path=Albums/Long.mp3 "),
+              "asked with Range from 0: %.60s", host_esp_last_get);
+        uint16_t e0 = st16(PVA_ST_ELAPSED);
+        CHECK(e0 >= 1 && e0 <= 3, "elapsed %u s", e0);
+        CHECK(cmd_u16(PVA_C_SEEK, 20) == PVA_OK, "seek to 20 s");
+        run_ms(1500);
+        read_status();
+        CHECK(st16(PVA_ST_ELAPSED) >= 20 && st16(PVA_ST_ELAPSED) <= 22 && st[PVA_ST_STATE] == PVA_STATE_PLAYING, "elapsed %u s after the seek", st16(PVA_ST_ELAPSED));
+        unsigned long from = strtoul(host_esp_last_range, NULL, 10);
+        CHECK(host_esp_music_ranges == r0 + 2 && from > 450000 && from < 520000, "fetched again from byte %lu", from);
+        CHECK(cmd_u16(PVA_C_SEEK, 237) == PVA_OK, "seek to 237 s");
+        for (int w = 0; w < 600; w++) { run_ms(25); read_status(); if (st16(PVA_ST_PL_POS) == 1) break; }
+        run_ms(1500);
+        read_status();
+        CHECK(st16(PVA_ST_PL_POS) == 1 && st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_TITLE), "VBR Four") && st16(PVA_ST_TOTAL) >= 14 && st16(PVA_ST_TOTAL) <= 16,
+              "at its end the next song: '%s', %u s (Xing)", ststr(PVA_ST_TITLE), st16(PVA_ST_TOTAL));
+        for (int w = 0; w < 600; w++) { run_ms(25); read_status(); if (st[PVA_ST_STATE] == PVA_STATE_STOPPED) break; }
+        CHECK(st[PVA_ST_STATE] == PVA_STATE_STOPPED, "the end of the play list: stopped");
+        // ".." twice: the PC's top, then the sources (kept: no search)
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_E_BUSY, "'..': BUSY");
+        WAIT_DIR();
+        LIST();
+        CHECK(n == 5 && !strcmp(ents[3].name, "Sine"), "the PC's top again (%d)", n);
+        CHECK(cmd_u16(PVA_C_PLAY_INDEX, 4) == PVA_OK, "play 'Tone' (WAV)");
+        for (int w = 0; w < 200; w++) { run_ms(25); read_status(); if (st16(PVA_ST_TOTAL)) break; }
+        read_status();
+        CHECK(st16(PVA_ST_TOTAL) == 5 && st16(PVA_ST_RATE) == 4410 && st[PVA_ST_CHANNELS] == 2 && st[PVA_ST_FORMAT] == PVA_DE_WAV,
+              "a WAV: %u s, %u Hz, %u ch, format %u", st16(PVA_ST_TOTAL), st16(PVA_ST_RATE) * 10, st[PVA_ST_CHANNELS], st[PVA_ST_FORMAT]);
+        cmd(PVA_C_STOP, NULL, 0);
+        run_ms(300);
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_OK, "'..' at the top: the sources, at once");
+        LIST();
+        CHECK(n == 3 && !strcmp(ents[2].name, "Home NAS"), "the sources (%d)", n);
+
+        // the NAS
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 2) == PVA_E_BUSY, "Home NAS: BUSY");
+        WAIT_DIR();
+        LIST();
+        cmd_str(PVA_C_DIR_OPEN, "");
+        for (int i = 0; i < n; i++) printf("    %d %s %lu\n", ents[i].type, ents[i].name, (unsigned long)ents[i].size);
+        CHECK(!strcmp((char *)reply + 2, "/Network/Home NAS") && !strcmp(host_esp_last_browse, "0 0 100"), "'%s' (Browse %s)", reply + 2, host_esp_last_browse);
+        CHECK(n == 5 && !strcmp(ents[1].name, "Music") && ents[1].type == PVA_DE_DIR && !strcmp(ents[2].name, "Cafe & Bar") && ents[2].type == PVA_DE_DIR &&
+              !strcmp(ents[3].name, "NAS Sine") && ents[3].type == PVA_DE_MP3 && ents[3].size == 126u * 1024u && !strcmp(ents[4].name, "Both") && ents[4].size == 2000u * 1024u,
+              "its folders and songs in its order (the FLAC left out, the MP3 of the one with both)");
+        CHECK(cmd_u16(PVA_C_PLAY_INDEX, 3) == PVA_OK, "play 'NAS Sine'");
+        read_status();
+        CHECK(!strcmp(ststr(PVA_ST_TITLE), "NAS Sine") && !strcmp(ststr(PVA_ST_ARTIST), "NAS Artist") && !strcmp(ststr(PVA_ST_ALBUM), "NAS Album"),
+              "at first the server's names: '%s' '%s' '%s' (the first artist)", ststr(PVA_ST_TITLE), ststr(PVA_ST_ARTIST), ststr(PVA_ST_ALBUM));
+        for (int w = 0; w < 200; w++) { run_ms(25); read_status(); if (st16(PVA_ST_TOTAL)) break; }
+        run_ms(1000);
+        read_status();
+        CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && !strcmp(ststr(PVA_ST_TITLE), "Sine Cafe Song") && !strcmp(ststr(PVA_ST_ARTIST), "Unit Tester") &&
+              !strcmp(ststr(PVA_ST_ALBUM), "PicoVerse Tests") && st16(PVA_ST_TOTAL) >= 19 && st16(PVA_ST_TOTAL) <= 21,
+              "its ID3 tag over the server's names: '%s' '%s' '%s', %u s", ststr(PVA_ST_TITLE), ststr(PVA_ST_ARTIST), ststr(PVA_ST_ALBUM), st16(PVA_ST_TOTAL));
+        CHECK(strstr(host_esp_last_get, "GET /MediaItems/1.mp3 ") && strstr(host_esp_last_get, "Range: bytes=0-"), "its address, with Range");
+        {
+            // the connection drops in the middle: it goes on from the byte it got to
+            extern uint32_t host_esp_drop_after;
+            uint32_t r1 = host_esp_music_ranges;
+            host_esp_drop_after = 150000;
+            CHECK(cmd_u16(PVA_C_PLAY_INDEX, 3) == PVA_OK, "play it again, the server drops at 150000 bytes");
+            run_ms(16000);
+            read_status();
+            unsigned long at = strtoul(host_esp_last_range, NULL, 10);
+            CHECK(host_esp_music_ranges == r1 + 2 && at >= 140000 && at <= 150000 && st[PVA_ST_STATE] == PVA_STATE_PLAYING &&
+                  st16(PVA_ST_ELAPSED) >= 14 && st16(PVA_ST_UNDERRUNS) == 0,
+                  "asked again from byte %lu, plays on (%u s, underruns %u)", at, st16(PVA_ST_ELAPSED), st16(PVA_ST_UNDERRUNS));
+            host_esp_drop_after = 0;
+        }
+        cmd(PVA_C_STOP, NULL, 0);
+        run_ms(300);
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 1) == PVA_E_BUSY, "Music");
+        WAIT_DIR();
+        LIST();
+        CHECK(n == 102 && !strcmp(ents[1].name, "Track 001") && !strcmp(ents[100].name, "Track 100") && !strcmp(ents[101].name, "More...") &&
+              !strcmp(host_esp_last_browse, "64 0 100"), "a page of 100 and More... (%d, %s)", n, host_esp_last_browse);
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 101) == PVA_E_BUSY, "More...");
+        WAIT_DIR();
+        LIST();
+        CHECK(n == 151 && !strcmp(ents[150].name, "Track 150") && !strcmp(host_esp_last_browse, "64 100 100"), "all 150, no More... (%d, %s)", n, host_esp_last_browse);
+        cmd_str(PVA_C_DIR_OPEN, "");
+        CHECK(!strcmp((char *)reply + 2, "/Network/Home NAS/Music"), "'%s'", reply + 2);
+        CHECK(cmd_u16(PVA_C_PLAY_INDEX, 150) == PVA_OK, "play the last one");
+        run_ms(1500);
+        read_status();
+        CHECK(st[PVA_ST_STATE] == PVA_STATE_PLAYING && strstr(host_esp_last_get, "GET /MediaItems/1.mp3?t=149 ") && st16(PVA_ST_PL_COUNT) == 150 &&
+              st16(PVA_ST_PL_POS) == ((st[PVA_ST_MODE] & PVA_MODE_SHUFFLE) ? 0 : 149),
+              "'%s', %u of %u (shuffle: it first)", ststr(PVA_ST_TITLE), st16(PVA_ST_PL_POS) + 1, st16(PVA_ST_PL_COUNT));
+        cmd(PVA_C_STOP, NULL, 0);
+        run_ms(300);
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_E_BUSY, "'..'");
+        WAIT_DIR();
+        LIST();
+        CHECK(n == 5 && !strcmp(host_esp_last_browse, "0 0 100"), "the NAS's top again");
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 2) == PVA_E_BUSY, "Cafe & Bar");
+        WAIT_DIR();
+        LIST();
+        cmd_str(PVA_C_DIR_OPEN, "");
+        CHECK(n == 1 && st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE && !strcmp((char *)reply + 2, "/Network/Home NAS/Cafe & Bar"), "an empty folder: '..' alone ('%s')", reply + 2);
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_E_BUSY, "'..'");
+        WAIT_DIR();
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_OK, "'..' at the NAS's top");
+        CHECK(cmd_u16(PVA_C_DIR_ENTER, 0) == PVA_OK, "'..' from the sources: the card's root");
+        LIST();
+        CHECK(n >= 2 && !strcmp(ents[1].name, "Network"), "root (%d)", n);
+        // no PC known, no UDP: an empty list (nothing to show)
+        pva_cfg_set("network.pc", "");
+        {
+            extern bool host_esp_sonos_udp;
+            host_esp_sonos_udp = false;
+            CHECK(cmd_u16(PVA_C_DIR_ENTER, 1) == PVA_E_BUSY, "Network without UDP and the PC");
+            WAIT_DIR();
+            LIST();
+            CHECK(st[PVA_ST_DIR_STATE] == PVA_DIRS_DONE && n == 1, "'..' alone (%d)", n);
+            host_esp_sonos_udp = true;
+            cmd_u16(PVA_C_DIR_ENTER, 0);
+        }
+        run_ms(500);
+        CHECK(host_esp_open_conns() == 0, "no ESP connection left open");
+        #undef WAIT_DIR
+        #undef LIST
     }
 
     printf("[lyrics of a station's song, from LRCLIB]\n");

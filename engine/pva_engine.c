@@ -80,7 +80,11 @@ static char     given_station[PVA_ST_ALBUM_LEN];
 // internet radio: virtual folders over the Radio Browser directory
 #define RADIO_ENTRY     "Internet radio"
 #define RADIO_PATH      "/" RADIO_ENTRY
-enum { V_CARD, V_HOME, V_COUNTRIES, V_GENRES, V_DECADES, V_STATIONS, V_FAVS };
+enum { V_CARD, V_HOME, V_COUNTRIES, V_GENRES, V_DECADES, V_STATIONS, V_FAVS, V_NET, V_NDIR };
+#define NET_ENTRY       "Network"           // the music of other computers in the house (pva_media.c)
+#define NET_PATH        "/" NET_ENTRY
+#define NET_MORE        "More..."
+#define NETFILE         '\x1e'              // a play list entry: a song of Network (its address, name, artist, album)
 #define FAV_FILE        "/RADIOFAV.M3U"     // favourites (PicoPlay writes it through SymbOS)
 #define FAV_FOLDER      "Favourites"
 #define SONOS_FOLDER    "Sonos"             // the Sonos rooms of the network (pva_sonos.c), a station list
@@ -98,6 +102,8 @@ static char     want_title[48];
 static uint8_t  dstate, derr;       // PVA_ST_DIR_STATE / DIR_ERR
 static uint16_t ccache_n;           // countries kept in pva_dir_cache()
 static bool     sonos_wait;         // the Sonos rooms are searched (pva_sonos.c: its memory is pva_dir_cache())
+static bool     media_wait;         // Network: its sources are searched or a folder is asked for (pva_media.c, the same memory)
+static bool     net_entry;          // the root listing has NET_ENTRY (after RADIO_ENTRY)
 
 // ---------------------------------------------------------------- helpers
 static void fs_refresh(void)
@@ -249,6 +255,21 @@ static int read_dir(const char *path)
         dir_count++;
         radio_entry = true;
     }
+    net_entry = false;
+    if (!path[0] && pva_dir_available() && pva_hal_net_present() && dir_pool_used + sizeof NET_ENTRY <= DIR_POOL)
+    {
+        // Network next
+        uint16_t at = radio_entry ? 1u : 0u;
+        if (dir_count >= DIR_MAX) dir_count--;
+        memmove(dir_ent + at + 1, dir_ent + at, (dir_count - at) * sizeof(dent_t));
+        dir_ent[at].type = PVA_DE_DIR;
+        dir_ent[at].size = 0;
+        dir_ent[at].name = (uint16_t)dir_pool_used;
+        memcpy(dir_pool + dir_pool_used, NET_ENTRY, sizeof NET_ENTRY);
+        dir_pool_used += sizeof NET_ENTRY;
+        dir_count++;
+        net_entry = true;
+    }
     if (path != cur_dir)
         snprintf(cur_dir, sizeof cur_dir, "%s", path);
     vlevel = V_CARD;
@@ -285,8 +306,11 @@ static void v_begin(uint8_t level, const char *title)
     memcpy(dir_pool, "..", 3);
     dir_pool_used = 3;
     if (level == V_HOME) snprintf(cur_dir, sizeof cur_dir, "%s", RADIO_PATH);
+    else if (level == V_NET) snprintf(cur_dir, sizeof cur_dir, "%s", NET_PATH);
+    else if (level == V_NDIR) snprintf(cur_dir, sizeof cur_dir, "%s/%s", NET_PATH, title);
     else snprintf(cur_dir, sizeof cur_dir, "%s/%s", RADIO_PATH, title);
     radio_entry = false;
+    net_entry = false;
     dir_open = true;
 }
 
@@ -380,6 +404,26 @@ static void v_build(uint8_t level)
             v_begin(V_FAVS, FAV_FOLDER);
             fav_build();
             break;
+        case V_NET:
+            v_begin(V_NET, "");
+            for (uint8_t i = 0; i < pva_media_count(); i++) v_add(pva_media_name(i), PVA_DE_DIR, 0);
+            break;
+        case V_NDIR:
+        {
+            char where[PATH_MAX_LEN - sizeof NET_PATH];
+            pva_media_where(where, sizeof where);
+            v_begin(V_NDIR, where);
+            for (uint16_t i = 0; i < pva_dir_count(); i++)
+            {
+                const char *x = pva_dir_uuid(i);
+                uint8_t t = x[0] == 'd' ? PVA_DE_DIR : x[1] == 'W' ? PVA_DE_WAV : PVA_DE_MP3;
+                uint16_t before = dir_count;
+                v_add(pva_dir_name(i), t, (uint32_t)pva_dir_num(i) * 1024u);
+                if (dir_count == before) v_add("?", t, 0);      // (one for each: the list's entries are the results')
+            }
+            if (pva_media_more()) v_add(NET_MORE, PVA_DE_DIR, 0);
+            break;
+        }
     }
     v_end();
 }
@@ -456,6 +500,28 @@ static void radio_poll(void)
 {
     pva_dir_poll();
     pva_sonos_poll();
+    pva_media_poll();
+    if (media_wait)
+    {
+        uint8_t st = pva_media_state();
+        if (st == PVA_DIRS_LOADING) return;
+        media_wait = false;
+        if (st == PVA_DIRS_DONE)
+        {
+            dstate = PVA_DIRS_DONE;
+            v_build(want_level);
+            pva_log("network: %u in the list", (unsigned)(dir_count - 1u));
+        }
+        else
+        {
+            dstate = PVA_DIRS_FAILED;
+            derr = pva_media_error() ? pva_media_error() : PVA_NERR_TIMEOUT;
+            // (a folder's entries were the results: the list is ".." alone now)
+            if (vlevel == V_NDIR && !pva_dir_count()) { char t[sizeof cur_dir]; snprintf(t, sizeof t, "%s", cur_dir + sizeof NET_PATH); v_begin(V_NDIR, t); v_end(); }
+            status_dirty = true;
+        }
+        return;
+    }
     if (sonos_wait)
     {
         uint8_t st = pva_sonos_state();
@@ -496,6 +562,7 @@ static void radio_poll(void)
 
 static void radio_stop_wait(void)
 {
+    if (media_wait) { pva_media_cancel(); media_wait = false; dstate = PVA_DIRS_IDLE; status_dirty = true; }
     if (sonos_wait) { pva_sonos_cancel(); sonos_wait = false; dstate = PVA_DIRS_IDLE; status_dirty = true; }
     if (!dir_wait) return;
     pva_dir_cancel();
@@ -504,15 +571,51 @@ static void radio_stop_wait(void)
     status_dirty = true;
 }
 
+static int net_wait(int r, uint8_t level);
+static int net_search(void);
+
 static int radio_parent(void)
 {
     radio_stop_wait();
     switch (vlevel)
     {
         case V_HOME:      return read_dir("");
+        case V_NET:       return read_dir("");
+        case V_NDIR:
+        {
+            if (!pva_media_valid()) return net_search();     // (its memory was used for something else)
+            int r = pva_media_up();
+            if (r == PVA_E_RANGE) { if (pva_media_valid()) { v_build(V_NET); return PVA_OK; } return net_search(); }
+            return net_wait(r, V_NDIR);
+        }
         case V_STATIONS:  v_build(vparent == V_COUNTRIES && !ccache_n ? V_HOME : vparent); return PVA_OK;
         default:          v_build(V_HOME); return PVA_OK;
     }
+}
+
+// ---------------------------------------------------------------- Network
+static void net_pc(char *out, size_t n);
+
+// a Network job runs: its list when it is done (radio_poll)
+static int net_wait(int r, uint8_t level)
+{
+    if (r != PVA_E_BUSY) { dstate = PVA_DIRS_FAILED; derr = PVA_NERR_NOWIFI; status_dirty = true; return r == PVA_OK ? PVA_E_STATE : r; }
+    want_level = level;
+    media_wait = true;
+    dstate = PVA_DIRS_LOADING;
+    derr = 0;
+    status_dirty = true;
+    return PVA_E_BUSY;
+}
+
+// Network: the sources are searched (PicoAmp for Windows, the media servers), then their list
+static int net_search(void)
+{
+    radio_stop_wait();
+    ccache_n = 0;                       // (its memory is Network's now: the countries are asked again)
+    char pc[80];
+    net_pc(pc, sizeof pc);
+    return net_wait(pva_media_search(pc), V_NET);
 }
 
 // Internet radio/Sonos: the rooms are searched, then a station list as the directory's
@@ -538,6 +641,14 @@ static int radio_enter(uint16_t idx)
     const char *nm = dir_pool + dir_ent[idx].name;
     switch (vlevel)
     {
+        case V_NET:
+            radio_stop_wait();
+            if (!pva_media_valid()) return net_search();
+            return net_wait(pva_media_open((uint8_t)(idx - 1u)), V_NDIR);
+        case V_NDIR:
+            radio_stop_wait();
+            if (idx - 1u >= pva_dir_count()) return pva_media_more() ? net_wait(pva_media_next(), V_NDIR) : PVA_E_RANGE;
+            return net_wait(pva_media_enter(pva_dir_url((uint16_t)(idx - 1u)), pva_dir_name((uint16_t)(idx - 1u))), V_NDIR);
         case V_HOME:
         {
             unsigned i = idx - 1u;
@@ -674,6 +785,11 @@ static int cmd_dir_open(void)
     {
         if (!normalise_path(path, sizeof path, (const char *)args)) return PVA_E_ARGS;
         radio_stop_wait();
+        if (!strcmp(path, NET_PATH) && pva_dir_available() && pva_hal_net_present())
+        {
+            if (vlevel == V_NET || (vlevel == V_NDIR && pva_media_valid())) { v_build(V_NET); reply_dir_header(); return PVA_OK; }
+            return net_search();
+        }
         if (!strcmp(path, RADIO_PATH) && pva_dir_available())
         {
             v_build(V_HOME);
@@ -705,6 +821,12 @@ static int cmd_dir_enter(void)
         v_build(V_HOME);
         reply_dir_header();
         return PVA_OK;
+    }
+    if (net_entry && idx == (radio_entry ? 1u : 0u))
+    {
+        int r = net_search();
+        if (r == PVA_OK) reply_dir_header();
+        return r;
     }
     if (dir_ent[idx].type == PVA_DE_PARENT)
     {
@@ -917,6 +1039,39 @@ static void fav_build(void)
         if (!*p || *p == '#') continue;
         if (is_url(p) && strlen(p) <= URL_MAX_LEN) v_add_url(name, p);
         name[0] = 0;
+    }
+    f_close(m3u_file);
+}
+
+static void link_base(char *o, size_t n);
+static uint8_t link_now(void);
+// PicoAmp for Windows' address: [network] pc = in PICOAMP.INI ("192.168.1.20", ":8765" or a URL), else
+// the MSX link that plays, else a favourite on its port (8765: "http://192.168.1.20:8765/screen")
+static void net_pc(char *out, size_t n)
+{
+    char v[80];
+    out[0] = 0;
+    if (pva_cfg_get("network.pc", v, sizeof v) && v[0])
+    {
+        const char *h = strstr(v, "://") ? strstr(v, "://") + 3 : v;
+        size_t k = strcspn(h, "/");
+        snprintf(out, n, "http://%.*s%s", (int)k, h, memchr(h, ':', k) ? "" : ":8765");
+        return;
+    }
+    if (link_now()) { link_base(out, n); return; }
+    char fp[PATH_MAX_LEN + 8];
+    if (!mounted && !do_mount()) return;
+    fatfs_path(fp, sizeof fp, FAV_FILE);
+    fs_refresh();
+    if (f_open(m3u_file, fp, FA_READ) != FR_OK) return;
+    memset(m3u_lr, 0, sizeof *m3u_lr);
+    m3u_lr->f = m3u_file;
+    char line[URL_MAX_LEN + 8];
+    while (!out[0] && read_line(m3u_lr, line, sizeof line))
+    {
+        char *p = strstr(line, "http://");
+        char *q = p ? strstr(p, ":8765/") : NULL;
+        if (q && !memchr(p + 7, '/', (size_t)(q - p - 7))) snprintf(out, n, "%.*s", (int)(q + 5 - p), p);
     }
     f_close(m3u_file);
 }
@@ -1241,6 +1396,41 @@ static int open_stream(const char *entry)
     return PVA_OK;
 }
 
+// a song of Network: "address 1F name 1F artist 1F album" (its tags, length and format come with
+// its first bytes: pva_dec_take_info in the loop)
+static int open_remote(const char *entry)
+{
+    char u[URL_MAX_LEN + 1];
+    const char *f[3] = { "", "", "" };
+    size_t fl[3] = { 0, 0, 0 };
+    const char *sep = strchr(entry, STATION_SEP);
+    size_t n = sep ? (size_t)(sep - entry) : strlen(entry);
+    if (n > URL_MAX_LEN) return PVA_E_ARGS;
+    memcpy(u, entry, n);
+    u[n] = 0;
+    for (int i = 0; i < 3 && sep; i++)
+    {
+        f[i] = sep + 1;
+        sep = strchr(f[i], STATION_SEP);
+        fl[i] = sep ? (size_t)(sep - f[i]) : strlen(f[i]);
+    }
+    if (pva_net_active() && !pva_dec_is_remote()) pva_net_stop();
+    scr_reset();
+    int r = pva_net_start_file(u, 0);
+    if (r != PVA_OK) return r;
+    r = pva_dec_open_remote(&info);
+    if (r != PVA_OK) { pva_net_stop(); return r; }
+    given_station[0] = 0;
+    pva_copy_ascii(info.title, sizeof info.title, f[0], fl[0]);
+    pva_copy_ascii(info.artist, sizeof info.artist, f[1], fl[1]);
+    pva_copy_ascii(info.album, sizeof info.album, f[2], fl[2]);
+    pva_art_none();
+    buffering = true;
+    prefill = 16u * 1024u;
+    stream_underruns = 0;
+    return PVA_OK;
+}
+
 // the cover of what plays, again (the pictures gave the covers' memory back)
 void pva_cover_redo(void)
 {
@@ -1250,11 +1440,15 @@ void pva_cover_redo(void)
         pva_art_station(pva_net_url(), NULL, given_station);
         pva_art_song(info.artist, info.title);
     }
+    else if (pva_dec_is_remote()) pva_art_song(info.artist, info.title);
     else pva_art_track(pva_dec_path(), info.pic_pos, info.pic_len, info.artist, info.album, info.title);
 }
 
+static int open_remote(const char *entry);
+
 static int open_track(const char *path)
 {
+    if (path[0] == NETFILE) return open_remote(path + 1);
     if (is_url(path)) return open_stream(path);
     buffering = false;
     if (pva_net_active()) pva_net_stop();
@@ -1349,6 +1543,31 @@ static int cmd_play_index(void)
     if (idx >= dir_count) return PVA_E_RANGE;
     const dent_t *sel = &dir_ent[idx];
     char path[PATH_MAX_LEN + 1];
+    if (vlevel == V_NDIR && (sel->type == PVA_DE_MP3 || sel->type == PVA_DE_WAV))
+    {
+        // the folder's songs make the play list: address, name, artist, album
+        uint16_t n = pva_dir_count();
+        if (n + 1u + (pva_media_more() ? 1u : 0u) != dir_count || idx > n) return PVA_E_STATE;
+        stop_playback();
+        pl_clear();
+        pl_kind = 3;
+        uint16_t start = 0;
+        for (uint16_t i = 0; i < n; i++)
+        {
+            const char *x = pva_dir_uuid(i);
+            if (x[0] != 'f') continue;
+            char e[URL_MAX_LEN + 3 * PVA_ST_ALBUM_LEN + 8];
+            const char *alb = strchr(x + 2, '\x1f');
+            int al = alb ? (int)(alb - x - 2) : (int)strlen(x + 2);
+            snprintf(e, sizeof e, "%c%s%c%.*s%c%.*s%c%.*s", NETFILE, pva_dir_url(i), STATION_SEP, PVA_ST_ALBUM_LEN - 1, pva_dir_name(i),
+                     STATION_SEP, al < PVA_ST_ALBUM_LEN ? al : PVA_ST_ALBUM_LEN - 1, x + 2, STATION_SEP, PVA_ST_ALBUM_LEN - 1, alb ? alb + 1 : "");
+            if (i + 1u == idx) start = pl_count;
+            if (!pl_add(e)) break;
+        }
+        if (!pl_count) return PVA_E_STATE;
+        if (mode & PVA_MODE_SHUFFLE) { pl_shuffle(start); start = 0; }
+        return play_pos(start);
+    }
     if (sel->type == PVA_DE_URL && vlevel == V_STATIONS)
     {
         // the list's stations make the play list
@@ -2865,15 +3084,40 @@ bool pva_core1_poll(void)
         }
     }
 
+    if (state != PVA_STATE_STOPPED && pva_dec_is_remote())
+    {
+        // a song of Network: fetched again from another byte (past a big tag, a seek)
+        uint32_t at;
+        if (pva_dec_remote_want(&at))
+        {
+            char u[URL_MAX_LEN + 1];
+            snprintf(u, sizeof u, "%s", pva_net_url());
+            if (pva_net_start_file(u, at) == PVA_OK)
+            {
+                buffering = true;
+                pva_hal_audio_mute(true);
+                prefill = 16u * 1024u;
+            }
+            else { play_error = PVA_E_NET; stop_playback(); }
+            status_dirty = true;
+        }
+        // its tags, its length: the song's cover (online)
+        if (pva_dec_take_info())
+        {
+            pva_log("network: %.24s, %lu s, %lu kbit/s", info.title, (unsigned long)info.total_seconds, (unsigned long)info.bitrate_kbps);
+            pva_art_song(info.artist, info.title);
+            status_dirty = true;
+        }
+    }
     pva_win[PVA_R_WHERE] = PVA_W_DECODE;
     link_sound();
     if (ready && state != PVA_STATE_STOPPED && pva_dec_is_stream() && pva_net_picoamp() == 2)
         scr_poll();                     // the MSX link's screen
-    else if (ready && state == PVA_STATE_PLAYING && pva_dec_is_stream() && buffering)
+    else if (ready && state == PVA_STATE_PLAYING && (pva_dec_is_stream() || pva_dec_is_remote()) && buffering)
     {
-        // wait until the buffer has 'prefill' bytes (or the stream gave up)
+        // wait until the buffer has 'prefill' bytes (or the stream gave up, or a song is all in)
         size_t b = pva_net_buffered();
-        if (b >= prefill || (pva_net_stats()->state == PVA_NET_FAILED && b))
+        if (b >= prefill || ((pva_net_stats()->state == PVA_NET_FAILED || pva_net_file_done()) && b))
         {
             buffering = false;
             pva_hal_audio_mute(false);
@@ -2886,7 +3130,7 @@ bool pva_core1_poll(void)
     else if (ready && state == PVA_STATE_PLAYING)
     {
         int r = pva_dec_step();
-        if (r == 0 && pva_dec_is_stream() && pva_net_buffered() < 2048u && !pva_net_ended())
+        if (r == 0 && (pva_dec_is_stream() || pva_dec_is_remote()) && pva_net_buffered() < 2048u && !pva_net_ended() && !pva_net_file_done())
         {
             // the buffer ran dry: fill it again (more this time)
             buffering = true;

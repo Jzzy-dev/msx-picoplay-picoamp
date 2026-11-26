@@ -159,12 +159,17 @@ void        pva_dir_click(const char *uuid);
 void        pva_dir_urlenc(char *out, size_t size, const char *s);
 void        pva_dir_clear(void);                // the results emptied (a list made here: the Sonos rooms)
 bool        pva_dir_add(const char *name, const char *url);   // a station added to them (false: no room)
-void        pva_dir_sort(void);                 // by name
+void        pva_dir_sort(void);                 // by name (folders first: extra "d...")
+bool        pva_dir_add_entry(const char *name, const char *url, const char *extra, uint16_t num);   // (extra: uuid's place)
 uint8_t    *pva_dir_cache(size_t *size);    // RAM the engine may use to keep a list
 
 // stream input for the decoder (pva_decode.c)
 int  pva_dec_open_stream(pva_track_info_t *info);       // MP3 from pva_net_read()
 bool pva_dec_is_stream(void);
+int  pva_dec_open_remote(pva_track_info_t *info);       // a song from a music server (pva_net_start_file): MP3 or WAV, its length, seeking
+bool pva_dec_is_remote(void);
+bool pva_dec_remote_want(uint32_t *at);                 // the song is to come again from this byte (true once)
+bool pva_dec_take_info(void);                           // its tags and length are known now (true once)
 void pva_dec_frame_info(pva_track_info_t *info);        // rate/channels/bitrate of the last frame
 
 // network streams (pva_net.c)
@@ -193,6 +198,9 @@ void   pva_net_stop(void);
 void   pva_net_poll(void);
 bool   pva_net_active(void);
 size_t pva_net_read(uint8_t *dst, size_t n);    // audio bytes from the buffer
+int    pva_net_start_file(const char *url, uint32_t from);   // a song from a music server, from this byte (Range)
+uint32_t pva_net_file_total(void);              // its length (0: not known yet)
+bool   pva_net_file_done(void);                 // all of it is in the buffer (or was)
 size_t pva_net_buffered(void);
 size_t pva_net_capacity(void);
 bool   pva_net_ended(void);                     // failed for good and the buffer is empty
@@ -351,6 +359,8 @@ bool        pva_sonos_on(void);                 // a room plays
 size_t      pva_sonos_read(uint8_t *dst, size_t n);   // its screen's lines, as the PC's /screen sends them
 void        pva_sonos_key(const char *k);       // a key, as the MSX link's (/cmd?k=...)
 void        pva_sonos_poll(void);
+pva_esp_slot_t *pva_sonos_udp(void);            // the search's UDP slot (Network's search borrows it)
+void        pva_sonos_udp_back(void);
 uint8_t    *pva_net_sonos_mem(size_t *size);    // the stream ring while a room plays (no sound comes)
 // covers (pva_art.c)
 bool    pva_art_init(void);
@@ -393,5 +403,21 @@ void    pva_art_poll(void);
 int     pva_art_cmd(uint8_t code, const uint8_t *args);
 uint8_t pva_art_state(void);
 uint8_t pva_art_gen(void);
+
+// ---------------------------------------------------------------- Network (pva_media.c)
+int         pva_media_search(const char *pc);   // PVA_E_BUSY: the sources are looked for (pc: "http://ip:port" of PicoAmp for Windows, or "")
+int         pva_media_open(uint8_t i);          // a source's top folder, into the directory's results: PVA_E_BUSY
+int         pva_media_enter(const char *id, const char *name);
+int         pva_media_up(void);                 // PVA_E_RANGE: at the source's top
+int         pva_media_next(void);               // the folder's next page, added
+bool        pva_media_more(void);               // the folder has more than the list
+void        pva_media_poll(void);
+void        pva_media_cancel(void);
+uint8_t     pva_media_state(void);              // PVA_DIRS_xxx
+uint8_t     pva_media_error(void);
+bool        pva_media_valid(void);              // the sources are known (the work memory kept)
+uint8_t     pva_media_count(void);
+const char *pva_media_name(uint8_t i);
+void        pva_media_where(char *out, size_t n);  // "Source/Folder/..."
 
 #endif
