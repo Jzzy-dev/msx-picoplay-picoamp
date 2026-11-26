@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        19      // 0.19: Sonos rooms (Internet radio/Sonos: a room as the MSX link's screen and remote); 0.18: the MSX link
+#define PVA_FW_MINOR        20      // 0.20: PVA_C_CHARSET (accented letters for the MSX's font); 0.19: Sonos rooms (Internet radio/Sonos: a room as the MSX link's screen and remote); 0.18: the MSX link
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -204,6 +204,10 @@
 #define PVA_C_PIC_CLOSE     0x57    // the pictures' memory back to the covers
 #define PVA_C_PIC_COVER     0x58    // args: u8 1 = again. The cover that shows, made for SCREEN 8 as PIC_SHOW (its rows: PIC_GET; then PIC_CLOSE).
                                     // reply: u8 0 it is being made, 1 it is the one made last, 2 there is none
+#define PVA_C_CHARSET       0x5A    // args: u8 0 plain ASCII (the start; accents dropped), 1 the MSX's international
+                                    // character set: é ü ñ Ä Ö ... as the MSX's codes 128-191 (CP437's up to 175,
+                                    // then Ã ã Õ õ at 176, 177, 180, 181), in the status, the lists and every
+                                    // text reply; the rest still plain letters (engine 0.20)
 #define PVA_C_LYRICS        0x59    // args: u16 first row, u8 rows (20 at most; 0: only the head). The words of what the PC
                                     // plays (the MSX link's screen, engine 0.18; the PC wraps them to 40 characters):
                                     // reply: u8 PVA_LY_xxx, u8 gen (+1 when they change), u16 rows, u16 the row of now

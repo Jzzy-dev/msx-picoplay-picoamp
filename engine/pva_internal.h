@@ -331,6 +331,11 @@ void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the
 // helpers
 int  pva_kind_from_name(const char *name);   // PVA_DE_xxx or 0
 void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
+// the MSX's own accented letters (PVA_C_CHARSET 1): the folding keeps them as Latin-1 (0xC0-0xFF:
+// folding again gives the same); text for the MSX becomes its codes there
+extern bool pva_msx_chars;
+size_t pva_to_msx(char *dst, size_t size, const char *src, size_t n);     // the text for the MSX (any of the three)
+size_t pva_to_utf8(char *dst, size_t size, const char *src);              // for the web and the card
 
 // Sonos speakers in the network (pva_sonos.c): the rooms (a search), and one room as the MSX link's
 // screen: pva_net plays "sonos://<ip>:<port>/<RINCON id>#<room>" as such a station

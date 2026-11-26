@@ -159,6 +159,13 @@ static void set_reply_byte(uint8_t b)
 
 static void set_reply_str(const char *s)
 {
+    // (the MSX's accented letters: its codes; else as it is)
+    if (pva_msx_chars && reply_len < PVA_REPLY_SIZE - 1)
+    {
+        reply_len += (uint32_t)pva_to_msx((char *)reply + reply_len, PVA_REPLY_SIZE - reply_len, s, strlen(s));
+        set_reply_byte(0);
+        return;
+    }
     while (*s && reply_len < PVA_REPLY_SIZE - 1) reply[reply_len++] = (uint8_t)*s++;
     set_reply_byte(0);
 }
@@ -729,6 +736,7 @@ static int cmd_dir_read(void)
         const dent_t *e = &dir_ent[i];
         char shown[PVA_NAME_MAX + 1];
         pva_copy_ascii(shown, sizeof shown, dir_pool + e->name, 255);
+        pva_to_msx(shown, sizeof shown, shown, strlen(shown));      // (the MSX's letters, or plain ones)
         uint8_t l = (uint8_t)strlen(shown);
         if (reply_len + 6u + l > PVA_REPLY_SIZE) break;
         uint32_t size = e->size;
@@ -1021,11 +1029,13 @@ static int cmd_fav_add(void)
     FRESULT fr = fav_scan(u, FA_READ | FA_WRITE | FA_OPEN_ALWAYS, &sc);
     if (fr != FR_OK) { last_fr = (uint8_t)fr; return PVA_E_IO; }
     if (sc.found) { f_close(m3u_file); return PVA_E_EXISTS; }
-    char add[URL_MAX_LEN + PVA_NAME_MAX + 32];
+    char add[URL_MAX_LEN + PVA_NAME_MAX * 3 + 32];
     size_t n = 0;
     if (!sc.size) n = (size_t)snprintf(add, sizeof add, "#EXTM3U\r\n");
     else if (!sc.last_eol) n = (size_t)snprintf(add, sizeof add, "\r\n");
-    n += (size_t)snprintf(add + n, sizeof add - n, "#EXTINF:-1,%s\r\n%s\r\n", nm, u);
+    char nm8[PVA_NAME_MAX * 3 + 1];
+    pva_to_utf8(nm8, sizeof nm8, nm);          // (the file: UTF-8)
+    n += (size_t)snprintf(add + n, sizeof add - n, "#EXTINF:-1,%s\r\n%s\r\n", nm8, u);
     if (sc.size + n > FAV_MAX) { f_close(m3u_file); return PVA_E_FULL; }
     UINT put = 0;
     if ((fr = f_lseek(m3u_file, sc.size)) != FR_OK) return fav_fail(fr);
@@ -2355,8 +2365,13 @@ static int cmd_lyrics(void)
         uint16_t r = (uint16_t)(first + i);
         if (r >= n) { o[k++] = 0; continue; }
         uint8_t l = lyr->row[r].len > 42 ? 42 : lyr->row[r].len;
+        // (the MSX's letters, or plain ones: the PC's rows come in the MSX's codes already)
+        char t[44];
+        memcpy(t, lyr->pool + lyr->row[r].off, l);
+        t[l] = 0;
+        l = (uint8_t)pva_to_msx(t, sizeof t, t, l);
         o[k++] = l;
-        memcpy(o + k, lyr->pool + lyr->row[r].off, l);
+        memcpy(o + k, t, l);
         k += l;
     }
     reply_len = k;
@@ -2440,6 +2455,7 @@ static int execute(uint8_t code)
     switch (code)
     {
         case PVA_C_PING:
+            pva_msx_chars = false;          // (a program starts: plain letters until it asks, PVA_C_CHARSET)
         {
             char t[40];
             int n = snprintf(t, sizeof t, "PVAUDIO %d.%d", PVA_FW_MAJOR, PVA_FW_MINOR);
@@ -2568,6 +2584,10 @@ static int execute(uint8_t code)
             return cmd_mode();
         case PVA_C_LYRICS:
             return cmd_lyrics();
+        case PVA_C_CHARSET:
+            pva_msx_chars = args[0] == 1;
+            status_dirty = true;
+            return PVA_OK;
         case PVA_C_BALANCE:
             if (link_remote) { user_balance = args[0] > 100 ? 100 : args[0]; return PVA_OK; }
             balance = args[0] > 100 ? 100 : args[0];
@@ -2621,6 +2641,9 @@ static void st8(uint32_t o, uint8_t v) { st_new[o] = v; }
 static void st16(uint32_t o, uint16_t v) { st8(o, (uint8_t)v); st8(o + 1, (uint8_t)(v >> 8)); }
 static void ststr(uint32_t o, const char *s, uint32_t size)
 {
+    // (the MSX's letters, or plain ones: the MSX link's PC sends the MSX's codes)
+    char t[160];
+    if (size <= sizeof t) { pva_to_msx(t, size, s, strlen(s)); s = t; }
     uint32_t i = 0;
     for (; i + 1 < size && s[i]; i++) st8(o + i, (uint8_t)s[i]);
     for (; i < size; i++) st8(o + i, 0);

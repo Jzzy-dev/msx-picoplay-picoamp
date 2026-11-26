@@ -781,10 +781,14 @@ void pva_dir_click(const char *uuid)
 
 bool pva_dir_busy(void) { return d != D_IDLE || click_pending; }
 
-// URL-encode 's' into 'out' (for query values)
+// URL-encode 's' into 'out' (for query values): UTF-8 (the folding's Latin-1 letters and the MSX's
+// codes made UTF-8 first)
 void pva_dir_urlenc(char *out, size_t size, const char *s)
 {
     static const char hex[] = "0123456789ABCDEF";
+    char u8[400];
+    pva_to_utf8(u8, sizeof u8, s);
+    s = u8;
     size_t o = 0;
     for (; *s && o + 4 < size; s++)
     {

@@ -89,6 +89,13 @@ W_REPLY  equ #4400
 W_VIZ    equ #4C00
 
 C_PING   equ #01
+C_CHARSET equ #5A             ; (engine 0.20: the MSX's accented letters)
+FONT_ALL equ 160               ; the characters drawn: 32 to 191 (the MSX's accents, Ã ã Õ õ)
+    IFDEF ROMBUILD
+FONT_N   equ 96                ; copied: 32 to 127 (no room; the others from the machine's font: glyph_at)
+    ELSE
+FONT_N   equ FONT_ALL          ; copied: all of them
+    ENDIF
 C_DOPEN  equ #10
 C_DREAD  equ #11
 C_DENTER equ #12
@@ -446,6 +453,14 @@ hz_init:
         ld hl,ROMID
         call RDSLT
         ei
+        ; the MSX's accented letters (é ü ñ Ä ...) in what the engine sends: ROMID's low bits
+        ; are the character set, 1 the international one (engine 0.20 takes only that one)
+        push af
+        and #0F
+        ld e,a
+        ld a,C_CHARSET
+        call cmd_u8
+        pop af
         ld b,60
         bit 7,a
         jr z,.s
@@ -783,10 +798,13 @@ screen_init:
         ld h,a
         ld a,(tmp16)
         ld l,a
+    IFDEF ROMBUILD
+        ld (cgtab),hl           ; (glyph_at: the accented letters from there)
+    ENDIF
         ld de,32*8
         add hl,de               ; from the space
         ld de,font
-        ld bc,96*8
+        ld bc,FONT_N*8
 .f:     push bc
         push de
         ld a,(EXPTBL)
@@ -951,6 +969,61 @@ put_cell2:
         ei
         ret
 
+; glyph_at: A = character - 32 (below FONT_ALL): HL = its 8 bytes (as the copy: shifted right).
+; The ROM has no room for the accented ones' copy: those from the machine's font (RDSLT), as
+; they are drawn. AF changes, the rest is kept (the interrupts as they were).
+glyph_at:
+    IFDEF ROMBUILD
+        cp FONT_N
+        jr nc,.hi
+    ENDIF
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        push de
+        ld de,font
+        add hl,de
+        pop de
+        ret
+    IFDEF ROMBUILD
+.hi:    push bc
+        push de
+        ld l,a
+        ld a,i                  ; (P/V: the interrupts were on)
+        push af
+        ld a,l
+        add a,32
+        ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        ld de,(cgtab)
+        add hl,de
+        ld de,hibuf
+        ld b,8
+.c:     push bc
+        push de
+        ld a,(EXPTBL)
+        call RDSLT
+        pop de
+        pop bc
+        srl a
+        ld (de),a
+        inc hl
+        inc de
+        djnz .c
+        pop af
+        jp po,.di
+        ei
+.di:    ld hl,hibuf
+        pop de
+        pop bc
+        ret
+    ENDIF
+
 ; put_char: DE = cell, A = character, C = colour
 put_char:
         push de
@@ -958,16 +1031,10 @@ put_char:
         sub 32
         jr nc,.ok
         xor a
-.ok:    cp 96
+.ok:    cp FONT_ALL
         jr c,.ok2
         ld a,'?'-32
-.ok2:   ld l,a
-        ld h,0
-        add hl,hl
-        add hl,hl
-        add hl,hl
-        ld bc,font
-        add hl,bc
+.ok2:   call glyph_at
         push hl
         pop ix
         pop bc
@@ -1744,13 +1811,7 @@ vb_text:
         ret z
         push hl
         sub 32
-        ld l,a
-        ld h,0
-        add hl,hl
-        add hl,hl
-        add hl,hl
-        ld de,font
-        add hl,de
+        call glyph_at
         ld e,0
 .ln:    push hl
         ld a,b
@@ -2013,7 +2074,7 @@ eq_open_screen:
         ld hl,eq_colrow
         ld (colfn),hl
         call area_out_col
-        jp eq_render
+        jr eq_render
 
 eq_close:
         xor a
@@ -2974,7 +3035,7 @@ open_path:                      ; HL = path
         call cmd
         jr c,.no
         jr nz,.no
-        jp got_folder
+        jr got_folder
 .no:    ld hl,txt_nofolder
         jp show_path_msg
 
@@ -2988,7 +3049,7 @@ got_folder:                     ; reply of DIR_OPEN / DIR_ENTER: u16 count, path
         ld (sel),hl
         ld (top),hl
         call draw_path
-        jp draw_list
+        jr draw_list
 
 draw_path:
         ld de,#1201
@@ -3378,7 +3439,7 @@ ticker_text:
         sbc hl,de
         jr nc,.still
         ld (ix+T_ACT),1
-        jp tk_take
+        jr tk_take
 .still: ld (ix+T_ACT),0
         ret
 
@@ -4000,17 +4061,11 @@ t6_glyph:
         sub 32
         jr nc,.a
         xor a
-.a:     cp 96
+.a:     cp FONT_ALL
         jr c,.b
         ld a,'?'-32
 .b:     push hl
-        ld l,a
-        ld h,0
-        add hl,hl
-        add hl,hl
-        add hl,hl
-        ld de,font
-        add hl,de
+        call glyph_at
         ex de,hl                ; DE = the glyph
         pop hl
         ld a,l
@@ -4182,7 +4237,7 @@ srch_open:
         ld (srch_on),a
         xor a
         ld (msg_on),a
-        jp srch_draw
+        jr srch_draw
 
 srch_close:
         xor a
@@ -4226,7 +4281,9 @@ srch_keys:
         jr .end
 .ch:    cp ' '
         ret c
-        cp 127
+        cp 127                  ; (DEL)
+        ret z
+        cp FONT_N+32            ; (the MSX's accented letters too)
         ret nc
         ld b,a
         ld a,(srch_len)
@@ -4402,7 +4459,7 @@ cover_view:
         ld (cov_ok),a
         dec a
         ld (cov_seen),a
-        jp cover_poll
+        jr cover_poll
 
 navy_colrow:                    ; colfn: a row of the area in navy
         ld hl,rowcol
@@ -6747,7 +6804,7 @@ keys_common:
         cp 'Z'
         jp z,fs_open
         cp 'M'
-        jp z,do_mute
+        jr z,do_mute
         ret
 
 do_mute:                        ; the sound off / on again (the volume stays)
@@ -7531,8 +7588,8 @@ bss_start       equ (progend + 255) & #FF00     ; after the program, in RAM
 bss_start       equ (mod_file_end + 255) & #FF00   ; (after the COM file and its page modules)
         assert mod_file_end <= bss_start
     ENDIF
-font            equ bss_start           ; 96 x 8
-vizbuf          equ font + 96*8         ; the area: 10 x 192
+font            equ bss_start           ; FONT_N x 8
+vizbuf          equ font + FONT_N*8     ; the area: 10 x 192
 rowcol          equ vizbuf + 1920       ; colours of one area row
 t6buf           equ rowcol + 192        ; one row of 6-pixel text: 32 + 2 cells
 tk_title        equ t6buf + 34*8
@@ -7549,7 +7606,9 @@ linebuf         equ reply + REPLY_MAX + 1
 path            equ linebuf + 64
 argbuf          equ path + 64           ; 128
 numbuf          equ argbuf + 128
-eqg             equ numbuf + 8          ; the equalizer screen's gains
+hibuf           equ numbuf + 8          ; (the ROM: an accented letter's glyph, glyph_at)
+cgtab           equ hibuf + 8           ; (the ROM: the machine's font)
+eqg             equ cgtab + 2           ; the equalizer screen's gains
 eqcols          equ eqg + 8             ; 3 x 24 colours of its parts
 bar_last        equ eqcols + 72         ; (NBARS + 2) x (lit segments, peak) drawn
 bar_raw         equ bar_last + (NBARS+2)*2  ; (level, peak) from the engine, drawn

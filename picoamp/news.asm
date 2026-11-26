@@ -151,16 +151,19 @@ nw_font:
         xor a
 .z:     out (VDP_D),a
         djnz .z
-        ld hl,font
-        ld bc,96*8
-.f:     ld a,(hl)
+        ld c,0                  ; 32 to 191 (the MSX's accented letters too: glyph_at)
+.f:     ld a,c
+        call glyph_at
+        ld b,8
+.fb:    ld a,(hl)
         add a,a
         out (VDP_D),a
         inc hl
-        dec bc
-        ld a,b
-        or c
-        jr nz,.f
+        djnz .fb
+        inc c
+        ld a,c
+        cp FONT_ALL
+        jr c,.f
         ei
         ld hl,#1000+TX_HL*8
         call vwrite

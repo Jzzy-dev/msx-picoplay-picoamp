@@ -362,18 +362,14 @@ g6_draw:
         add hl,hl
         ld bc,G6_G0
         jr .gp
-.fo:    cp 128
+.fo:    cp FONT_ALL+32
         jr c,.f1
         ld a,'?'
 .f1:    sub 32
-        ld l,a
-        ld h,0
-        add hl,hl
-        add hl,hl
-        add hl,hl
-        ld bc,font
+        call glyph_at           ; (the MSX's accented letters too)
+        jr .g
 .gp:    add hl,bc               ; HL = its glyph
-        ld bc,80
+.g:     ld bc,80
         ld a,8
 .cp:    ex af,af'
         ld a,(hl)

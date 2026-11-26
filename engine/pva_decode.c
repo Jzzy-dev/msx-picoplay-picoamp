@@ -111,7 +111,32 @@ static const char cyr[] =                       // U+0410 - U+044F: А .. я
 static const char grk[] =                       // U+0391 - U+03C9: Α .. ω (U+03A2: no letter)
     "ABGDEZITIKLMNXOPR?STYFHPOiyaeiiyabgdezitiklmnxoprsstyfhpo";
 
+bool pva_msx_chars;
+
+// the MSX's international character set: codes 128-191 (0: not a letter or sign of its own here)
+static const uint16_t msx_hi[64] = {
+    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, 0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5,
+    0x00C9, 0x00E6, 0x00C6, 0x00F4, 0x00F6, 0x00F2, 0x00FB, 0x00F9, 0x00FF, 0x00D6, 0x00DC, 0x00A2, 0x00A3, 0x00A5, 0x20A7, 0x0192,
+    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA, 0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC, 0x00A1, 0x00AB, 0x00BB,
+    0x00C3, 0x00E3, 0x0128, 0x0129, 0x00D5, 0x00F5, 0x0168, 0x0169, 0x0132, 0x0133, 0x00BE, 0, 0, 0x2030, 0x00B6, 0x00A7 };
+
+static int msx_code(uint32_t c)
+{
+    if (c < 0xA0) return -1;
+    for (int i = 0; i < 64; i++) if (msx_hi[i] == c) return 128 + i;
+    return -1;
+}
+
+static char fold_plain(uint32_t c);
+
 char pva_fold_ascii(uint32_t c)
+{
+    // (the MSX's own letters kept, as Latin-1: made its codes on the way out)
+    if (pva_msx_chars && c >= 0xC0 && c <= 0xFF && msx_code(c) >= 0) return (char)c;
+    return fold_plain(c);
+}
+
+static char fold_plain(uint32_t c)
 {
     if (c >= 0x20 && c < 0x7F) return (char)c;
     if (c < 0x20 || c == 0x7F) return c ? '?' : 0;
@@ -189,6 +214,68 @@ void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len)
     }
     while (o > 0 && dst[o - 1] == ' ') o--;
     dst[o] = 0;
+}
+
+// one character of a text: UTF-8 when it is; a byte 0xC0-0xFF on its own Latin-1 (the folding's
+// letters); 0x80-0xBF on its own an MSX code (the MSX link's text from the PC, the MSX's keyboard):
+// *msx = that code, else the code point
+static uint32_t next_char(const char *src, size_t n, size_t *i, int *msx)
+{
+    uint8_t b = (uint8_t)src[*i];
+    *msx = -1;
+    int k = b >= 0xC2 && b < 0xE0 ? 1 : b >= 0xE0 && b < 0xF0 ? 2 : b >= 0xF0 && b < 0xF5 ? 3 : 0;
+    bool ok = k && *i + (size_t)k < n;
+    for (int m = 1; ok && m <= k; m++) ok = ((uint8_t)src[*i + m] & 0xC0) == 0x80;
+    if (ok)
+    {
+        uint32_t c = b & (k == 1 ? 0x1Fu : k == 2 ? 0x0Fu : 0x07u);
+        for (int m = 1; m <= k; m++) c = (c << 6) | ((uint8_t)src[*i + m] & 0x3F);
+        *i += (size_t)k + 1;
+        return c;
+    }
+    (*i)++;
+    if (b >= 0x80 && b < 0xC0) { *msx = b; return msx_hi[b - 128] ? msx_hi[b - 128] : '?'; }
+    return b;
+}
+
+size_t pva_to_msx(char *dst, size_t size, const char *src, size_t n)
+{
+    size_t o = 0;
+    for (size_t i = 0; i < n && src[i] && o + 1 < size; )
+    {
+        int m;
+        uint32_t c = next_char(src, n, &i, &m);
+        if (!pva_msx_chars) m = -1;                 // (plain letters: the link's codes too)
+        else if (m < 0) m = msx_code(c);
+        char a = m >= 0 ? (char)m : fold_plain(c);
+        if (a) dst[o++] = a;
+    }
+    dst[o] = 0;
+    return o;
+}
+
+size_t pva_to_utf8(char *dst, size_t size, const char *src)
+{
+    size_t o = 0, n = strlen(src);
+    for (size_t i = 0; i < n && o + 1 < size; )
+    {
+        size_t at = i;
+        int m;
+        uint32_t c = next_char(src, n, &i, &m);
+        if (m < 0 && i - at > 1)
+        {
+            // (UTF-8 already: as it is)
+            if (o + (i - at) >= size) break;
+            memcpy(dst + o, src + at, i - at);
+            o += i - at;
+            continue;
+        }
+        if (c < 0x80) dst[o++] = (char)c;
+        else if (c < 0x800) { if (o + 2 >= size) break; dst[o++] = (char)(0xC0 | c >> 6); dst[o++] = (char)(0x80 | (c & 63)); }
+        else { if (o + 3 >= size) break; dst[o++] = (char)(0xE0 | c >> 12); dst[o++] = (char)(0x80 | ((c >> 6) & 63)); dst[o++] = (char)(0x80 | (c & 63)); }
+    }
+    dst[o] = 0;
+    return o;
 }
 
 // ID3v2 text frame body (encoding byte + text) to ASCII
