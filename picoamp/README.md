@@ -62,7 +62,10 @@ The engine is found by itself in any slot, as PVTEST and PicoPlay do.
 | Bottom row | Control icons, SHF / REP (green when on), EQ, volume |
 
 Titles, artists, the format line, the path and the list are in 6-pixel text
-(42 characters a screen row; the MSX font is drawn for 6-pixel cells). A title,
+(42 characters a screen row; the MSX font is drawn for 6-pixel cells). On an MSX with the
+international character set (a European one) the accented letters show as the MSX has them
+(é ü ñ å ç Ä Ö É Ñ Ã Õ ...; engine 0.20 and later); letters the MSX has no glyph for (ő ł č ...)
+show plain, as on a Japanese MSX all of them do. A title,
 artist, station or file name that is longer than its place still stands
 still for a second and then scrolls like a news ticker, round and round. One
 text moves at a time (the title first, then the artist, then the chosen list
@@ -363,8 +366,8 @@ the player; the other playback keys keep working (N and P are the stories in
 a story). The page has no mouse pointer (the text mode has no sprites).
 
 The engine reads a feed (RSS 2.0, RSS 1.0/RDF or Atom) while it comes in and
-keeps up to 40 stories with their summaries (HTML, entities and accents
-taken out, paragraphs kept), and wraps the text into lines for the MSX. In
+keeps up to 40 stories with their summaries (HTML and entities taken out, the accents the
+MSX has kept, paragraphs kept), and wraps the text into lines for the MSX. In
 the PicoPlay firmware (MSX-DOS) the engine has less memory: it then takes
 24 KB of the radio's stream buffer for the news (72 KB are left, about 4.5
 seconds at 128 kbit/s); an article keeps about 9 KB of text there, 16 KB in

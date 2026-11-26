@@ -297,6 +297,55 @@ int main(int argc, char **argv)
         host_esp_load_audio(sp);
     }
 
+    {
+        // text for the MSX's font: UTF-8, else Latin-1 / Windows-1252 (a station's title often is); the
+        // accents dropped, Central European, Cyrillic and Greek letters plain, emoji left out, no '?'
+        static const struct { const char *in, *out; } t[] = {
+            { "Beyonc\xc3\xa9 - D\xc3\xa9j\xc3\xa0 Vu", "Beyonce - Deja Vu" },
+            { "Beyonc\xe9 - D\xe9j\xe0 Vu", "Beyonce - Deja Vu" },                         // Latin-1
+            { "Sigur R\xf3s - Hopp\xedpolla", "Sigur Ros - Hoppipolla" },                    // (0xF3: not a 4-byte start)
+            { "\x93Hello\x94 \x96 It\x92s \x85", "\"Hello\" - It's ." },                     // Windows-1252
+            { "Dvo\xc5\x99\xc3\xa1k, Chopin: \xc5\x81\xc3\xb3" "d\xc5\xba, Pet\xc5\x91" "fi", "Dvorak, Chopin: Lodz, Petofi" },
+            { "Rom\xc3\xa2nia: \xc8\x98tefan \xc8\x9a\xc4\x83ranu", "Romania: Stefan Taranu" },
+            { "\xd0\x9c\xd1\x83\xd0\xb7\xd1\x8b\xd0\xba\xd0\xb0", "Muzyka" },               // Музыка
+            { "\xce\x9c\xce\xbf\xcf\x85\xcf\x83\xce\xb9\xce\xba\xce\xae", "Moysiki" },     // Μουσική (a letter for a letter)
+            { "Party \xf0\x9f\x8e\x89\xef\xb8\x8f time \xe2\x9c\xa8", "Party  time" },       // 🎉️ ✨
+            { "Stra\xc3\x9f" "e \xe2\x80\x9e" "Br\xc3\xbc" "cke\xe2\x80\x9c \xe2\x82\xac" "5", "Strase \"Brucke\" E5" },
+        };
+        for (size_t i = 0; i < sizeof t / sizeof t[0]; i++)
+        {
+            char o[80];
+            pva_copy_ascii(o, sizeof o, t[i].in, strlen(t[i].in));
+            CHECK(!strcmp(o, t[i].out), "text for the MSX: '%s', not '%s'", t[i].out, o);
+        }
+    }
+
+    {
+        // the MSX's own letters (PVA_C_CHARSET 1): kept as Latin-1 inside (folding twice: the same), the
+        // MSX's codes on the way out (é 82h, Ä 8Eh, ñ A4h, õ B5h), UTF-8 for the web and the card; the MSX
+        // link's PC sends the codes already; without it (0): plain letters, the link's codes too
+        char a[80], b[80], c[80];
+        pva_msx_chars = true;
+        pva_copy_ascii(a, sizeof a, "Beyonc\xc3\xa9 \xc3\x84rzte Espa\xc3\xb1" "a Jo\xc3\xa3o L\xc3\xb5" "e \xc5\x81\xc3\xb3" "d\xc5\xba", 100);
+        pva_copy_ascii(b, sizeof b, a, strlen(a));
+        CHECK(!strcmp(a, b), "MSX letters: folding again gives the same ('%s', '%s')", a, b);
+        pva_to_msx(c, sizeof c, a, strlen(a));
+        CHECK(!strcmp(c, "Beyonc\x82 \x8erzte Espa\xa4" "a Jo\xb1o L\xb5" "e L\xa2" "dz"), "MSX letters: its codes out ('%s')", c);
+        pva_to_utf8(b, sizeof b, a);
+        CHECK(!strcmp(b, "Beyonc\xc3\xa9 \xc3\x84rzte Espa\xc3\xb1" "a Jo\xc3\xa3o L\xc3\xb5" "e L\xc3\xb3" "dz"), "MSX letters: UTF-8 again for the web ('%s')", b);
+        pva_dir_urlenc(b, sizeof b, "Beyonc\xe9");
+        CHECK(!strcmp(b, "Beyonc%C3%A9"), "MSX letters: a search's address in UTF-8 (%s)", b);
+        pva_dir_urlenc(b, sizeof b, "Caf\x82 \x81");           // (the MSX's keyboard, the link's text: its codes)
+        CHECK(!strcmp(b, "Caf%C3%A9%20%C3%BC"), "MSX letters: the MSX's codes in an address (%s)", b);
+        pva_to_msx(c, sizeof c, "Caf\x82 Mot\x94rhead", 20);
+        CHECK(!strcmp(c, "Caf\x82 Mot\x94rhead"), "MSX letters: the link's codes as they are ('%s')", c);
+        pva_msx_chars = false;
+        pva_to_msx(c, sizeof c, "Caf\x82 Mot\x94rhead \xc3\xa9", 30);
+        CHECK(!strcmp(c, "Cafe Motorhead e"), "plain letters: the link's codes and UTF-8 folded ('%s')", c);
+        pva_copy_ascii(a, sizeof a, "Beyonc\xc3\xa9", 20);
+        CHECK(!strcmp(a, "Beyonce"), "plain letters: as before ('%s')", a);
+    }
+
     // the PicoAmp ROM's: the SRAM cache - the ROM - core 1's stack - the HAL's heap and microSD buffers
     static uint8_t arena[256 * 1024 - 64 * 1024 - 8 * 1024 - 16 * 1024 - 2304];
     // as the firmware: 128 KB left by Nextor - 8 KB core 1 stack - FatFs name buffers - the heap's piece;
@@ -1178,6 +1227,19 @@ int main(int argc, char **argv)
                 CHECK(cmd(PVA_C_CFG_SET, kv, sizeof kv) == PVA_OK, "CFG_SET clock.face");
             }
             CHECK(cmd_str(PVA_C_CFG_GET, "Clock.Face") == PVA_OK && !strcmp((char *)reply, "analog"), "CFG_GET (any case): %s", reply);
+            {
+                // PVA_C_CHARSET 1 (PicoAmp on a European MSX): a text reply has the MSX's codes (é: 82h);
+                // PING (another program starts): plain letters again
+                static const char kv[] = "location.name\0Caf\xc3\xa9 M\xc3\xbcnchen";
+                CHECK(cmd(PVA_C_CFG_SET, kv, sizeof kv) == PVA_OK, "CFG_SET a place with accents");
+                uint8_t one = 1;
+                CHECK(cmd(PVA_C_CHARSET, &one, 1) == PVA_OK, "CHARSET 1");
+                CHECK(cmd_str(PVA_C_CFG_GET, "location.name") == PVA_OK && !strcmp((char *)reply, "Caf\x82 M\x81nchen"), "CHARSET 1: the MSX's codes in a reply ('%s')", reply);
+                CHECK(cmd(PVA_C_PING, NULL, 0) == PVA_OK, "PING");
+                CHECK(cmd_str(PVA_C_CFG_GET, "location.name") == PVA_OK && !strcmp((char *)reply, "Caf\xc3\xa9 M\xc3\xbcnchen"), "after PING: as it is again ('%s')", reply);
+                static const char k0[] = "location.name\0Sydney, New South Wales, AU";
+                cmd(PVA_C_CFG_SET, k0, sizeof k0);
+            }
             CHECK(cmd(PVA_C_CFG_TEXT, NULL, 0) == PVA_OK, "CFG_TEXT");
             reply[reply_len] = 0;
             CHECK(!strcmp((char *)reply, "[location]\r\nmode=place\r\nname=Sydney, New South Wales, AU\r\nlat=-33.86785\r\nlon=151.20732\r\n\r\n[clock]\r\nface=analog\r\n"),
