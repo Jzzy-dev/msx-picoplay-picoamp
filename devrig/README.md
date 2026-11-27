@@ -85,6 +85,23 @@ at 90 s. Emulation runs unthrottled (a minute of MSX time takes a few seconds). 
 - **RAM dump:** `DUMPRAM=1` writes the 1 MB mapper to `ram.bin` at the end, for finding a
   program's variables by a marker string.
 
+## PICOAMP.ROM without the private bundle
+
+`tools/picoamp_rom.py` runs PICOAMP.ROM on openMSX's own C-BIOS (MSX2, in the openMSX
+sources), which needs none of the private ROMs: `sh setup.sh build` is enough. The cartridge
+is modelled as on the PicoVerse: the ROM in sub-slot 0 (ASCII16 banks), the engine with a FAT
+card image in sub-slot 3. Build the ROM with `-DRIGENASLT` (C-BIOS's ENASLT does not switch
+page 1 to a sub-slot; that build switches it itself), make a card image (FAT16, as the engine's
+tests do), then:
+
+```sh
+mkdir work-pa && cd work-pa        # PICOAMP.ROM and card.img here
+../tools/picoamp_rom.py "12:{D}" "13:{D}" "14:{N}" "20:v" "24:shot cover" "24.5:c" "28:shot clock" "29:exit"
+```
+
+Screenshots come out black headless here, so `shot` saves the VDP's memory and
+`tools/vram_render.py` draws SCREEN 4 (with its sprites) or SCREEN 8 from it.
+
 ## Tests that need no emulator
 
 - Engine: `2350/software/loadrom.pio/pico/loadrom/pvaudio/tests`, `make` and run `host_pva

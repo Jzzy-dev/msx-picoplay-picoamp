@@ -1617,6 +1617,7 @@ ck_bars_setup:
         ld (bp_col0),a
         ld a,NBARS
         ld (bp_nbars),a
+        ld (bp_bands),a         ; (all of them: the cover view leaves 12)
         ld hl,bar_last          ; every bar drawn again
         ld bc,(NBARS+2)*4
         ld a,#FF

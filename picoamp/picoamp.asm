@@ -55,7 +55,11 @@ BDOS    equ #0005
 RDSLT   equ #000C
 WRSLT   equ #0014
 CALSLT  equ #001C
+    IFDEF RIGENASLT
+ENASLT  equ rig_enaslt          ; (the test machine only: C-BIOS does not switch a sub-slot of page 1)
+    ELSE
 ENASLT  equ #0024
+    ENDIF
 CHGMOD  equ #005F
 GTTRIG  equ #00D8
 GTPAD   equ #00DB
@@ -473,6 +477,43 @@ hz_init:
 ; engine access: commands through RDSLT/WRSLT (as PVTEST), the per-frame block
 ; copies with page 1 switched to the engine (ENASLT), interrupts off meanwhile.
 
+    IFDEF RIGENASLT
+rig_enaslt:                     ; A = slot (ExxxSSPP), page 1 only; no stack while page 3 is away
+        di
+        ld b,a
+        and 3
+        ld c,a                  ; the primary slot
+        in a,(#A8)
+        ld d,a
+        bit 7,b
+        jr z,.p
+        and #3F
+        ld e,a
+        ld a,c
+        rrca
+        rrca
+        or e
+        out (#A8),a             ; page 3 on that slot: its sub-slot register
+        ld a,(#FFFF)
+        cpl
+        and #F3
+        ld e,a
+        ld a,b
+        and #0C
+        or e
+        ld (#FFFF),a
+        ld a,d
+        out (#A8),a
+.p:     ld a,d
+        and #F3
+        ld e,a
+        ld a,c
+        rlca
+        rlca
+        or e
+        out (#A8),a
+        ret
+    ENDIF
 ; copy BC bytes from engine address HL to DE (page 1 switched for the copy)
 eng_copy:
         di
